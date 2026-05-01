@@ -20,4 +20,4 @@ export PYTHONPATH=/home/jiamingp/Diffusion_model/cosmo_diffusion:${PYTHONPATH:-}
 mkdir -p /home/jiamingp/Diffusion_model/logs
 mkdir -p /home/jiamingp/Diffusion_model/saved_runs/run3_checkpoints
 
-python /home/jiamingp/Diffusion_model/cosmo_diffusion/scripts/cosmodiff_train.py --config /home/jiamingp/Diffusion_model/configs/config_run3.yaml
+python /home/jiamingp/Diffusion_model/cosmo_diffusion/scripts/cosmodiff_train.py --config /home/jiamingp/Diffusion_model/configs/great_lakes/config_run3.yaml

@@ -1,13 +1,20 @@
 # Configs
 
-YAML files in this directory are experiment configs consumed by
-`nkern/cosmo_diffusion`'s `cosmodiff_train.py`.
-
-Many current configs point to Great Lakes paths under:
+YAML files here are consumed by `nkern/cosmo_diffusion`'s
+`cosmodiff_train.py`.
 
 ```text
-/scratch/huterer_root/huterer0/jiamingp/
+templates/     portable starting points for CAMELS LH experiments
+great_lakes/   Jiaming's Great Lakes experiment configs
 ```
 
-Before running on a different machine, update `data.img_path` and
-`io.output_dir`.
+The `great_lakes/` configs contain cluster-specific absolute paths. They are
+kept as an experiment record, not as portable examples.
+
+For a new experiment, copy a file from `templates/`, then edit:
+
+- `data.img_path`
+- `io.output_dir`
+- `train.num_epochs`
+- `lr_scheduler.kwargs.T_max`
+- any desired model width/data-size settings

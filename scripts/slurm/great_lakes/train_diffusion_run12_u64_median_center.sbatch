@@ -20,4 +20,4 @@ export PYTHONPATH=/home/jiamingp/Diffusion_model/cosmo_diffusion:${PYTHONPATH:-}
 mkdir -p /home/jiamingp/Diffusion_model/logs
 mkdir -p /scratch/huterer_root/huterer0/jiamingp/saved_runs/run12_u64_median_center_checkpoints
 
-python /home/jiamingp/Diffusion_model/cosmo_diffusion/scripts/cosmodiff_train.py --config /home/jiamingp/Diffusion_model/configs/config_run12_u64_median_center.yaml
+python /home/jiamingp/Diffusion_model/cosmo_diffusion/scripts/cosmodiff_train.py --config /home/jiamingp/Diffusion_model/configs/great_lakes/config_run12_u64_median_center.yaml

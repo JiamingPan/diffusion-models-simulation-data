@@ -1,20 +1,31 @@
 # Diffusion Models for CAMELS Simulation Fields
 
-This repo evaluates diffusion models on CAMELS cosmological fields using physics-aware metrics and reproducibility/generalization diagnostics. It builds on [`nkern/cosmo_diffusion`](https://github.com/nkern/cosmo_diffusion) for base diffusion-model training and adds CAMELS-specific configs, metrics, evaluation scripts, Slurm wrappers, notebooks, and project notes.
+This repo evaluates diffusion models on CAMELS cosmological fields using physics-aware metrics and reproducibility/generalization diagnostics. It builds on [`nkern/cosmo_diffusion`](https://github.com/nkern/cosmo_diffusion) for base diffusion-model training and adds CAMELS-specific metrics, evaluation scripts, templates, notebooks, and project notes.
 
 This is not a reimplementation of `cosmo_diffusion`, and it does not claim the base training code as original work. The training entry point is still `cosmodiff_train.py` from `nkern/cosmo_diffusion`; this repo organizes experiments around it.
 
 ## Repository Layout
 
+Reusable layer:
+
 ```text
-configs/          YAML configs for CAMELS diffusion runs
-scripts/          lightweight train/sample/eval wrappers and Slurm scripts
-simdiff_eval/     local evaluation package for metrics and plotting
-notebooks/        analysis notebooks for run sweeps
-docs/             project notes and methodology explanations
-results/figures/  generated figures, ignored by git except .gitkeep
-results/tables/   generated metric tables, ignored by git except .gitkeep
+simdiff_eval/       local evaluation package for metrics and plotting
+scripts/*.py        lightweight train/sample/eval wrappers
+configs/templates/  portable CAMELS LH config templates
+notebooks/          analysis notebooks for run sweeps
+docs/               project notes and methodology explanations
 ```
+
+Experiment-record layer:
+
+```text
+configs/great_lakes/              Jiaming's Great Lakes YAML configs
+scripts/slurm/great_lakes/        Jiaming's Great Lakes Slurm scripts
+results/figures/                  generated figures, ignored by git except .gitkeep
+results/tables/                   generated metric tables, ignored by git except .gitkeep
+```
+
+The Great Lakes configs and Slurm files contain cluster-specific paths and are mainly an experiment record. For new runs or other users, start from `configs/templates/` and edit paths/output directories.
 
 Large CAMELS data files, generated samples, checkpoints, model weights, and logs are intentionally excluded from git.
 
@@ -48,16 +59,16 @@ export PYTHONPATH=/home/jiamingp/Diffusion_model/cosmo_diffusion:$PYTHONPATH
 
 ## Example Training
 
-Run locally or inside a Slurm job:
+Run locally or inside a Slurm job using a template or edited config:
 
 ```bash
-python scripts/train_cosmodiff.py --config configs/config_run16_u64_baseline.yaml
+python scripts/train_cosmodiff.py --config configs/templates/u64_lh_template.yaml
 ```
 
-On Great Lakes, submit one of the Slurm wrappers:
+On Great Lakes, submit one of the cluster-specific Slurm wrappers:
 
 ```bash
-sbatch scripts/slurm/train_diffusion_run16_u64_baseline.sbatch
+sbatch scripts/slurm/great_lakes/train_diffusion_run16_u64_baseline.sbatch
 ```
 
 These wrappers call:
@@ -86,7 +97,7 @@ Evaluate generated samples against real data loaded through a training config:
 
 ```bash
 python scripts/evaluate_samples.py \
-  --real-config configs/config_run16_u64_baseline.yaml \
+  --real-config configs/great_lakes/config_run16_u64_baseline.yaml \
   --generated results/tables/run16_samples.npy \
   --output-json results/tables/run16_eval.json \
   --fig-dir results/figures/run16
@@ -114,7 +125,7 @@ The notebooks add richer diagnostics such as PCA feature-space comparisons, PCA-
 
 ## Current Experiment Notes
 
-The current configs include U64 diagnostic runs, U128/U256-width production runs, centered max-abs normalization, and CAMELS slice-thinning via `zthin`.
+The Great Lakes configs include U64 diagnostic runs, U128/U256-width production runs, centered max-abs normalization, and CAMELS slice-thinning via `zthin`.
 
 Important naming distinction:
 
@@ -127,7 +138,7 @@ This project builds on Nicholas Kern's `nkern/cosmo_diffusion` package for base 
 
 ## TODO
 
-- Add LH-data configs so training can use the full 1000-simulation CAMELS LH set instead of only the current CV subset.
+- Turn the LH templates into committed run configs for the reproducibility/data-size experiment.
 - Add a documented sampling workflow that saves generated arrays for every major run.
 - Add command-line PCA metrics to match the notebook diagnostics.
 - Add tests for `simdiff_eval.metrics`.

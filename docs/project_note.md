@@ -78,8 +78,8 @@ cosmo_diffusion/scripts/cosmodiff_train.py --config <config.yaml>
 
 The local additions are:
 
-- CAMELS configs.
-- Great Lakes Slurm wrappers.
+- Portable CAMELS config templates.
+- Great Lakes configs and Slurm wrappers as experiment records.
 - Sampling/evaluation wrappers.
 - Metrics in `simdiff_eval`.
 - Research notebooks and notes.
