@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=64gb
-#SBATCH --time=04:00:00
+#SBATCH --time=08:00:00
 #SBATCH -o /home/jiamingp/Diffusion_model/logs/run11_unet256_production_train_%j.out
 #SBATCH -e /home/jiamingp/Diffusion_model/logs/run11_unet256_production_train_%j.err
 #SBATCH -A huterer0
@@ -20,4 +20,4 @@ export PYTHONPATH=/home/jiamingp/Diffusion_model/cosmo_diffusion:${PYTHONPATH:-}
 mkdir -p /home/jiamingp/Diffusion_model/logs
 mkdir -p /scratch/huterer_root/huterer0/jiamingp/saved_runs/run11_unet256_production_checkpoints
 
-python /home/jiamingp/Diffusion_model/cosmo_diffusion/scripts/cosmodiff_train.py --config /home/jiamingp/Diffusion_model/configs_saved/config_run11_unet256_production.yaml
+python /home/jiamingp/Diffusion_model/cosmo_diffusion/scripts/cosmodiff_train.py --config /home/jiamingp/Diffusion_model/configs/config_run11_unet256_production.yaml
