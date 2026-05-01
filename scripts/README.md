@@ -6,4 +6,4 @@ Lightweight wrappers for training, sampling, and evaluation.
 - `sample_cosmodiff.py`: loads a checkpoint and writes generated samples to `.npy`.
 - `evaluate_samples.py`: computes histogram, power-spectrum, and nearest-neighbor metrics.
 - `reproducibility_eval.py`: compares multiple generated sample sets.
-- `slurm/great_lakes/`: Great Lakes Slurm wrappers from Jiaming's runs.
+- `slurm/train_template.sbatch`: sanitized Slurm template. Copy it into an ignored local path and edit account, partition, paths, and walltime there.

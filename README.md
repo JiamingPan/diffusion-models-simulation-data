@@ -12,22 +12,19 @@ Reusable layer:
 simdiff_eval/       local evaluation package for metrics and plotting
 scripts/*.py        lightweight train/sample/eval wrappers
 configs/templates/  portable CAMELS LH config templates
+scripts/slurm/      sanitized Slurm template
 notebooks/          analysis notebooks for run sweeps
 docs/               project notes and methodology explanations
 ```
 
-Experiment-record layer:
+Output layer:
 
 ```text
-configs/great_lakes/              Jiaming's Great Lakes YAML configs
-scripts/slurm/great_lakes/        Jiaming's Great Lakes Slurm scripts
-results/figures/                  generated figures, ignored by git except .gitkeep
-results/tables/                   generated metric tables, ignored by git except .gitkeep
+results/figures/    generated figures, ignored by git except .gitkeep
+results/tables/     generated metric tables, ignored by git except .gitkeep
 ```
 
-The Great Lakes configs and Slurm files contain cluster-specific paths and are mainly an experiment record. For new runs or other users, start from `configs/templates/` and edit paths/output directories.
-
-Large CAMELS data files, generated samples, checkpoints, model weights, and logs are intentionally excluded from git.
+Large CAMELS data files, generated samples, checkpoints, model weights, logs, personal cluster paths, and account-specific Slurm files are intentionally excluded from git. For new runs, start from `configs/templates/` and `scripts/slurm/train_template.sbatch`, then edit paths locally.
 
 ## Installation
 
@@ -51,10 +48,10 @@ git clone git@github.com:nkern/cosmo_diffusion.git cosmo_diffusion
 export PYTHONPATH=$PWD/cosmo_diffusion:$PYTHONPATH
 ```
 
-On Great Lakes, use the cluster Python/PyTorch environment that already works for the project, then set:
+On a cluster, use a Python/PyTorch environment compatible with `cosmo_diffusion`, then set:
 
 ```bash
-export PYTHONPATH=/home/jiamingp/Diffusion_model/cosmo_diffusion:$PYTHONPATH
+export PYTHONPATH=/path/to/cosmo_diffusion:$PYTHONPATH
 ```
 
 ## Example Training
@@ -65,16 +62,18 @@ Run locally or inside a Slurm job using a template or edited config:
 python scripts/train_cosmodiff.py --config configs/templates/u64_lh_template.yaml
 ```
 
-On Great Lakes, submit one of the cluster-specific Slurm wrappers:
+For Slurm, copy and edit the sanitized template:
 
 ```bash
-sbatch scripts/slurm/great_lakes/train_diffusion_run16_u64_baseline.sbatch
+cp scripts/slurm/train_template.sbatch local/my_train.sbatch
+# edit local/my_train.sbatch
+sbatch local/my_train.sbatch
 ```
 
-These wrappers call:
+The template calls:
 
 ```bash
-python /home/jiamingp/Diffusion_model/cosmo_diffusion/scripts/cosmodiff_train.py --config <config.yaml>
+python /path/to/cosmo_diffusion/scripts/cosmodiff_train.py --config <config.yaml>
 ```
 
 ## Example Sampling
@@ -83,8 +82,8 @@ Generate samples from a checkpoint or checkpoint directory:
 
 ```bash
 python scripts/sample_cosmodiff.py \
-  --checkpoint /scratch/huterer_root/huterer0/jiamingp/saved_runs/run16_u64_baseline_checkpoints \
-  --output results/tables/run16_samples.npy \
+  --checkpoint /path/to/checkpoints \
+  --output results/tables/generated_samples.npy \
   --num-samples 128 \
   --batch-size 16
 ```
@@ -97,10 +96,10 @@ Evaluate generated samples against real data loaded through a training config:
 
 ```bash
 python scripts/evaluate_samples.py \
-  --real-config configs/great_lakes/config_run16_u64_baseline.yaml \
-  --generated results/tables/run16_samples.npy \
-  --output-json results/tables/run16_eval.json \
-  --fig-dir results/figures/run16
+  --real-config configs/templates/u64_lh_template.yaml \
+  --generated results/tables/generated_samples.npy \
+  --output-json results/tables/eval.json \
+  --fig-dir results/figures/example
 ```
 
 Compare multiple generated sample sets for reproducibility:
@@ -125,7 +124,7 @@ The notebooks add richer diagnostics such as PCA feature-space comparisons, PCA-
 
 ## Current Experiment Notes
 
-The Great Lakes configs include U64 diagnostic runs, U128/U256-width production runs, centered max-abs normalization, and CAMELS slice-thinning via `zthin`.
+The templates include U64, U128, and U256-width starting points with centered max-abs normalization and CAMELS slice-thinning via `zthin`.
 
 Important naming distinction:
 
@@ -138,7 +137,7 @@ This project builds on Nicholas Kern's `nkern/cosmo_diffusion` package for base 
 
 ## TODO
 
-- Turn the LH templates into committed run configs for the reproducibility/data-size experiment.
+- Add sanitized example configs for the reproducibility/data-size experiment after the final run plan is fixed.
 - Add a documented sampling workflow that saves generated arrays for every major run.
 - Add command-line PCA metrics to match the notebook diagnostics.
 - Add tests for `simdiff_eval.metrics`.

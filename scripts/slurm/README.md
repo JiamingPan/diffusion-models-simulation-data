@@ -1,10 +1,8 @@
 # Slurm Scripts
 
-Cluster-specific Slurm files live under:
+This directory contains sanitized Slurm templates only.
 
-```text
-scripts/slurm/great_lakes/
-```
+Do not commit account names, user-specific home paths, scratch paths, or internal
+cluster project identifiers. Copy a template into `local/` and edit it there.
 
-They contain Great Lakes paths, accounts, partitions, and walltimes. Treat them
-as an experiment record and starting point, not portable scripts.
+`local/` is ignored by git.

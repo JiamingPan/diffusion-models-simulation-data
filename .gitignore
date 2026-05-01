@@ -46,6 +46,7 @@ notebook.err
 # Pre-reorganization root-level working files kept locally but not tracked.
 /batch_scripts/
 /configs_saved/
+/local/
 /RANDOMFLIP_AND_QUANTILE_MINMAX_NOTE.md
 /config.json
 /scheduler_config.json

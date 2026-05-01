@@ -5,11 +5,11 @@ YAML files here are consumed by `nkern/cosmo_diffusion`'s
 
 ```text
 templates/     portable starting points for CAMELS LH experiments
-great_lakes/   Jiaming's Great Lakes experiment configs
 ```
 
-The `great_lakes/` configs contain cluster-specific absolute paths. They are
-kept as an experiment record, not as portable examples.
+Cluster-specific configs with absolute paths or account/project information are
+intentionally not tracked in git. Keep those locally, for example under
+`local/`, which is ignored by `.gitignore`.
 
 For a new experiment, copy a file from `templates/`, then edit:
 
