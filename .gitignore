@@ -1,0 +1,54 @@
+# macOS / editor
+.DS_Store
+.ipynb_checkpoints/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Python packaging / environments
+.venv/
+venv/
+env/
+build/
+dist/
+*.egg-info/
+
+# External source checkout. This repo builds on nkern/cosmo_diffusion but does
+# not vendor or claim ownership of that package.
+cosmo_diffusion/
+
+# Large data, generated samples, model weights, and checkpoints
+*.npy
+*.npz
+*.h5
+*.hdf5
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+saved_runs/
+checkpoints/
+logs/
+*.out
+*.err
+
+# Keep lightweight results structure, but ignore generated outputs by default.
+results/figures/*
+!results/figures/.gitkeep
+results/tables/*
+!results/tables/.gitkeep
+
+# Local cluster/Jupyter scratch files
+jupyter_info*.txt
+notebook.out
+notebook.err
+
+# Pre-reorganization root-level working files kept locally but not tracked.
+/batch_scripts/
+/configs_saved/
+/RANDOMFLIP_AND_QUANTILE_MINMAX_NOTE.md
+/config.json
+/scheduler_config.json
+/config*.yaml
+/*.ipynb
+/*.sbatch
