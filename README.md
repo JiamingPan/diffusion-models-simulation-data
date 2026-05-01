@@ -111,6 +111,20 @@ python scripts/reproducibility_eval.py \
   --output-json results/tables/run16_reproducibility.json
 ```
 
+Make a Figure-1-style pairwise reproducibility plot across model widths:
+
+```bash
+python scripts/plot_reproducibility_figure.py \
+  --manifest local/reproducibility_manifest.json \
+  --sample-root results/tables/samples \
+  --output-csv results/tables/reproducibility_scores.csv \
+  --output-figure results/figures/reproducibility_scores.png
+```
+
+For real experiments, copy `configs/templates/reproducibility_manifest_template.json`
+to an ignored local path and edit the run names, dataset sizes, and generated
+sample paths.
+
 ## Metrics
 
 The evaluation scripts include:
@@ -121,6 +135,21 @@ The evaluation scripts include:
 - Reproducibility diagnostics across generated sample sets, including power-spectrum consistency and one-point-statistic consistency.
 
 The notebooks add richer diagnostics such as PCA feature-space comparisons, PCA-FID/KID, image grids, and run-by-run training curves.
+
+The reproducibility-figure script uses a transparent project score:
+
+```text
+error = P(k) log10 MAE between generated sets
+      + absolute difference in field mean
+      + absolute difference in field standard deviation
+
+score = 1 / (1 + error)
+```
+
+This gives a compact score in `(0, 1]`, where larger means the two generated
+sample sets are more statistically similar under these diagnostics. It is a
+Figure-1-style diagnostic, not a claim to exactly match another paper's score
+unless that score is implemented separately.
 
 ## Current Experiment Notes
 

@@ -33,9 +33,11 @@ logs/
 *.err
 
 # Keep lightweight results structure, but ignore generated outputs by default.
-results/figures/*
+results/**
+!results/
+!results/figures/
+!results/tables/
 !results/figures/.gitkeep
-results/tables/*
 !results/tables/.gitkeep
 
 # Local cluster/Jupyter scratch files
