@@ -151,6 +151,26 @@ sample sets are more statistically similar under these diagnostics. It is a
 Figure-1-style diagnostic, not a claim to exactly match another paper's score
 unless that score is implemented separately.
 
+Compute a paper-style SSCD generalizability curve for one model width:
+
+```bash
+python scripts/plot_generalizability_sscd.py \
+  --arch u64 \
+  --config-dir local/fig1_lh/configs \
+  --sample-root results/tables/samples \
+  --sscd-path /path/to/sscd_disc_mixup.torchscript.pt \
+  --output-csv results/tables/generalizability_sscd_u64.csv \
+  --output-figure results/figures/generalizability_sscd_u64.png
+```
+
+This score follows the near-copy logic used in SSCD-based generalizability
+plots: a generated image is counted as memorized if its maximum SSCD cosine
+similarity to any real training image exceeds the threshold. Keep this separate
+from P(k): SSCD is a copy/generalization diagnostic, while P(k) is a
+physics-fidelity diagnostic. See `docs/sscd_generalizability_note.md` for the
+equations and the reason P(k)-nearest-neighbor scores are not equivalent to
+SSCD copy detection.
+
 ## Current Experiment Notes
 
 The templates include U64, U128, and U256-width starting points with centered max-abs normalization and CAMELS slice-thinning via `zthin`.

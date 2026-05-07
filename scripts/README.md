@@ -7,4 +7,5 @@ Lightweight wrappers for training, sampling, and evaluation.
 - `evaluate_samples.py`: computes histogram, power-spectrum, and nearest-neighbor metrics.
 - `reproducibility_eval.py`: compares multiple generated sample sets.
 - `plot_reproducibility_figure.py`: makes a Figure-1-style pairwise reproducibility plot from a manifest of generated sample files.
+- `plot_generalizability_sscd.py`: computes an SSCD near-copy/generalization curve for one architecture across training-set sizes.
 - `slurm/train_template.sbatch`: sanitized Slurm template. Copy it into an ignored local path and edit account, partition, paths, and walltime there.
