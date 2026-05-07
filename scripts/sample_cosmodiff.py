@@ -17,6 +17,18 @@ def _ensure_cosmodiff_on_path(project_root: Path) -> None:
         sys.path.insert(0, str(candidate))
 
 
+def _looks_like_checkpoint(path: Path) -> bool:
+    return (
+        path.is_dir()
+        and (
+            (path / "config.json").exists()
+            or (path / "model_index.json").exists()
+            or any(path.glob("diffusion_pytorch_model.*"))
+            or path.name.startswith("checkpoint-")
+        )
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", required=True, help="Checkpoint directory or run output directory.")
@@ -34,7 +46,7 @@ def main() -> None:
     from cosmodiff.optim import generate
 
     checkpoint = Path(args.checkpoint)
-    if checkpoint.is_dir() and not (checkpoint / "model_index.json").exists():
+    if checkpoint.is_dir() and not _looks_like_checkpoint(checkpoint):
         latest = utils.find_latest_checkpoint(str(checkpoint))
         if latest is None:
             raise FileNotFoundError(f"No checkpoint found under {checkpoint}")
