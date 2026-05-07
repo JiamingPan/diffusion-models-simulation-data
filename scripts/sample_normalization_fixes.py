@@ -12,6 +12,11 @@ from pathlib import Path
 
 RUNS = [
     {
+        "run_base": "nf_u64_n500_e100",
+        "checkpoint": "nf_u64_n500_e100_checkpoints/checkpoint-epoch-0099",
+        "image_size": 128,
+    },
+    {
         "run_base": "nf_u128_n500_e100",
         "checkpoint": "nf_u128_n500_e100_checkpoints/checkpoint-epoch-0099",
         "image_size": 128,
