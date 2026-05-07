@@ -30,11 +30,17 @@ def _looks_like_checkpoint(path: Path) -> bool:
     )
 
 
-def _load_scheduler_from_config(config_path: Path | None):
+def _load_scheduler_from_config(config_path: Path | None, *, allow_default_scheduler: bool = False):
     import diffusers
     from diffusers import DDPMScheduler
 
     if config_path is None:
+        if not allow_default_scheduler:
+            raise ValueError(
+                "Checkpoint is missing saved scheduler metadata, so --config is required "
+                "to reconstruct the training scheduler. Pass --allow-default-scheduler "
+                "only for explicit smoke tests."
+            )
         print("No --config supplied; using DDPMScheduler(num_train_timesteps=1000).")
         return DDPMScheduler(num_train_timesteps=1000)
 
@@ -50,7 +56,7 @@ def _load_scheduler_from_config(config_path: Path | None):
     return scheduler_cls(**scheduler_config.get("kwargs", {}))
 
 
-def _load_for_sampling(checkpoint: Path, config_path: Path | None):
+def _load_for_sampling(checkpoint: Path, config_path: Path | None, *, allow_default_scheduler: bool = False):
     import diffusers
     from cosmodiff import utils
 
@@ -67,7 +73,7 @@ def _load_for_sampling(checkpoint: Path, config_path: Path | None):
         )
 
     model = diffusers.UNet2DModel.from_pretrained(str(checkpoint))
-    scheduler = _load_scheduler_from_config(config_path)
+    scheduler = _load_scheduler_from_config(config_path, allow_default_scheduler=allow_default_scheduler)
     return model, scheduler
 
 
@@ -75,6 +81,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", required=True, help="Checkpoint directory or run output directory.")
     parser.add_argument("--config", default=None, help="Optional run YAML used to reconstruct the noise scheduler.")
+    parser.add_argument(
+        "--allow-default-scheduler",
+        action="store_true",
+        help="Allow fallback to DDPMScheduler(num_train_timesteps=1000) when checkpoint scheduler metadata is missing.",
+    )
     parser.add_argument("--output", required=True, help="Output .npy path.")
     parser.add_argument("--num-samples", type=int, default=64)
     parser.add_argument("--batch-size", type=int, default=16)
@@ -96,7 +107,11 @@ def main() -> None:
         checkpoint = Path(latest)
 
     config_path = Path(args.config) if args.config else None
-    model, scheduler = _load_for_sampling(checkpoint, config_path)
+    model, scheduler = _load_for_sampling(
+        checkpoint,
+        config_path,
+        allow_default_scheduler=args.allow_default_scheduler,
+    )
     device = torch.device(args.device)
     model.to(device)
     model.eval()
