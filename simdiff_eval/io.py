@@ -40,7 +40,7 @@ def cubes_to_slices(cubes: np.ndarray, zthin: int = 1) -> np.ndarray:
     return arr.reshape(-1, 1, *arr.shape[-2:])
 
 
-def load_real_from_config(config_path: str | Path) -> np.ndarray:
+def load_real_from_config(config_path: str | Path, max_raw_samples: int | None = None) -> np.ndarray:
     """Load real data using ``cosmodiff`` config normalization.
 
     This requires the local ``cosmo_diffusion`` checkout to be on
@@ -56,6 +56,10 @@ def load_real_from_config(config_path: str | Path) -> np.ndarray:
     config = dict(config)
     config.setdefault("global", {})["device"] = "cpu"
     config.setdefault("data", {})["keep_on_cpu"] = True
+    if max_raw_samples is not None:
+        data_cfg = config.setdefault("data", {})
+        current = data_cfg.get("n_samples")
+        data_cfg["n_samples"] = int(max_raw_samples) if current is None else min(int(current), int(max_raw_samples))
     try:
         parsed = utils.parse_config_data(config)
     except ValueError as exc:
