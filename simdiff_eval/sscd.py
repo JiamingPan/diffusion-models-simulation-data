@@ -27,6 +27,8 @@ def load_sscd_torchscript(path: str | Path, device: str | torch.device | None = 
 
 
 def _as_nchw_tensor(images: np.ndarray | torch.Tensor) -> torch.Tensor:
+    if isinstance(images, np.ndarray) and not images.flags.writeable:
+        images = images.copy()
     tensor = torch.as_tensor(images, dtype=torch.float32)
     if tensor.ndim == 3:
         tensor = tensor[:, None, :, :]
