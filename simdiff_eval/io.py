@@ -56,5 +56,75 @@ def load_real_from_config(config_path: str | Path) -> np.ndarray:
     config = dict(config)
     config.setdefault("global", {})["device"] = "cpu"
     config.setdefault("data", {})["keep_on_cpu"] = True
-    dataset = utils.parse_config_data(config)
+    try:
+        parsed = utils.parse_config_data(config)
+    except ValueError as exc:
+        if "Unknown normalization mode 'tanh'" not in str(exc):
+            raise
+        return _load_real_tanh_from_config(config, utils)
+
+    dataset = parsed[0] if isinstance(parsed, tuple) else parsed
     return dataset.arrays.detach().cpu().numpy()
+
+
+def _load_real_tanh_from_config(config: dict[str, Any], utils_module: Any) -> np.ndarray:
+    """Load real data for older cosmodiff checkouts missing tanh normalization."""
+    import torch
+
+    data_cfg = config["data"]
+    global_cfg = config.get("global", {})
+    dtype = getattr(torch, global_cfg.get("dtype", "float32"))
+    img_read_fn = getattr(utils_module, data_cfg["img_read_fn"])
+    images = img_read_fn(data_cfg["img_path"])
+
+    n_samples = data_cfg.get("n_samples", None)
+    seed = data_cfg.get("seed", None)
+    if n_samples is not None:
+        if seed is None:
+            idx = slice(n_samples)
+        else:
+            rng = np.random.default_rng(seed)
+            idx = rng.choice(len(images), size=n_samples, replace=False)
+        images = images[idx]
+    else:
+        images = images[:]
+
+    images = torch.as_tensor(np.array(images, copy=True), device="cpu", dtype=dtype)
+    if data_cfg.get("log", False):
+        images = images.log()
+
+    norm_kwargs = dict(data_cfg.get("norm_kwargs") or {})
+    center = norm_kwargs.get("center", None)
+    if center is None:
+        center = images.mean()
+    elif not torch.is_tensor(center):
+        center = torch.as_tensor(center, device=images.device, dtype=images.dtype)
+    images = images - center
+
+    xmax = norm_kwargs.get("xmax", None)
+    if xmax is None:
+        xmax = images.abs().max()
+    elif not torch.is_tensor(xmax):
+        xmax = torch.as_tensor(xmax, device=images.device, dtype=images.dtype)
+    images = images / xmax
+
+    alpha = float(norm_kwargs.get("alpha", 1.0))
+    beta = float(norm_kwargs.get("beta", 1.0))
+    gamma = float(norm_kwargs.get("gamma", 1.0))
+    delta = float(norm_kwargs.get("delta", 1.0))
+    sigma = float(norm_kwargs.get("sigma", 1.0))
+    mu = float(norm_kwargs.get("mu", 0.0))
+
+    shifted = images - mu
+    pos = alpha * torch.tanh((gamma * shifted) / alpha)
+    neg = beta * torch.tanh((delta * shifted) / beta)
+    images = torch.where(shifted >= 0, pos, neg) * sigma
+
+    if data_cfg.get("two_dim", True):
+        zthin = int(data_cfg.get("zthin", 1))
+        images = images[:, ::zthin]
+        images = images.reshape(-1, 1, *images.shape[-2:])
+    else:
+        images = images.unsqueeze(1)
+
+    return images.detach().cpu().numpy()

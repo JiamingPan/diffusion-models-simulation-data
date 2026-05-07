@@ -59,7 +59,7 @@ def _load_for_sampling(checkpoint: Path, config_path: Path | None):
         return model, scheduler
     except FileNotFoundError as exc:
         missing = Path(exc.filename or "")
-        if missing.name not in {"noise_scheduler.pkl", "optimizer.pkl", "lr_scheduler.pkl"}:
+        if missing.name not in {"checkpoint_config.yaml", "noise_scheduler.pkl", "optimizer.pkl", "lr_scheduler.pkl"}:
             raise
         print(
             f"{checkpoint} is missing {missing.name}; loading UNet weights directly "
