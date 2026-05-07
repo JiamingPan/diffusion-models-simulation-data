@@ -39,6 +39,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint-root", required=True, help="Directory containing *_checkpoints directories.")
     parser.add_argument("--config-dir", default=None, help="Optional directory containing per-run YAML configs.")
     parser.add_argument("--output-dir", default="results/tables/samples", help="Where to write generated .npy files.")
+    parser.add_argument(
+        "--run-base",
+        action="append",
+        choices=[run["run_base"] for run in RUNS],
+        help="Run base to sample. May be passed more than once. Defaults to all runs.",
+    )
     parser.add_argument("--num-samples", type=int, default=1, help="Total samples to generate per checkpoint.")
     parser.add_argument("--batch-size", type=int, default=1, help="Samples denoised at once on GPU.")
     parser.add_argument("--seed", type=int, default=123)
@@ -64,7 +70,12 @@ def main() -> None:
     config_dir = Path(args.config_dir).expanduser() if args.config_dir else None
     output_dir = Path(args.output_dir).expanduser()
 
-    for run in RUNS:
+    selected_runs = RUNS
+    if args.run_base:
+        requested = set(args.run_base)
+        selected_runs = [run for run in RUNS if run["run_base"] in requested]
+
+    for run in selected_runs:
         run_base = run["run_base"]
         checkpoint = checkpoint_root / run["checkpoint"]
         output = output_dir / f"{run_base}_seed{args.seed}.npy"

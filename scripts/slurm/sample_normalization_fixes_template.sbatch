@@ -26,16 +26,23 @@ PYTHON_BIN=${PYTHON_BIN:-python}
 NUM_SAMPLES=${NUM_SAMPLES:-1}
 BATCH_SIZE=${BATCH_SIZE:-1}
 SEED=${SEED:-123}
+RUN_BASE=${RUN_BASE:-}
 
 cd "${PROJECT_DIR}"
 mkdir -p logs/normalization_fixes results/tables/samples
 
 export PYTHONPATH="${COSMODIFF_DIR}:${PROJECT_DIR}:${PYTHONPATH:-}"
 
+RUN_BASE_ARGS=()
+if [[ -n "${RUN_BASE}" ]]; then
+  RUN_BASE_ARGS+=(--run-base "${RUN_BASE}")
+fi
+
 "${PYTHON_BIN}" scripts/sample_normalization_fixes.py \
   --checkpoint-root "${CHECKPOINT_ROOT}" \
   --config-dir "${CONFIG_DIR}" \
   --output-dir "${PROJECT_DIR}/results/tables/samples" \
+  "${RUN_BASE_ARGS[@]}" \
   --num-samples "${NUM_SAMPLES}" \
   --batch-size "${BATCH_SIZE}" \
   --seed "${SEED}" \
