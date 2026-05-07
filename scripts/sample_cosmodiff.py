@@ -9,6 +9,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import yaml
 
 
 def _ensure_cosmodiff_on_path(project_root: Path) -> None:
@@ -29,9 +30,51 @@ def _looks_like_checkpoint(path: Path) -> bool:
     )
 
 
+def _load_scheduler_from_config(config_path: Path | None):
+    import diffusers
+    from diffusers import DDPMScheduler
+
+    if config_path is None:
+        print("No --config supplied; using DDPMScheduler(num_train_timesteps=1000).")
+        return DDPMScheduler(num_train_timesteps=1000)
+
+    with config_path.open() as f:
+        config = yaml.safe_load(f)
+
+    scheduler_config = config.get("noise_scheduler")
+    if scheduler_config is None:
+        print(f"{config_path} has no noise_scheduler block; using DDPMScheduler(num_train_timesteps=1000).")
+        return DDPMScheduler(num_train_timesteps=1000)
+
+    scheduler_cls = getattr(diffusers, scheduler_config["class"])
+    return scheduler_cls(**scheduler_config.get("kwargs", {}))
+
+
+def _load_for_sampling(checkpoint: Path, config_path: Path | None):
+    import diffusers
+    from cosmodiff import utils
+
+    try:
+        model, scheduler, _, _, _ = utils.load_checkpoint(str(checkpoint))
+        return model, scheduler
+    except FileNotFoundError as exc:
+        missing = Path(exc.filename or "")
+        if missing.name not in {"noise_scheduler.pkl", "optimizer.pkl", "lr_scheduler.pkl"}:
+            raise
+        print(
+            f"{checkpoint} is missing {missing.name}; loading UNet weights directly "
+            "and reconstructing the noise scheduler."
+        )
+
+    model = diffusers.UNet2DModel.from_pretrained(str(checkpoint))
+    scheduler = _load_scheduler_from_config(config_path)
+    return model, scheduler
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", required=True, help="Checkpoint directory or run output directory.")
+    parser.add_argument("--config", default=None, help="Optional run YAML used to reconstruct the noise scheduler.")
     parser.add_argument("--output", required=True, help="Output .npy path.")
     parser.add_argument("--num-samples", type=int, default=64)
     parser.add_argument("--batch-size", type=int, default=16)
@@ -42,8 +85,8 @@ def main() -> None:
 
     project_root = Path.cwd()
     _ensure_cosmodiff_on_path(project_root)
-    from cosmodiff import utils
     from cosmodiff.optim import generate
+    from cosmodiff import utils
 
     checkpoint = Path(args.checkpoint)
     if checkpoint.is_dir() and not _looks_like_checkpoint(checkpoint):
@@ -52,7 +95,8 @@ def main() -> None:
             raise FileNotFoundError(f"No checkpoint found under {checkpoint}")
         checkpoint = Path(latest)
 
-    model, scheduler, _, _, _ = utils.load_checkpoint(str(checkpoint))
+    config_path = Path(args.config) if args.config else None
+    model, scheduler = _load_for_sampling(checkpoint, config_path)
     device = torch.device(args.device)
     model.to(device)
     model.eval()
