@@ -67,7 +67,12 @@ def load_real_from_config(config_path: str | Path, max_raw_samples: int | None =
             raise
         return _load_real_tanh_from_config(config, utils)
 
-    dataset = parsed[0] if isinstance(parsed, tuple) else parsed
+    if isinstance(parsed, dict):
+        dataset = parsed["data"]
+    elif isinstance(parsed, tuple):
+        dataset = parsed[0]
+    else:
+        dataset = parsed
     return dataset.arrays.detach().cpu().numpy()
 
 
