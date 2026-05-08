@@ -69,6 +69,11 @@ if [[ ! -f "${CONFIG_PATH}" ]]; then
   exit 1
 fi
 
+"${PYTHON_BIN}" scripts/prepare_repro_u64_u128_configs.py \
+  --project-dir "${PROJECT_DIR}" \
+  --check-only \
+  --run-name "${RUN_NAME}"
+
 if [[ ! -d "${CHECKPOINT_DIR}" ]]; then
   echo "Missing checkpoint directory: ${CHECKPOINT_DIR}" >&2
   exit 1

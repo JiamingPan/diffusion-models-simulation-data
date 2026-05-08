@@ -57,6 +57,11 @@ if [[ ! -f "${CONFIG_PATH}" ]]; then
   exit 1
 fi
 
+"${PYTHON_BIN}" scripts/prepare_repro_u64_u128_configs.py \
+  --project-dir "${PROJECT_DIR}" \
+  --check-only \
+  --run-name "${RUN_NAME}"
+
 if [[ "${SKIP_IF_ANY_CHECKPOINT}" == "1" ]] && compgen -G "${CHECKPOINT_DIR}/checkpoint-*" > /dev/null; then
   echo "Skipping ${RUN_NAME}; checkpoint already exists under ${CHECKPOINT_DIR}"
   exit 0

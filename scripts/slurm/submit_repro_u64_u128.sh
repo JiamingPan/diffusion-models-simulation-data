@@ -10,11 +10,17 @@ set -euo pipefail
 #   SUBMIT_SAMPLE=0     submit training only
 #   NUM_SAMPLES=512     generated samples per trained model for sampling
 #   OVERWRITE=1         regenerate sample .npy files if they already exist
+#   PREPARE_CONFIGS=0   skip rewriting local/fig1_lh configs
 
 PROJECT_DIR=${PROJECT_DIR:-/home/jiamingp/diffusion_models_repo}
 SUBMIT_SAMPLE=${SUBMIT_SAMPLE:-1}
+PREPARE_CONFIGS=${PREPARE_CONFIGS:-1}
 
 cd "${PROJECT_DIR}"
+
+if [[ "${PREPARE_CONFIGS}" == "1" ]]; then
+  python scripts/prepare_repro_u64_u128_configs.py --project-dir "${PROJECT_DIR}"
+fi
 
 train_job=$(sbatch --parsable scripts/slurm/train_repro_u64_u128_array.sbatch)
 echo "Submitted training array: ${train_job}"
