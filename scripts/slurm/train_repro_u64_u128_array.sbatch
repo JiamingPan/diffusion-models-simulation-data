@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=80gb
-#SBATCH --time=48:00:00
+#SBATCH --time=24:00:00
 #SBATCH --array=0-19%4
 #SBATCH -o /home/jiamingp/diffusion_models_repo/logs/fig1_lh/train_%A_%a.out
 #SBATCH -e /home/jiamingp/diffusion_models_repo/logs/fig1_lh/train_%A_%a.err
