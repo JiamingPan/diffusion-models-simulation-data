@@ -3,6 +3,7 @@ scipy
 torch
 diffusers
 accelerate
+ema-pytorch
 pyyaml
 tqdm
 matplotlib

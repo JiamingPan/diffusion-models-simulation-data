@@ -5,6 +5,7 @@ TARGET_DIR=${TARGET_DIR:-/home/jiamingp/Diffusion_model/cosmo_diffusion_normaliz
 VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
 REPO_URL=${REPO_URL:-https://github.com/nkern/cosmo_diffusion.git}
 BRANCH=${BRANCH:-normalization_fixes}
+INSTALL_MISSING_DEPS=${INSTALL_MISSING_DEPS:-1}
 
 mkdir -p "$(dirname "${TARGET_DIR}")"
 
@@ -23,6 +24,18 @@ if [[ -f "${VENV_PATH}/bin/activate" ]]; then
   source "${VENV_PATH}/bin/activate"
 fi
 
+if ! python - <<'PY'
+import ema_pytorch  # noqa: F401
+PY
+then
+  if [[ "${INSTALL_MISSING_DEPS}" == "1" ]]; then
+    python -m pip install ema-pytorch
+  else
+    echo "Missing dependency: ema-pytorch. Install it with: python -m pip install ema-pytorch" >&2
+    exit 1
+  fi
+fi
+
 export COSMODIFF_DIR="${TARGET_DIR}"
 export PYTHONPATH="${COSMODIFF_DIR}:${PYTHONPATH:-}"
 
@@ -33,6 +46,7 @@ from pathlib import Path
 from diffusers import DDPMScheduler
 from cosmodiff import optim
 from cosmodiff.transform import Normalization
+import ema_pytorch  # noqa: F401
 
 expected_root = Path(os.environ["COSMODIFF_DIR"]).resolve()
 optim_path = Path(inspect.getsourcefile(optim)).resolve()

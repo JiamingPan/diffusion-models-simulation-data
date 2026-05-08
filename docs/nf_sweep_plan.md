@@ -152,6 +152,11 @@ python scripts/prepare_nf_sweep_configs.py --project-dir "$PWD"
 python scripts/prepare_nf_sweep_configs.py --project-dir "$PWD" --check-only
 ```
 
+The setup script clones/updates the `normalization_fixes` branch into
+`/home/jiamingp/Diffusion_model/cosmo_diffusion_normalization_fixes_git`,
+installs `ema-pytorch` into the active environment if it is missing, and checks
+that Python imports `cosmodiff` from the git checkout.
+
 Submit training only:
 
 ```bash
