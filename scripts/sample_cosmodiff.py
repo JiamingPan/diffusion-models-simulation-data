@@ -13,6 +13,19 @@ import yaml
 
 
 def _ensure_cosmodiff_on_path(project_root: Path) -> None:
+    import importlib.util
+    import os
+
+    env_candidate = os.environ.get("COSMODIFF_DIR")
+    if env_candidate:
+        path = Path(env_candidate)
+        if path.exists() and str(path) not in sys.path:
+            sys.path.insert(0, str(path))
+        return
+
+    if importlib.util.find_spec("cosmodiff") is not None:
+        return
+
     candidate = project_root / "cosmo_diffusion"
     if candidate.exists() and str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))

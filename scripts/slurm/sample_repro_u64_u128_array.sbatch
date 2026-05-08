@@ -15,7 +15,8 @@
 set -euo pipefail
 
 PROJECT_DIR=${PROJECT_DIR:-/home/jiamingp/diffusion_models_repo}
-COSMODIFF_DIR=${COSMODIFF_DIR:-${PROJECT_DIR}/cosmo_diffusion}
+COSMODIFF_DIR=${COSMODIFF_DIR:-/home/jiamingp/Diffusion_model/cosmo_diffusion_normalization_fixes}
+VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
 CONFIG_DIR=${CONFIG_DIR:-${PROJECT_DIR}/local/fig1_lh/configs}
 CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-/scratch/huterer_root/huterer0/jiamingp/saved_runs/fig1_lh}
 SAMPLE_ROOT=${SAMPLE_ROOT:-${PROJECT_DIR}/results/fig1_lh/samples}
@@ -62,12 +63,31 @@ fi
 
 cd "${PROJECT_DIR}"
 mkdir -p logs/fig1_lh "${SAMPLE_ROOT}"
+if [[ -f "${VENV_PATH}/bin/activate" ]]; then
+  source "${VENV_PATH}/bin/activate"
+fi
 export PYTHONPATH="${COSMODIFF_DIR}:${PROJECT_DIR}:${PYTHONPATH:-}"
+export COSMODIFF_DIR
 
 if [[ ! -f "${CONFIG_PATH}" ]]; then
   echo "Missing config: ${CONFIG_PATH}" >&2
   exit 1
 fi
+
+if [[ ! -f "${COSMODIFF_DIR}/scripts/cosmodiff_train.py" ]]; then
+  echo "Missing normalization-fix cosmo_diffusion checkout: ${COSMODIFF_DIR}" >&2
+  exit 1
+fi
+
+"${PYTHON_BIN}" - <<'PY'
+import sys
+from pathlib import Path
+from cosmodiff import utils
+text = Path(utils.__file__).read_text()
+if "tanh_norm" not in text and "self.method in ['tanh']" not in text:
+    raise SystemExit(f"cosmodiff at {utils.__file__} does not support tanh normalization")
+print("cosmodiff tanh support:", utils.__file__)
+PY
 
 "${PYTHON_BIN}" scripts/prepare_repro_u64_u128_configs.py \
   --project-dir "${PROJECT_DIR}" \
