@@ -44,15 +44,30 @@ VARIANTS = [
         "label": "baseline + post-hoc EMA",
         "beta_schedule": "sigmoid",
         "prediction_type": "v_prediction",
+        "scheduler_extra": {},
         "sigma_log_normal": None,
         "min_snr_gamma": None,
         "note": "Retrains the old baseline with EMA snapshots enabled.",
+    },
+    {
+        "tag": "zero_snr",
+        "label": "zero terminal SNR",
+        "beta_schedule": "sigmoid",
+        "prediction_type": "v_prediction",
+        "scheduler_extra": {
+            "rescale_betas_zero_snr": True,
+            "timestep_spacing": "trailing",
+        },
+        "sigma_log_normal": None,
+        "min_snr_gamma": None,
+        "note": "Tests zero-terminal-SNR schedule rescaling while keeping v_prediction.",
     },
     {
         "tag": "beta_linear",
         "label": "linear beta schedule",
         "beta_schedule": "linear",
         "prediction_type": "v_prediction",
+        "scheduler_extra": {},
         "sigma_log_normal": None,
         "min_snr_gamma": None,
         "note": "Tests beta_schedule only; old baseline used sigmoid.",
@@ -62,6 +77,7 @@ VARIANTS = [
         "label": "cosine beta schedule",
         "beta_schedule": "squaredcos_cap_v2",
         "prediction_type": "v_prediction",
+        "scheduler_extra": {},
         "sigma_log_normal": None,
         "min_snr_gamma": None,
         "note": "Tests diffusers' cosine-like DDPM schedule.",
@@ -71,6 +87,7 @@ VARIANTS = [
         "label": "epsilon prediction",
         "beta_schedule": "sigmoid",
         "prediction_type": "epsilon",
+        "scheduler_extra": {},
         "sigma_log_normal": None,
         "min_snr_gamma": None,
         "note": "Tests prediction_type only; old baseline used v_prediction.",
@@ -80,6 +97,7 @@ VARIANTS = [
         "label": "EDM log-normal sigma",
         "beta_schedule": "sigmoid",
         "prediction_type": "v_prediction",
+        "scheduler_extra": {},
         "sigma_log_normal": [-1.2, 1.2],
         "min_snr_gamma": None,
         "note": "EDM default log-normal noise-level distribution.",
@@ -89,6 +107,7 @@ VARIANTS = [
         "label": "EDM2 latent log-normal sigma",
         "beta_schedule": "sigmoid",
         "prediction_type": "v_prediction",
+        "scheduler_extra": {},
         "sigma_log_normal": [-0.4, 1.0],
         "min_snr_gamma": None,
         "note": "EDM2 paper setting for ImageNet latents; useful as a nearby test.",
@@ -98,6 +117,7 @@ VARIANTS = [
         "label": "Min-SNR gamma 5",
         "beta_schedule": "sigmoid",
         "prediction_type": "v_prediction",
+        "scheduler_extra": {},
         "sigma_log_normal": None,
         "min_snr_gamma": 5.0,
         "note": "Tests Min-SNR weighting with the old baseline scheduler.",
@@ -111,7 +131,7 @@ def run_name(arch: str, tag: str) -> str:
 
 def build_config(name: str, arch: str, variant: dict[str, Any]) -> dict[str, Any]:
     arch_cfg = ARCHES[arch]
-    return {
+    config = {
         "global": {
             "device": "cuda",
             "dtype": "float32",
@@ -214,6 +234,8 @@ def build_config(name: str, arch: str, variant: dict[str, Any]) -> dict[str, Any
             "sigma_log_normal": variant["sigma_log_normal"],
         },
     }
+    config["noise_scheduler"]["kwargs"].update(variant["scheduler_extra"])
+    return config
 
 
 def iter_runs() -> list[dict[str, Any]]:

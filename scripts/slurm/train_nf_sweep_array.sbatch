@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=80gb
 #SBATCH --time=24:00:00
-#SBATCH --array=0-13%4
+#SBATCH --array=0-15%4
 #SBATCH -o /home/jiamingp/diffusion_models_repo/logs/nf_sweep/train_%A_%a.out
 #SBATCH -e /home/jiamingp/diffusion_models_repo/logs/nf_sweep/train_%A_%a.err
 #SBATCH -A huterer0
@@ -24,6 +24,7 @@ SKIP_IF_ANY_CHECKPOINT=${SKIP_IF_ANY_CHECKPOINT:-0}
 
 RUNS=(
   nf_sweep_u64_n500_e100_base_ema
+  nf_sweep_u64_n500_e100_zero_snr
   nf_sweep_u64_n500_e100_beta_linear
   nf_sweep_u64_n500_e100_beta_cosine
   nf_sweep_u64_n500_e100_pred_eps
@@ -31,6 +32,7 @@ RUNS=(
   nf_sweep_u64_n500_e100_sigma_edm2
   nf_sweep_u64_n500_e100_minsnr5
   nf_sweep_u128_n500_e100_base_ema
+  nf_sweep_u128_n500_e100_zero_snr
   nf_sweep_u128_n500_e100_beta_linear
   nf_sweep_u128_n500_e100_beta_cosine
   nf_sweep_u128_n500_e100_pred_eps

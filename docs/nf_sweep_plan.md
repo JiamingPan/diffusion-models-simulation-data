@@ -20,6 +20,8 @@ Each architecture gets these runs:
 
 - `base_ema`: old sigmoid + `v_prediction` baseline, retrained with post-hoc
   EMA enabled.
+- `zero_snr`: old sigmoid + `v_prediction`, plus
+  `rescale_betas_zero_snr: true` and `timestep_spacing: trailing`.
 - `beta_linear`: changes only `beta_schedule` to `linear`.
 - `beta_cosine`: changes only `beta_schedule` to `squaredcos_cap_v2`.
 - `pred_eps`: changes only `prediction_type` to `epsilon`.
