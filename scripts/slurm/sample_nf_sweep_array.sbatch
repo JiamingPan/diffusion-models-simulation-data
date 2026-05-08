@@ -25,6 +25,8 @@ BATCH_SIZE=${BATCH_SIZE:-8}
 SEED=${SEED:-123}
 OVERWRITE=${OVERWRITE:-0}
 DDIM_THINNING=${DDIM_THINNING:-}
+REQUIRED_COSMODIFF_BRANCH=${REQUIRED_COSMODIFF_BRANCH:-normalization_fixes}
+ALLOW_COSMODIFF_BRANCH_MISMATCH=${ALLOW_COSMODIFF_BRANCH_MISMATCH:-0}
 
 RUNS=(
   nf_sweep_u64_n500_e100_base_ema
@@ -75,6 +77,39 @@ if [[ ! -f "${COSMODIFF_DIR}/scripts/cosmodiff_sample.py" ]]; then
   echo "Missing normalization-fix cosmo_diffusion sampler: ${COSMODIFF_DIR}" >&2
   exit 1
 fi
+
+if [[ -d "${COSMODIFF_DIR}/.git" ]]; then
+  COSMODIFF_BRANCH=$(git -C "${COSMODIFF_DIR}" rev-parse --abbrev-ref HEAD)
+  COSMODIFF_COMMIT=$(git -C "${COSMODIFF_DIR}" rev-parse --short HEAD)
+  echo "cosmodiff git branch: ${COSMODIFF_BRANCH}"
+  echo "cosmodiff git commit: ${COSMODIFF_COMMIT}"
+  if [[ -n "${REQUIRED_COSMODIFF_BRANCH}" && "${COSMODIFF_BRANCH}" != "${REQUIRED_COSMODIFF_BRANCH}" && "${ALLOW_COSMODIFF_BRANCH_MISMATCH}" != "1" ]]; then
+    echo "Wrong cosmo_diffusion branch: expected ${REQUIRED_COSMODIFF_BRANCH}, got ${COSMODIFF_BRANCH}" >&2
+    echo "Set ALLOW_COSMODIFF_BRANCH_MISMATCH=1 only if you intentionally use a detached/test checkout." >&2
+    exit 1
+  fi
+else
+  echo "Cannot verify cosmo_diffusion git branch because ${COSMODIFF_DIR}/.git is missing." >&2
+  echo "Set ALLOW_COSMODIFF_BRANCH_MISMATCH=1 only if this is an intentional non-git install." >&2
+  if [[ "${ALLOW_COSMODIFF_BRANCH_MISMATCH}" != "1" ]]; then
+    exit 1
+  fi
+fi
+
+"${PYTHON_BIN}" - <<'PY'
+import inspect
+import os
+from pathlib import Path
+from cosmodiff import optim
+
+expected_root = Path(os.environ["COSMODIFF_DIR"]).resolve()
+optim_path = Path(inspect.getsourcefile(optim)).resolve()
+if expected_root not in optim_path.parents:
+    raise SystemExit(
+        f"Imported cosmodiff from {optim_path}, expected it under {expected_root}"
+    )
+print("cosmodiff sampling support:", optim_path)
+PY
 
 if [[ -f "${OUTPUT_PATH}" && "${OVERWRITE}" != "1" ]]; then
   echo "Skipping existing sample file: ${OUTPUT_PATH}"
