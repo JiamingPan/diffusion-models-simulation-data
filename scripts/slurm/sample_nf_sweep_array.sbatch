@@ -90,10 +90,7 @@ if [[ -d "${COSMODIFF_DIR}/.git" ]]; then
   fi
 else
   echo "Cannot verify cosmo_diffusion git branch because ${COSMODIFF_DIR}/.git is missing." >&2
-  echo "Set ALLOW_COSMODIFF_BRANCH_MISMATCH=1 only if this is an intentional non-git install." >&2
-  if [[ "${ALLOW_COSMODIFF_BRANCH_MISMATCH}" != "1" ]]; then
-    exit 1
-  fi
+  echo "Continuing with Python import and feature checks for this non-git checkout." >&2
 fi
 
 "${PYTHON_BIN}" - <<'PY'

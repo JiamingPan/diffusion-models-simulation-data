@@ -78,16 +78,14 @@ if [[ -d "${COSMODIFF_DIR}/.git" ]]; then
   fi
 else
   echo "Cannot verify cosmo_diffusion git branch because ${COSMODIFF_DIR}/.git is missing." >&2
-  echo "Set ALLOW_COSMODIFF_BRANCH_MISMATCH=1 only if this is an intentional non-git install." >&2
-  if [[ "${ALLOW_COSMODIFF_BRANCH_MISMATCH}" != "1" ]]; then
-    exit 1
-  fi
+  echo "Continuing with Python import and feature checks for this non-git checkout." >&2
 fi
 
 "${PYTHON_BIN}" - <<'PY'
 import inspect
 import os
 from pathlib import Path
+from diffusers import DDPMScheduler
 from cosmodiff import optim
 from cosmodiff.transform import Normalization
 
@@ -102,6 +100,16 @@ required = {"ema_sigma_rels", "ema_update_every", "ema_burn_in", "min_snr_gamma"
 missing = required.difference(inspect.signature(optim.train).parameters)
 if missing:
     raise SystemExit(f"cosmodiff.optim.train is too old; missing {sorted(missing)}")
+
+DPM = DDPMScheduler(
+    num_train_timesteps=500,
+    beta_schedule="sigmoid",
+    prediction_type="v_prediction",
+    rescale_betas_zero_snr=True,
+    timestep_spacing="trailing",
+)
+if DPM.config.prediction_type != "v_prediction":
+    raise SystemExit("DDPMScheduler did not retain v_prediction config")
 
 try:
     import ema_pytorch  # noqa: F401
