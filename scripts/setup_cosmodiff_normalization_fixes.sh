@@ -61,4 +61,4 @@ PY
 
 echo
 echo "Use this checkout for nf_sweep jobs:"
-echo "  export COSMODIFF_DIR=${TARGET_DIR}"
+echo "  export COSMODIFF_DIR_OVERRIDE=${TARGET_DIR}"

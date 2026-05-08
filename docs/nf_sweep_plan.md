@@ -147,6 +147,7 @@ Generate configs only:
 cd /home/jiamingp/diffusion_models_repo
 git pull
 bash scripts/setup_cosmodiff_normalization_fixes.sh
+unset COSMODIFF_DIR
 python scripts/prepare_nf_sweep_configs.py --project-dir "$PWD"
 python scripts/prepare_nf_sweep_configs.py --project-dir "$PWD" --check-only
 ```

@@ -15,11 +15,19 @@
 set -euo pipefail
 
 PROJECT_DIR=${PROJECT_DIR:-/home/jiamingp/diffusion_models_repo}
-DEFAULT_COSMODIFF_DIR=/home/jiamingp/Diffusion_model/cosmo_diffusion_normalization_fixes_git
-if [[ ! -f "${DEFAULT_COSMODIFF_DIR}/scripts/cosmodiff_train.py" ]]; then
-  DEFAULT_COSMODIFF_DIR=/home/jiamingp/Diffusion_model/cosmo_diffusion_normalization_fixes
+INHERITED_COSMODIFF_DIR=${COSMODIFF_DIR:-}
+PREFERRED_COSMODIFF_DIR=/home/jiamingp/Diffusion_model/cosmo_diffusion_normalization_fixes_git
+LEGACY_COSMODIFF_DIR=/home/jiamingp/Diffusion_model/cosmo_diffusion_normalization_fixes
+if [[ -n "${COSMODIFF_DIR_OVERRIDE:-}" ]]; then
+  COSMODIFF_DIR=${COSMODIFF_DIR_OVERRIDE}
+elif [[ -f "${PREFERRED_COSMODIFF_DIR}/scripts/cosmodiff_train.py" ]]; then
+  COSMODIFF_DIR=${PREFERRED_COSMODIFF_DIR}
+else
+  COSMODIFF_DIR=${LEGACY_COSMODIFF_DIR}
 fi
-COSMODIFF_DIR=${COSMODIFF_DIR:-${DEFAULT_COSMODIFF_DIR}}
+if [[ -n "${INHERITED_COSMODIFF_DIR}" && -z "${COSMODIFF_DIR_OVERRIDE:-}" && "${INHERITED_COSMODIFF_DIR}" != "${COSMODIFF_DIR}" ]]; then
+  echo "Ignoring inherited COSMODIFF_DIR=${INHERITED_COSMODIFF_DIR}; using ${COSMODIFF_DIR}" >&2
+fi
 VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
 CONFIG_DIR=${CONFIG_DIR:-${PROJECT_DIR}/local/nf_sweep/configs}
 CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-/scratch/huterer_root/huterer0/jiamingp/saved_runs/nf_sweep}
