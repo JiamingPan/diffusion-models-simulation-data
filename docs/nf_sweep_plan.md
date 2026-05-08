@@ -145,7 +145,10 @@ Generate configs only:
 
 ```bash
 cd /home/jiamingp/diffusion_models_repo
+git pull
+bash scripts/setup_cosmodiff_normalization_fixes.sh
 python scripts/prepare_nf_sweep_configs.py --project-dir "$PWD"
+python scripts/prepare_nf_sweep_configs.py --project-dir "$PWD" --check-only
 ```
 
 Submit training only:

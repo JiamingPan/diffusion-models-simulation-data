@@ -15,7 +15,11 @@
 set -euo pipefail
 
 PROJECT_DIR=${PROJECT_DIR:-/home/jiamingp/diffusion_models_repo}
-COSMODIFF_DIR=${COSMODIFF_DIR:-/home/jiamingp/Diffusion_model/cosmo_diffusion_normalization_fixes}
+DEFAULT_COSMODIFF_DIR=/home/jiamingp/Diffusion_model/cosmo_diffusion_normalization_fixes_git
+if [[ ! -f "${DEFAULT_COSMODIFF_DIR}/scripts/cosmodiff_train.py" ]]; then
+  DEFAULT_COSMODIFF_DIR=/home/jiamingp/Diffusion_model/cosmo_diffusion_normalization_fixes
+fi
+COSMODIFF_DIR=${COSMODIFF_DIR:-${DEFAULT_COSMODIFF_DIR}}
 VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
 CONFIG_DIR=${CONFIG_DIR:-${PROJECT_DIR}/local/nf_sweep/configs}
 CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-/scratch/huterer_root/huterer0/jiamingp/saved_runs/nf_sweep}
