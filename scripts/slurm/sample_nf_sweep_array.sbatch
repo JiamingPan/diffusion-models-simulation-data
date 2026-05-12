@@ -77,6 +77,7 @@ mkdir -p logs/nf_sweep "${SAMPLE_ROOT}"
 if [[ -f "${VENV_PATH}/bin/activate" ]]; then
   source "${VENV_PATH}/bin/activate"
 fi
+export PYTHONNOUSERSITE=1
 export PYTHONPATH="${COSMODIFF_DIR}:${PROJECT_DIR}:${PYTHONPATH:-}"
 export COSMODIFF_DIR
 

@@ -69,14 +69,60 @@ def _load_scheduler_from_config(config_path: Path | None, *, allow_default_sched
     return scheduler_cls(**scheduler_config.get("kwargs", {}))
 
 
+def _config_model_class(config_path: Path | None) -> str | None:
+    if config_path is None:
+        return None
+    with config_path.open() as f:
+        config = yaml.safe_load(f)
+    return config.get("model", {}).get("class")
+
+
+def _load_unet_direct(checkpoint: Path, config_path: Path | None, *, allow_default_scheduler: bool = False):
+    """Load UNet checkpoints without diffusers.AutoModel.
+
+    Some Great Lakes environments leak an old user-site ``transformers`` into
+    the venv.  ``diffusers.AutoModel`` then imports optional autoencoder code
+    and fails before it reaches the UNet.  Direct UNet loading avoids that
+    unrelated import path.
+    """
+    from diffusers import UNet2DModel
+
+    model = UNet2DModel.from_pretrained(str(checkpoint))
+    scheduler = _load_scheduler_from_config(
+        config_path,
+        allow_default_scheduler=allow_default_scheduler,
+    )
+    return model, scheduler
+
+
 def _load_for_sampling(checkpoint: Path, config_path: Path | None, *, allow_default_scheduler: bool = False):
-    import diffusers
     from cosmodiff import utils
+
+    model_class = _config_model_class(config_path)
+    if model_class in {"UNet2DModel", "diffusers.UNet2DModel"}:
+        try:
+            return _load_unet_direct(
+                checkpoint,
+                config_path,
+                allow_default_scheduler=allow_default_scheduler,
+            )
+        except Exception as exc:
+            print(f"Direct UNet load failed, trying cosmodiff load_checkpoint: {exc}")
 
     try:
         model, scheduler, _, _, _ = utils.load_checkpoint(str(checkpoint))
         return model, scheduler
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, ImportError, RuntimeError) as exc:
+        if not isinstance(exc, FileNotFoundError):
+            print(
+                "cosmodiff load_checkpoint failed; loading UNet weights directly "
+                f"and reconstructing the scheduler from config. Error: {exc}"
+            )
+            return _load_unet_direct(
+                checkpoint,
+                config_path,
+                allow_default_scheduler=allow_default_scheduler,
+            )
         missing = Path(exc.filename or "")
         if missing.name not in {"checkpoint_config.yaml", "noise_scheduler.pkl", "optimizer.pkl", "lr_scheduler.pkl"}:
             raise
@@ -85,9 +131,11 @@ def _load_for_sampling(checkpoint: Path, config_path: Path | None, *, allow_defa
             "and reconstructing the noise scheduler."
         )
 
-    model = diffusers.UNet2DModel.from_pretrained(str(checkpoint))
-    scheduler = _load_scheduler_from_config(config_path, allow_default_scheduler=allow_default_scheduler)
-    return model, scheduler
+    return _load_unet_direct(
+        checkpoint,
+        config_path,
+        allow_default_scheduler=allow_default_scheduler,
+    )
 
 
 def main() -> None:
