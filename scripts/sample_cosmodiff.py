@@ -21,6 +21,7 @@ def _install_sklearn_roc_curve_stub() -> None:
     minimal stub keeps the optional import path from touching that binary.
     """
     import os
+    from importlib.machinery import ModuleSpec
     import types
 
     if os.environ.get("COSMODIFF_DISABLE_SKLEARN_STUB") == "1":
@@ -30,6 +31,10 @@ def _install_sklearn_roc_curve_stub() -> None:
 
     sklearn = types.ModuleType("sklearn")
     metrics = types.ModuleType("sklearn.metrics")
+    sklearn.__spec__ = ModuleSpec("sklearn", loader=None, is_package=True)
+    sklearn.__path__ = []
+    metrics.__spec__ = ModuleSpec("sklearn.metrics", loader=None, is_package=True)
+    metrics.__path__ = []
 
     def roc_curve(*_args, **_kwargs):
         raise RuntimeError("sklearn.metrics.roc_curve is stubbed for cosmodiff sampling.")
