@@ -84,8 +84,12 @@ mkdir -p logs/nf_sweep_v2 "${SAMPLE_ROOT}"
 if [[ -f "${VENV_PATH}/bin/activate" ]]; then
   source "${VENV_PATH}/bin/activate"
 fi
-export PYTHONNOUSERSITE=1
-export PYTHONPATH="${COSMODIFF_DIR}:${PROJECT_DIR}:${PYTHONPATH:-}"
+STUB_ROOT="${PROJECT_DIR}/results/cache/python_stubs"
+mkdir -p "${STUB_ROOT}/sklearn/metrics"
+printf 'from . import metrics\n' > "${STUB_ROOT}/sklearn/__init__.py"
+printf "def roc_curve(*args, **kwargs):\n    raise RuntimeError('sklearn.metrics.roc_curve is stubbed for cosmodiff sampling')\n" > "${STUB_ROOT}/sklearn/metrics/__init__.py"
+export COSMODIFF_STUB_SKLEARN=1
+export PYTHONPATH="${STUB_ROOT}:${COSMODIFF_DIR}:${PROJECT_DIR}:${PYTHONPATH:-}"
 export COSMODIFF_DIR
 
 if [[ ! -f "${CONFIG_PATH}" ]]; then

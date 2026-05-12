@@ -12,6 +12,34 @@ import torch
 import yaml
 
 
+def _install_sklearn_roc_curve_stub() -> None:
+    """Avoid optional transformers -> sklearn imports on mixed HPC envs.
+
+    Recent diffusers/transformers can import ``sklearn.metrics.roc_curve`` while
+    importing UNet classes, even though diffusion sampling does not need it.  On
+    Great Lakes the Anaconda sklearn binary can fail with a GLIBCXX error.  A
+    minimal stub keeps the optional import path from touching that binary.
+    """
+    import os
+    import types
+
+    if os.environ.get("COSMODIFF_DISABLE_SKLEARN_STUB") == "1":
+        return
+    if "sklearn.metrics" in sys.modules:
+        return
+
+    sklearn = types.ModuleType("sklearn")
+    metrics = types.ModuleType("sklearn.metrics")
+
+    def roc_curve(*_args, **_kwargs):
+        raise RuntimeError("sklearn.metrics.roc_curve is stubbed for cosmodiff sampling.")
+
+    metrics.roc_curve = roc_curve
+    sklearn.metrics = metrics
+    sys.modules.setdefault("sklearn", sklearn)
+    sys.modules.setdefault("sklearn.metrics", metrics)
+
+
 def _ensure_cosmodiff_on_path(project_root: Path) -> None:
     import importlib.util
     import os
@@ -156,6 +184,7 @@ def main() -> None:
     args = parser.parse_args()
 
     project_root = Path.cwd()
+    _install_sklearn_roc_curve_stub()
     _ensure_cosmodiff_on_path(project_root)
     from cosmodiff.optim import generate
     from cosmodiff import utils
