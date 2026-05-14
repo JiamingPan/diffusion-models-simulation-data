@@ -20,7 +20,7 @@ import re
 from pathlib import Path
 
 
-SAFE_STEP_MARKER = "noise_scheduler.step(**step_kwargs)"
+SAFE_STEP_MARKER = "step_call_kwargs"
 
 
 def infer_model_output_name(context: str) -> str:
@@ -34,13 +34,8 @@ def infer_model_output_name(context: str) -> str:
 
 
 def replace_scheduler_step_call(source: str) -> tuple[str, bool]:
-    needs_repair = False
     if SAFE_STEP_MARKER in source:
-        m = re.search(r'"model_output":\s*([A-Za-z_][A-Za-z0-9_]*)', source)
-        if m and not re.search(rf"^\s*{re.escape(m.group(1))}\s*=", source, flags=re.MULTILINE):
-            needs_repair = True
-        elif m:
-            return source, False
+        return source, False
 
     lines = source.splitlines(keepends=True)
     out: list[str] = []
@@ -49,10 +44,14 @@ def replace_scheduler_step_call(source: str) -> tuple[str, bool]:
 
     while i < len(lines):
         line = lines[i]
-        if (
-            "images = noise_scheduler.step(" not in line
-            and not (needs_repair and "step_kwargs = {" in line)
-        ):
+        window = "".join(lines[i : min(i + 16, len(lines))])
+        is_prior_bad_patch = (
+            "step_kwargs = {" in line
+            and '"model_output":' in window
+            and "images = noise_scheduler.step(**step_kwargs).prev_sample" in window
+        )
+        is_original_step_call = "images = noise_scheduler.step(" in line
+        if not is_original_step_call and not is_prior_bad_patch:
             out.append(line)
             i += 1
             continue
@@ -60,7 +59,7 @@ def replace_scheduler_step_call(source: str) -> tuple[str, bool]:
         indent = line[: len(line) - len(line.lstrip())]
         model_output_name = infer_model_output_name("".join(out[-80:]))
         paren_balance = 0
-        if "step_kwargs = {" in line:
+        if is_prior_bad_patch:
             while i < len(lines):
                 if "images = noise_scheduler.step(**step_kwargs).prev_sample" in lines[i]:
                     i += 1
@@ -75,14 +74,12 @@ def replace_scheduler_step_call(source: str) -> tuple[str, bool]:
                 i += 1
         out.extend(
             [
-                f"{indent}step_kwargs = {{\n",
-                f"{indent}    \"model_output\": {model_output_name},\n",
-                f"{indent}    \"timestep\": t,\n",
-                f"{indent}    \"sample\": images,\n",
-                f"{indent}}}\n",
+                f"{indent}step_call_kwargs = {{}}\n",
+                f"{indent}if \"step_kwargs\" in locals():\n",
+                f"{indent}    step_call_kwargs.update(step_kwargs)\n",
                 f"{indent}if \"generator\" in noise_scheduler.step.__code__.co_varnames:\n",
-                f"{indent}    step_kwargs[\"generator\"] = generator\n",
-                f"{indent}images = noise_scheduler.step(**step_kwargs).prev_sample\n",
+                f"{indent}    step_call_kwargs[\"generator\"] = generator\n",
+                f"{indent}images = noise_scheduler.step({model_output_name}, t, images, **step_call_kwargs).prev_sample\n",
             ]
         )
         changed = True
@@ -154,13 +151,19 @@ def unwrap_synthesized_ema_model(source: str) -> tuple[str, bool]:
     return "".join(out), changed
 
 
+def source_for_patch(path: Path) -> tuple[str, Path]:
+    backup = path.with_suffix(path.suffix + ".codex_sampling_compat.bak")
+    if backup.exists():
+        return backup.read_text(), backup
+    return path.read_text(), backup
+
+
 def patch_optim(path: Path) -> bool:
-    source = path.read_text()
+    source, backup = source_for_patch(path)
     updated, changed_step = replace_scheduler_step_call(source)
     updated, changed_ema = skip_duplicate_ema_symlinks(updated)
-    changed = changed_step or changed_ema
+    changed = changed_step or changed_ema or updated != path.read_text()
     if changed:
-        backup = path.with_suffix(path.suffix + ".codex_sampling_compat.bak")
         if not backup.exists():
             backup.write_text(source)
         path.write_text(updated)
@@ -173,10 +176,10 @@ def patch_optim(path: Path) -> bool:
 
 
 def patch_sampler_script(path: Path) -> bool:
-    source = path.read_text()
+    source, backup = source_for_patch(path)
     updated, changed_unwrap = unwrap_synthesized_ema_model(source)
-    if changed_unwrap:
-        backup = path.with_suffix(path.suffix + ".codex_sampling_compat.bak")
+    changed = changed_unwrap or updated != path.read_text()
+    if changed:
         if not backup.exists():
             backup.write_text(source)
         path.write_text(updated)
