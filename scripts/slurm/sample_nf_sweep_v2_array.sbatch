@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=80gb
-#SBATCH --time=08:00:00
+#SBATCH --time=02:00:00
 #SBATCH --array=0-251%4
 #SBATCH -o /home/jiamingp/diffusion_models_repo/logs/nf_sweep_v2/sample_%A_%a.out
 #SBATCH -e /home/jiamingp/diffusion_models_repo/logs/nf_sweep_v2/sample_%A_%a.err
@@ -107,6 +107,15 @@ if [[ ! -f "${COSMODIFF_DIR}/scripts/cosmodiff_sample.py" ]]; then
   echo "Missing main cosmo_diffusion sampler: ${COSMODIFF_DIR}" >&2
   exit 1
 fi
+
+PATCH_LOCK="${COSMODIFF_DIR}/.codex_sampling_patch.lock"
+while ! mkdir "${PATCH_LOCK}" 2>/dev/null; do
+  sleep 1
+done
+trap 'rmdir "${PATCH_LOCK}" 2>/dev/null || true' EXIT
+"${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_sampling_compat.py" "${COSMODIFF_DIR}"
+rmdir "${PATCH_LOCK}" 2>/dev/null || true
+trap - EXIT
 
 COSMODIFF_BRANCH=$(git -C "${COSMODIFF_DIR}" rev-parse --abbrev-ref HEAD)
 COSMODIFF_COMMIT=$(git -C "${COSMODIFF_DIR}" rev-parse --short HEAD)
