@@ -16,15 +16,31 @@ Fixes:
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 
 
-SAFE_STEP_MARKER = '"model_output": noise_pred'
+SAFE_STEP_MARKER = "noise_scheduler.step(**step_kwargs)"
+
+
+def infer_model_output_name(context: str) -> str:
+    """Infer the denoiser prediction variable used before scheduler.step."""
+    for name in ("noise_pred", "model_output", "model_pred", "pred", "output"):
+        if re.search(rf"^\s*{re.escape(name)}\s*=", context, flags=re.MULTILINE):
+            return name
+    if '"model_output": noise_pred' in context:
+        return "model_output"
+    return "model_output"
 
 
 def replace_scheduler_step_call(source: str) -> tuple[str, bool]:
-    if SAFE_STEP_MARKER in source and "noise_scheduler.step(**step_kwargs)" in source:
-        return source, False
+    needs_repair = False
+    if SAFE_STEP_MARKER in source:
+        m = re.search(r'"model_output":\s*([A-Za-z_][A-Za-z0-9_]*)', source)
+        if m and not re.search(rf"^\s*{re.escape(m.group(1))}\s*=", source, flags=re.MULTILINE):
+            needs_repair = True
+        elif m:
+            return source, False
 
     lines = source.splitlines(keepends=True)
     out: list[str] = []
@@ -33,23 +49,34 @@ def replace_scheduler_step_call(source: str) -> tuple[str, bool]:
 
     while i < len(lines):
         line = lines[i]
-        if "images = noise_scheduler.step(" not in line:
+        if (
+            "images = noise_scheduler.step(" not in line
+            and not (needs_repair and "step_kwargs = {" in line)
+        ):
             out.append(line)
             i += 1
             continue
 
         indent = line[: len(line) - len(line.lstrip())]
+        model_output_name = infer_model_output_name("".join(out[-80:]))
         paren_balance = 0
-        while i < len(lines):
-            paren_balance += lines[i].count("(") - lines[i].count(")")
-            if ".prev_sample" in lines[i] and paren_balance <= 0:
+        if "step_kwargs = {" in line:
+            while i < len(lines):
+                if "images = noise_scheduler.step(**step_kwargs).prev_sample" in lines[i]:
+                    i += 1
+                    break
                 i += 1
-                break
-            i += 1
+        else:
+            while i < len(lines):
+                paren_balance += lines[i].count("(") - lines[i].count(")")
+                if ".prev_sample" in lines[i] and paren_balance <= 0:
+                    i += 1
+                    break
+                i += 1
         out.extend(
             [
                 f"{indent}step_kwargs = {{\n",
-                f"{indent}    \"model_output\": noise_pred,\n",
+                f"{indent}    \"model_output\": {model_output_name},\n",
                 f"{indent}    \"timestep\": t,\n",
                 f"{indent}    \"sample\": images,\n",
                 f"{indent}}}\n",
