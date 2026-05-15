@@ -67,9 +67,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--max-generated", type=int, default=32)
-    parser.add_argument("--max-real-cubes", type=int, default=32)
-    parser.add_argument("--max-real-hist", type=int, default=512)
-    parser.add_argument("--max-real-pk", type=int, default=512)
+    parser.add_argument("--max-real-cubes", type=int, default=8)
+    parser.add_argument("--max-real-hist", type=int, default=256)
+    parser.add_argument("--max-real-pk", type=int, default=128)
     parser.add_argument("--pk-nbins", type=int, default=25)
     parser.add_argument("--audit-only", action="store_true")
     return parser.parse_args()
@@ -196,19 +196,19 @@ def main() -> None:
             )
 
     audit_df = pd.DataFrame(audit_rows)
-    print("audit:", audit_df["status"].value_counts().to_dict())
-    print(audit_df[["variant", "sampler", "ema_label", "n_available", "status"]].to_string(index=False))
+    print("audit:", audit_df["status"].value_counts().to_dict(), flush=True)
+    print(audit_df[["variant", "sampler", "ema_label", "n_available", "status"]].to_string(index=False), flush=True)
 
     audit_out = output_dir / f"nf_sweep_v2_{args.arch}_{args.sampler}_higher_ema_audit.csv"
     audit_df.to_csv(audit_out, index=False)
-    print("wrote", audit_out)
+    print("wrote", audit_out, flush=True)
 
     if args.audit_only:
         return
 
     present = audit_df[audit_df["n_available"] > 0].copy()
     if present.empty:
-        print("No available samples to score.")
+        print("No available samples to score.", flush=True)
         return
 
     reference_cache: dict[str, dict[str, Any]] = {}
@@ -218,6 +218,12 @@ def main() -> None:
         config_path = Path(rec["config_path"])
         sig = data_signature(config_path)
         if sig not in reference_cache:
+            print(
+                f"building real reference for {config_path.name}: "
+                f"max_real_cubes={args.max_real_cubes}, "
+                f"max_real_hist={args.max_real_hist}, max_real_pk={args.max_real_pk}",
+                flush=True,
+            )
             real = load_real_from_config(config_path, max_raw_samples=args.max_real_cubes)
             real_hist = field_histogram(evenly_limit(real, args.max_real_hist), bins=120)
             pk_real, _ = batch_power_spectra(evenly_limit(real, args.max_real_pk), nbins=args.pk_nbins)
@@ -226,6 +232,11 @@ def main() -> None:
                 "pk_mean": np.nanmean(pk_real, axis=0),
             }
         ref = reference_cache[sig]
+        print(
+            f"scoring {rec['variant']} {rec['sampler']} {rec['ema_label']} "
+            f"n_used={n_used}",
+            flush=True,
+        )
         generated = evenly_limit(load_npz_samples(Path(rec["sample_path"])), n_used)
         onepoint = onepoint_summary_from_reference(ref["hist"], generated)
         pk_summary = pk_summary_from_reference(ref["pk_mean"], generated, nbins=args.pk_nbins)
@@ -241,37 +252,40 @@ def main() -> None:
     metrics_df = pd.DataFrame(metric_rows).sort_values(["variant", "ema_value"], na_position="first")
     metrics_out = output_dir / f"nf_sweep_v2_{args.arch}_{args.sampler}_higher_ema_metrics.csv"
     metrics_df.to_csv(metrics_out, index=False)
-    print("wrote", metrics_out)
+    print("wrote", metrics_out, flush=True)
 
-    print("\nBest by P(k) log10 MAE:")
+    print("\nBest by P(k) log10 MAE:", flush=True)
     best_pk = metrics_df.loc[metrics_df.groupby("variant")["pk_log10_mae"].idxmin()]
     print(
         best_pk[
             ["variant", "ema_label", "n_used", "pk_log10_mae", "hist_l1", "std_ratio", "pk_ratio_low_k", "pk_ratio_mid_k", "pk_ratio_high_k"]
         ]
         .sort_values("pk_log10_mae")
-        .to_string(index=False)
+        .to_string(index=False),
+        flush=True,
     )
 
-    print("\nBest by one-point histogram L1:")
+    print("\nBest by one-point histogram L1:", flush=True)
     best_hist = metrics_df.loc[metrics_df.groupby("variant")["hist_l1"].idxmin()]
     print(
         best_hist[
             ["variant", "ema_label", "n_used", "hist_l1", "pk_log10_mae", "std_ratio", "pk_ratio_low_k", "pk_ratio_mid_k", "pk_ratio_high_k"]
         ]
         .sort_values("hist_l1")
-        .to_string(index=False)
+        .to_string(index=False),
+        flush=True,
     )
 
     high = metrics_df[metrics_df["ema_label"].isin(["ema0p13", "ema0p16", "ema0p20", "ema0p25"])]
     if len(high):
-        print("\nHigher EMA targets only:")
+        print("\nHigher EMA targets only:", flush=True)
         print(
             high[
                 ["variant", "ema_label", "n_used", "pk_log10_mae", "hist_l1", "std_ratio", "pk_ratio_low_k", "pk_ratio_mid_k", "pk_ratio_high_k"]
             ]
             .sort_values(["variant", "ema_value"])
-            .to_string(index=False)
+            .to_string(index=False),
+            flush=True,
         )
 
 
