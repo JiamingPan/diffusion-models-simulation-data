@@ -23,7 +23,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from simdiff_eval.io import as_nchw, load_real_from_config
+from simdiff_eval.io import _load_real_tanh_from_config, as_nchw
 from simdiff_eval.metrics import batch_power_spectra, field_histogram
 
 
@@ -122,6 +122,18 @@ def data_signature(config_path: Path) -> str:
     ]
     slim = {k: data.get(k) for k in keys if k in data}
     return json.dumps(slim, sort_keys=True, default=str)
+
+
+def load_real_lightweight(config_path: Path, max_raw_samples: int) -> np.ndarray:
+    """Load a small real reference without importing cosmodiff/diffusers."""
+    with config_path.open() as f:
+        cfg = yaml.safe_load(f)
+    cfg = dict(cfg)
+    data_cfg = dict(cfg.get("data", {}))
+    current = data_cfg.get("n_samples")
+    data_cfg["n_samples"] = int(max_raw_samples) if current is None else min(int(current), int(max_raw_samples))
+    cfg["data"] = data_cfg
+    return _load_real_tanh_from_config(cfg, utils_module=None)
 
 
 def onepoint_summary_from_reference(real_hist: dict[str, Any], generated: np.ndarray, bins: int = 120) -> dict[str, float]:
@@ -224,7 +236,7 @@ def main() -> None:
                 f"max_real_hist={args.max_real_hist}, max_real_pk={args.max_real_pk}",
                 flush=True,
             )
-            real = load_real_from_config(config_path, max_raw_samples=args.max_real_cubes)
+            real = load_real_lightweight(config_path, max_raw_samples=args.max_real_cubes)
             real_hist = field_histogram(evenly_limit(real, args.max_real_hist), bins=120)
             pk_real, _ = batch_power_spectra(evenly_limit(real, args.max_real_pk), nbins=args.pk_nbins)
             reference_cache[sig] = {
