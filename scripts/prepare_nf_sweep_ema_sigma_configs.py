@@ -4,7 +4,7 @@
 This sweep is intentionally smaller than ``nf_sweep_v2``.  It keeps Nicholas'
 merged default training recipe fixed and only changes:
 
-- native post-hoc EMA anchors: [0.02, 0.10, 0.16, 0.25]
+- native post-hoc EMA anchor pair: [0.16, 0.25]
 - optional ``train.sigma_log_normal`` timestep sampling
 
 The goal is to test whether the previous EMA sweep looked bad because the
@@ -24,7 +24,7 @@ import yaml
 
 IMG_PATH = "/scratch/huterer_root/huterer0/CAMELS/CMD/3d_grids/IllustrisTNG/Grids_HI_IllustrisTNG_LH_128_z=0.0.npy"
 CHECKPOINT_ROOT = "/scratch/huterer_root/huterer0/jiamingp/saved_runs/nf_sweep_ema_sigma"
-EMA_SIGMA_RELS = [0.02, 0.10, 0.16, 0.25]
+EMA_SIGMA_RELS = [0.16, 0.25]
 
 ARCHES = {
     "u64": {
