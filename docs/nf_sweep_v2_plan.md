@@ -96,9 +96,14 @@ results/nf_sweep_v2/samples/
 
 It samples each run for:
 
-- EMA targets: raw, 0.02, 0.04, 0.06, 0.08, 0.10
+- EMA targets: raw, 0.02, 0.04, 0.06, 0.08, 0.10, 0.13, 0.16, 0.20, 0.25
 - inference schedulers: training scheduler/full steps, `DPMSolverMultistepScheduler` at 25 steps,
   and `HeunDiscreteScheduler` at 50 steps
+
+The `raw` target uses the checkpoint weights directly. The numeric EMA targets synthesize
+post-hoc EMA weights from the checkpoint EMA state before sampling. The 0.13-0.25 targets
+were added because the initial 0.02-0.10 range was too narrow to test for a wider
+Karras/NVIDIA-style optimum.
 
 Submit sampling after checkpoints exist:
 

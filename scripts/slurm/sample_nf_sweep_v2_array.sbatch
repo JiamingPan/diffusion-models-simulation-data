@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=80gb
 #SBATCH --time=02:00:00
-#SBATCH --array=0-251%4
+#SBATCH --array=0-419%4
 #SBATCH -o /home/jiamingp/diffusion_models_repo/logs/nf_sweep_v2/sample_%A_%a.out
 #SBATCH -e /home/jiamingp/diffusion_models_repo/logs/nf_sweep_v2/sample_%A_%a.err
 #SBATCH -A huterer2
@@ -53,8 +53,8 @@ RUNS=(
   nf_sweep_v2_u128_n500_e100_sigma_edm2
 )
 
-EMA_TARGETS=(raw 0.02 0.04 0.06 0.08 0.10)
-EMA_LABELS=(raw ema0p02 ema0p04 ema0p06 ema0p08 ema0p10)
+EMA_TARGETS=(raw 0.02 0.04 0.06 0.08 0.10 0.13 0.16 0.20 0.25)
+EMA_LABELS=(raw ema0p02 ema0p04 ema0p06 ema0p08 ema0p10 ema0p13 ema0p16 ema0p20 ema0p25)
 
 SAMPLER_LABELS=(train_full dpm25 heun50)
 SAMPLER_SCHEDULERS=("" DPMSolverMultistepScheduler HeunDiscreteScheduler)
