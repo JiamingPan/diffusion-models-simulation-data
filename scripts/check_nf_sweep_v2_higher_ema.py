@@ -24,7 +24,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from simdiff_eval.io import as_nchw, load_real_from_config
-from simdiff_eval.metrics import field_histogram, power_spectrum_summary
+from simdiff_eval.metrics import batch_power_spectra, field_histogram
 
 
 DEFAULT_EMA_LABELS = [
@@ -124,8 +124,8 @@ def data_signature(config_path: Path) -> str:
     return json.dumps(slim, sort_keys=True, default=str)
 
 
-def onepoint_summary(real: np.ndarray, generated: np.ndarray, bins: int = 120) -> dict[str, float]:
-    rh = field_histogram(real, bins=bins)
+def onepoint_summary_from_reference(real_hist: dict[str, Any], generated: np.ndarray, bins: int = 120) -> dict[str, float]:
+    rh = real_hist
     gh = field_histogram(generated, bins=bins)
     edges = np.asarray(rh["bin_edges"])
     width = float(np.mean(np.diff(edges)))
@@ -135,6 +135,27 @@ def onepoint_summary(real: np.ndarray, generated: np.ndarray, bins: int = 120) -
         "generated_std": gh["std"],
         "std_ratio": gh["std"] / max(rh["std"], 1e-30),
         "hist_l1": hist_l1,
+    }
+
+
+def pk_summary_from_reference(real_mean: np.ndarray, generated: np.ndarray, nbins: int) -> dict[str, float]:
+    pk_gen, _ = batch_power_spectra(generated, nbins=nbins)
+    gen_mean = np.nanmean(pk_gen, axis=0)
+    ratio = gen_mean / np.clip(real_mean, 1e-30, None)
+    log_abs = np.abs(np.log10(np.clip(ratio, 1e-30, None)))
+
+    finite = np.where(np.isfinite(ratio))[0]
+    thirds = np.array_split(finite, 3) if len(finite) else [[], [], []]
+    band_means = [
+        float(np.nanmean(ratio[idx])) if len(idx) else float("nan")
+        for idx in thirds
+    ]
+
+    return {
+        "pk_log10_mae": float(np.nanmean(log_abs)),
+        "pk_ratio_low_k": band_means[0],
+        "pk_ratio_mid_k": band_means[1],
+        "pk_ratio_high_k": band_means[2],
     }
 
 
@@ -190,22 +211,24 @@ def main() -> None:
         print("No available samples to score.")
         return
 
-    real_cache: dict[str, np.ndarray] = {}
+    reference_cache: dict[str, dict[str, Any]] = {}
     metric_rows: list[dict[str, Any]] = []
     for rec in present.to_dict("records"):
         n_used = min(int(rec["n_available"]), args.max_generated)
         config_path = Path(rec["config_path"])
         sig = data_signature(config_path)
-        if sig not in real_cache:
-            real_cache[sig] = load_real_from_config(config_path, max_raw_samples=args.max_real_cubes)
-        real = real_cache[sig]
+        if sig not in reference_cache:
+            real = load_real_from_config(config_path, max_raw_samples=args.max_real_cubes)
+            real_hist = field_histogram(evenly_limit(real, args.max_real_hist), bins=120)
+            pk_real, _ = batch_power_spectra(evenly_limit(real, args.max_real_pk), nbins=args.pk_nbins)
+            reference_cache[sig] = {
+                "hist": real_hist,
+                "pk_mean": np.nanmean(pk_real, axis=0),
+            }
+        ref = reference_cache[sig]
         generated = evenly_limit(load_npz_samples(Path(rec["sample_path"])), n_used)
-        onepoint = onepoint_summary(evenly_limit(real, args.max_real_hist), generated)
-        pk_summary = power_spectrum_summary(
-            evenly_limit(real, args.max_real_pk),
-            generated,
-            nbins=args.pk_nbins,
-        )
+        onepoint = onepoint_summary_from_reference(ref["hist"], generated)
+        pk_summary = pk_summary_from_reference(ref["pk_mean"], generated, nbins=args.pk_nbins)
         metric_rows.append(
             {
                 **{k: rec[k] for k in ["run_name", "arch", "variant", "sampler", "ema_label", "ema_value"]},
