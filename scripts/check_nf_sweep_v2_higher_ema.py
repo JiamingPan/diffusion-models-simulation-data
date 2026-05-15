@@ -292,10 +292,10 @@ def main() -> None:
     if len(high):
         print("\nHigher EMA targets only:", flush=True)
         print(
-            high[
+            high.sort_values(["variant", "ema_value"])
+            [
                 ["variant", "ema_label", "n_used", "pk_log10_mae", "hist_l1", "std_ratio", "pk_ratio_low_k", "pk_ratio_mid_k", "pk_ratio_high_k"]
             ]
-            .sort_values(["variant", "ema_value"])
             .to_string(index=False),
             flush=True,
         )
