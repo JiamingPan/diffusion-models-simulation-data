@@ -116,6 +116,9 @@ def build_config(name: str, arch: str, variant: dict[str, Any]) -> dict[str, Any
                 "size": 128,
                 "dims": [-1, -2],
             },
+            "RandomFlip": {
+                "dims": [-1, -2],
+            },
         },
         "model": {
             "class": "UNet2DModel",
@@ -259,6 +262,9 @@ def assert_config(path: Path, expected: dict[str, Any]) -> None:
         "data.normalization": config["data"].get("normalization") == "tanh",
         "data.keep_on_cpu": config["data"].get("keep_on_cpu") is True,
         "data.n_samples": config["data"].get("n_samples") == 500,
+        "augmentations.RandomRoll.size": config.get("augmentations", {}).get("RandomRoll", {}).get("size") == 128,
+        "augmentations.RandomFlip.dims": config.get("augmentations", {}).get("RandomFlip", {}).get("dims") == [-1, -2],
+        "augmentations.no_RandomRot90": "RandomRot90" not in config.get("augmentations", {}),
         "model.block_out_channels": (
             config["model"]["kwargs"].get("block_out_channels")
             == expected["model"]["kwargs"]["block_out_channels"]
