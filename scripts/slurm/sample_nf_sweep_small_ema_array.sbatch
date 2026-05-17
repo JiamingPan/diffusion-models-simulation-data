@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=80gb
 #SBATCH --time=02:00:00
-#SBATCH --array=0-20%4
+#SBATCH --array=0-41%4
 #SBATCH -o /home/jiamingp/diffusion_models_repo/logs/nf_sweep_small_ema/sample_%A_%a.out
 #SBATCH -e /home/jiamingp/diffusion_models_repo/logs/nf_sweep_small_ema/sample_%A_%a.err
 #SBATCH -A huterer0
@@ -43,8 +43,8 @@ if [[ -f "${VENV_PATH}/bin/activate" ]]; then
 fi
 
 mapfile -t RUNS < <("${PYTHON_BIN}" scripts/prepare_nf_sweep_small_ema_configs.py --project-dir "${PROJECT_DIR}" --print-runs)
-EMA_TARGETS=(raw 0.005 0.01 0.02 0.03 0.04 0.05)
-EMA_LABELS=(raw ema0p005 ema0p01 ema0p02 ema0p03 ema0p04 ema0p05)
+EMA_TARGETS=(raw 0.001 0.002 0.003 0.004 0.005 0.006 0.008 0.010 0.015 0.020 0.030 0.040 0.050)
+EMA_LABELS=(raw ema0p001 ema0p002 ema0p003 ema0p004 ema0p005 ema0p006 ema0p008 ema0p01 ema0p015 ema0p02 ema0p03 ema0p04 ema0p05)
 SAMPLER_LABELS=(train_full dpm25 ddim50)
 SAMPLER_SCHEDULERS=("" DPMSolverMultistepScheduler DDIMScheduler)
 SAMPLER_STEPS=("" 25 50)
