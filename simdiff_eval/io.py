@@ -61,6 +61,9 @@ def load_real_from_config(config_path: str | Path, max_raw_samples: int | None =
         img_path = data_cfg.get("img_path")
         data_cfg["n_samples"] = _cap_n_samples(current, max_raw_samples, img_path)
 
+    if isinstance(config.get("data", {}).get("img_path"), (list, tuple)):
+        return _load_real_tanh_from_config(config, utils_module=None)
+
     try:
         from cosmodiff import utils
     except Exception as exc:
