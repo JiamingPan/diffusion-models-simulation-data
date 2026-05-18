@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Prepare one N=64 long-training memorization diagnostic config.
+"""Prepare one N=64 no-augmentation memorization diagnostic config.
 
 This is not a replacement for the generalizability sweep. It isolates the
 training-budget question for the smallest data setting:
@@ -7,7 +7,8 @@ training-budget question for the smallest data setting:
 - same u128 Nick-default-style recipe as nf_generalize_nick_data
 - same combined LH/CV and z=0/1/2 source allocation
 - N=64 two-dimensional slices
-- many more epochs so the run gets about 50k optimizer updates instead of ~200
+- no data augmentation, so exact slice memorization is not hidden by shifts/flips
+- many more epochs so the run gets about 100k optimizer updates instead of ~200
 """
 
 from __future__ import annotations
@@ -32,11 +33,11 @@ from prepare_nf_generalize_nick_data_configs import (
 
 SWEEP_NAME = "nf_generalize_n64_memorize"
 CHECKPOINT_ROOT = f"/scratch/huterer_root/huterer0/jiamingp/saved_runs/{SWEEP_NAME}"
-RUN_NAME = "nf_gen_nick_u128_d2p06_mem50k"
-DATASET_TAG = "d2p06_mem50k"
+RUN_NAME = "nf_gen_nick_u128_d2p06_noaug_mem100k"
+DATASET_TAG = "d2p06_noaug_mem100k"
 TARGET_2D = 64
-TARGET_UPDATES = 50_000
-CHECKPOINT_EVERY_UPDATES = 1_000
+TARGET_UPDATES = 100_000
+CHECKPOINT_EVERY_UPDATES = 2_000
 
 
 def build_memorize_config() -> dict[str, Any]:
@@ -47,6 +48,7 @@ def build_memorize_config() -> dict[str, Any]:
     checkpoint_every_n_epochs = max(1, CHECKPOINT_EVERY_UPDATES // steps_per_epoch)
 
     config["io"]["output_dir"] = f"{CHECKPOINT_ROOT}/{RUN_NAME}_checkpoints"
+    config.pop("augmentations", None)
     config["train"]["num_epochs"] = int(num_epochs)
     config["train"]["checkpoint_every_n_epochs"] = int(checkpoint_every_n_epochs)
     config["train"]["verbose"] = True
@@ -63,8 +65,8 @@ def manifest_row() -> dict[str, Any]:
         "run_name": RUN_NAME,
         "arch": ARCH["arch"],
         "arch_label": ARCH["arch_label"],
-        "variant_tag": "nick_default_mem50k",
-        "variant_label": "Nick default N=64, long training",
+        "variant_tag": "nick_default_noaug_mem100k",
+        "variant_label": "Nick default N=64, no aug, long training",
         "dataset_tag": DATASET_TAG,
         "dataset_group": "LH+CV z=0,1,2",
         "target_2d": TARGET_2D,
@@ -92,7 +94,7 @@ def manifest_row() -> dict[str, Any]:
         "config": f"local/{SWEEP_NAME}/configs/{RUN_NAME}.yaml",
         "checkpoint_dir": f"{CHECKPOINT_ROOT}/{RUN_NAME}_checkpoints",
         "sample_path": f"results/{SWEEP_NAME}/samples/{RUN_NAME}_seed{{seed}}_raw_train_full.npz",
-        "note": "N=64 memorization diagnostic: same Nick-default u128 recipe, but about 50k optimizer updates.",
+        "note": "N=64 memorization diagnostic: same Nick-default u128 recipe, no augmentation, about 100k optimizer updates.",
     }
 
 
@@ -118,6 +120,7 @@ def assert_config(path: Path) -> None:
         "data.n_samples_list": isinstance(config["data"].get("n_samples"), list),
         "data.target_size": sum(config["data"]["n_samples"]) * SLICES_PER_VOLUME == TARGET_2D,
         "train.num_epochs": config["train"].get("num_epochs") == row["epochs"],
+        "augmentations.absent": "augmentations" not in config,
         "train.checkpoint_every_n_epochs": (
             config["train"].get("checkpoint_every_n_epochs")
             == max(1, CHECKPOINT_EVERY_UPDATES // row["steps_per_epoch"])

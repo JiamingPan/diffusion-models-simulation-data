@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=80gb
-#SBATCH --time=08:00:00
+#SBATCH --time=12:00:00
 #SBATCH -o /home/jiamingp/diffusion_models_repo/logs/nf_generalize_n64_memorize/train_%j.out
 #SBATCH -e /home/jiamingp/diffusion_models_repo/logs/nf_generalize_n64_memorize/train_%j.err
 #SBATCH -A huterer0
@@ -75,7 +75,7 @@ fi
   --project-dir "${PROJECT_DIR}" \
   --check-only
 
-if [[ "${SKIP_IF_FINAL_CHECKPOINT}" == "1" ]] && [[ -d "${CHECKPOINT_DIR}/checkpoint-epoch-25000" ]]; then
+if [[ "${SKIP_IF_FINAL_CHECKPOINT}" == "1" ]] && [[ -d "${CHECKPOINT_DIR}/checkpoint-epoch-50000" ]]; then
   echo "Skipping ${RUN_NAME}; final checkpoint already exists under ${CHECKPOINT_DIR}"
   exit 0
 fi
@@ -83,7 +83,7 @@ fi
 echo "Training ${RUN_NAME}"
 echo "  config:      ${CONFIG_PATH}"
 echo "  checkpoints: ${CHECKPOINT_DIR}"
-echo "  target:      N=64, about 50k optimizer updates"
+echo "  target:      N=64, no augmentation, about 100k optimizer updates"
 echo "  cosmodiff:   ${COSMODIFF_DIR}"
 echo "  python:      ${PYTHON_BIN}"
 
