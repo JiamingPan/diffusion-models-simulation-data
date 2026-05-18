@@ -286,6 +286,14 @@ def summarize(values: np.ndarray, prefix: str) -> dict[str, float]:
     }
 
 
+def threshold_label(value: float) -> str:
+    return f"{value:.3f}".rstrip("0").rstrip(".").replace(".", "p")
+
+
+def parse_float_list(value: str) -> list[float]:
+    return [float(x.strip()) for x in value.split(",") if x.strip()]
+
+
 def sample_path_for(project_dir: Path, row: dict[str, Any], seed: int, sample_label: str) -> Path:
     return project_dir / "results" / SWEEP_NAME / "samples" / f"{row['run_name']}_seed{seed}_{sample_label}.npz"
 
@@ -362,6 +370,41 @@ def plot_outputs(df: pd.DataFrame, output_dir: Path, out_prefix: str) -> None:
         print("wrote", out)
         plt.close(fig)
 
+        fig, axes = plt.subplots(1, 2, figsize=(15, 5.2), sharex=True)
+        for suffix in ("q95", "q99"):
+            gen_col = f"gen_gl_{suffix}"
+            val_col = f"val_gl_{suffix}"
+            if gen_col in df:
+                axes[0].plot(x, df[gen_col], "o-", label=f"generated, train-real {suffix}")
+            if val_col in df:
+                axes[0].plot(x, df[val_col], "o--", alpha=0.7, label=f"held-out real, train-real {suffix}")
+        axes[0].set_ylabel("PCA GL = 1 - fraction above threshold")
+        axes[0].set_title("adaptive real-real threshold")
+
+        fixed_cols = sorted(
+            (c for c in df.columns if c.startswith("gen_gl_fixed_")),
+            key=lambda c: float(c.rsplit("_", 1)[-1].replace("p", ".")),
+        )
+        for col in fixed_cols:
+            label = col.rsplit("_", 1)[-1].replace("p", ".")
+            axes[1].plot(x, df[col], "o-", label=f"generated, tau={label}")
+        axes[1].set_ylabel("PCA GL = 1 - fraction above fixed tau")
+        axes[1].set_title("fixed PCA similarity threshold")
+
+        for ax in axes:
+            ax.set_xscale("log", base=2)
+            ax.set_ylim(-0.03, 1.03)
+            ax.set_xlabel("training dataset size")
+            ax.grid(alpha=0.25)
+            ax.legend()
+
+        fig.suptitle("PCA paper-style generalizability score")
+        fig.tight_layout(rect=(0, 0, 1, 0.93))
+        out = output_dir / f"{out_prefix}_paper_style_gl_curves.png"
+        fig.savefig(out, dpi=180, bbox_inches="tight")
+        print("wrote", out)
+        plt.close(fig)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -381,6 +424,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, help="Figure output directory.")
     parser.add_argument("--table-dir", type=Path, help="CSV output directory.")
     parser.add_argument("--out-prefix", default="nf_generalize_nick_data_pca_full_nn")
+    parser.add_argument(
+        "--fixed-similarity-thresholds",
+        default="0.5,0.6,0.7,0.8,0.9,0.95",
+        help="Comma-separated fixed PCA cosine thresholds for paper-style GL curves.",
+    )
     parser.add_argument("--skip-missing-samples", action="store_true")
     return parser.parse_args()
 
@@ -409,6 +457,7 @@ def main() -> None:
     rows = available_rows
     if not rows:
         raise SystemExit("No rows with samples selected.")
+    fixed_thresholds = parse_float_list(args.fixed_similarity_thresholds)
 
     fit_row = max(rows, key=lambda row: int(row["dataset_size"]))
     fit_config = load_config(project_dir, fit_row)
@@ -476,8 +525,24 @@ def main() -> None:
         }
         for key, threshold in thresholds.items():
             suffix = key.replace("threshold_", "")
-            metrics[f"gen_copy_fraction_{suffix}"] = float(np.mean(gen_nn > threshold))
-            metrics[f"val_copy_fraction_{suffix}"] = float(np.mean(val_nn > threshold))
+            gen_copy = float(np.mean(gen_nn > threshold))
+            val_copy = float(np.mean(val_nn > threshold))
+            metrics[f"gen_copy_fraction_{suffix}"] = gen_copy
+            metrics[f"val_copy_fraction_{suffix}"] = val_copy
+            metrics[f"gen_gl_{suffix}"] = 1.0 - gen_copy
+            metrics[f"val_gl_{suffix}"] = 1.0 - val_copy
+        for threshold in fixed_thresholds:
+            suffix = threshold_label(threshold)
+            gen_copy = float(np.mean(gen_nn > threshold))
+            val_copy = float(np.mean(val_nn > threshold))
+            ref_copy = float(np.mean(ref_nn > threshold))
+            metrics[f"fixed_threshold_{suffix}"] = float(threshold)
+            metrics[f"gen_copy_fraction_fixed_{suffix}"] = gen_copy
+            metrics[f"val_copy_fraction_fixed_{suffix}"] = val_copy
+            metrics[f"ref_copy_fraction_fixed_{suffix}"] = ref_copy
+            metrics[f"gen_gl_fixed_{suffix}"] = 1.0 - gen_copy
+            metrics[f"val_gl_fixed_{suffix}"] = 1.0 - val_copy
+            metrics[f"ref_gl_fixed_{suffix}"] = 1.0 - ref_copy
         metric_rows.append(metrics)
 
         del real_ref, real_val, generated, ref_z, val_z, gen_z, ref_nn, val_nn, gen_nn
