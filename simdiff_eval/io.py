@@ -58,7 +58,8 @@ def load_real_from_config(config_path: str | Path, max_raw_samples: int | None =
     if max_raw_samples is not None:
         data_cfg = config.setdefault("data", {})
         current = data_cfg.get("n_samples")
-        data_cfg["n_samples"] = int(max_raw_samples) if current is None else min(int(current), int(max_raw_samples))
+        img_path = data_cfg.get("img_path")
+        data_cfg["n_samples"] = _cap_n_samples(current, max_raw_samples, img_path)
 
     try:
         from cosmodiff import utils
@@ -68,7 +69,7 @@ def load_real_from_config(config_path: str | Path, max_raw_samples: int | None =
 
     try:
         parsed = utils.parse_config_data(config)
-    except (ImportError, RuntimeError, ValueError) as exc:
+    except (ImportError, RuntimeError, ValueError, TypeError) as exc:
         if (
             isinstance(exc, ValueError)
             and "Unknown normalization mode 'tanh'" not in str(exc)
@@ -84,6 +85,45 @@ def load_real_from_config(config_path: str | Path, max_raw_samples: int | None =
     else:
         dataset = parsed
     return dataset.arrays.detach().cpu().numpy()
+
+
+def _cap_n_samples(current: Any, max_raw_samples: int, img_path: Any = None) -> int | list[int]:
+    """Cap config ``n_samples`` while preserving list-of-file semantics."""
+    max_raw_samples = int(max_raw_samples)
+    if max_raw_samples < 1:
+        raise ValueError("max_raw_samples must be >= 1.")
+
+    if isinstance(current, (list, tuple)):
+        caps = [int(x) for x in current]
+        counts = [0 for _ in caps]
+        remaining = min(max_raw_samples, sum(caps))
+        while remaining > 0:
+            progressed = False
+            for i, cap in enumerate(caps):
+                if remaining == 0:
+                    break
+                if counts[i] >= cap:
+                    continue
+                counts[i] += 1
+                remaining -= 1
+                progressed = True
+            if not progressed:
+                break
+        return counts
+
+    if current is None and isinstance(img_path, (list, tuple)):
+        n = len(img_path)
+        counts = [0 for _ in range(n)]
+        remaining = max_raw_samples
+        while remaining > 0:
+            for i in range(n):
+                if remaining == 0:
+                    break
+                counts[i] += 1
+                remaining -= 1
+        return counts
+
+    return max_raw_samples if current is None else min(int(current), max_raw_samples)
 
 
 def _read_images(data_cfg: dict[str, Any], utils_module: Any | None) -> np.ndarray:
