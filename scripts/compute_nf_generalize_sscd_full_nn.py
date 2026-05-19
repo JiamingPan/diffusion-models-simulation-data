@@ -146,8 +146,18 @@ def leave_one_out_max_similarity(reference: torch.Tensor, batch_size: int) -> np
 
 def plot_outputs(df: pd.DataFrame, output_dir: Path, out_prefix: str, primary_threshold: float) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
-    x = df["dataset_size"].astype(float).to_numpy()
     primary_suffix = threshold_label(primary_threshold)
+
+    group_col = None
+    if "arch_label" in df.columns and df["arch_label"].nunique(dropna=True) > 1:
+        group_col = "arch_label"
+    elif "arch" in df.columns and df["arch"].nunique(dropna=True) > 1:
+        group_col = "arch"
+
+    groups = [(None, df)] if group_col is None else list(df.groupby(group_col, sort=False))
+
+    def label_for(group_name: str | None, label: str) -> str:
+        return label if group_name is None else f"{group_name} {label}"
 
     with plt.rc_context({
         "font.size": 13,
@@ -159,10 +169,24 @@ def plot_outputs(df: pd.DataFrame, output_dir: Path, out_prefix: str, primary_th
         fig, axes = plt.subplots(1, 2, figsize=(15, 5.2), sharex=True)
         col = f"gen_gl_fixed_{primary_suffix}"
         copy_col = f"gen_copy_fraction_fixed_{primary_suffix}"
-        if col in df:
-            axes[0].plot(x, df[col], "o-", lw=2.5, label=f"generated GL, tau={primary_threshold:g}")
-        if f"val_gl_fixed_{primary_suffix}" in df:
-            axes[0].plot(x, df[f"val_gl_fixed_{primary_suffix}"], "o--", alpha=0.75, label="held-out real GL baseline")
+        for group_name, sub in groups:
+            x = sub["dataset_size"].astype(float).to_numpy()
+            if col in sub:
+                axes[0].plot(
+                    x,
+                    sub[col],
+                    "o-",
+                    lw=2.5,
+                    label=label_for(group_name, f"generated GL, tau={primary_threshold:g}"),
+                )
+            if f"val_gl_fixed_{primary_suffix}" in sub:
+                axes[0].plot(
+                    x,
+                    sub[f"val_gl_fixed_{primary_suffix}"],
+                    "o--",
+                    alpha=0.75,
+                    label=label_for(group_name, "held-out real GL baseline"),
+                )
         axes[0].set_ylabel("SSCD GL = 1 - fraction above tau")
         axes[0].set_title("paper-style SSCD generalizability")
 
@@ -170,9 +194,11 @@ def plot_outputs(df: pd.DataFrame, output_dir: Path, out_prefix: str, primary_th
             (c for c in df.columns if c.startswith("gen_gl_fixed_")),
             key=lambda c: float(c.rsplit("_", 1)[-1].replace("p", ".")),
         )
-        for fixed_col in fixed_cols:
-            label = fixed_col.rsplit("_", 1)[-1].replace("p", ".")
-            axes[1].plot(x, df[fixed_col], "o-", label=f"tau={label}")
+        for group_name, sub in groups:
+            x = sub["dataset_size"].astype(float).to_numpy()
+            for fixed_col in fixed_cols:
+                label = fixed_col.rsplit("_", 1)[-1].replace("p", ".")
+                axes[1].plot(x, sub[fixed_col], "o-", label=label_for(group_name, f"tau={label}"))
         axes[1].set_ylabel("SSCD GL")
         axes[1].set_title("fixed-threshold sensitivity")
 
@@ -191,15 +217,19 @@ def plot_outputs(df: pd.DataFrame, output_dir: Path, out_prefix: str, primary_th
         plt.close(fig)
 
         fig, axes = plt.subplots(1, 2, figsize=(15, 5.2), sharex=True)
-        axes[0].plot(x, df["gen_nn_median"], "o-", label="generated -> train")
-        axes[0].plot(x, df["val_nn_median"], "o-", label="held-out real -> train")
-        axes[0].plot(x, df["ref_nn_median"], "o--", label="train real leave-one-out")
+        for group_name, sub in groups:
+            x = sub["dataset_size"].astype(float).to_numpy()
+            axes[0].plot(x, sub["gen_nn_median"], "o-", label=label_for(group_name, "generated -> train"))
+            axes[0].plot(x, sub["val_nn_median"], "o-", label=label_for(group_name, "held-out real -> train"))
+            axes[0].plot(x, sub["ref_nn_median"], "o--", label=label_for(group_name, "train real leave-one-out"))
         axes[0].set_ylabel("median nearest-neighbor SSCD cosine")
         axes[0].set_title("median full-reference NN similarity")
 
-        axes[1].plot(x, df["gen_nn_q99"], "o-", label="generated q99")
-        axes[1].plot(x, df["val_nn_q99"], "o-", label="held-out real q99")
-        axes[1].plot(x, df["threshold_q99"], "s:", label="train real q99 threshold")
+        for group_name, sub in groups:
+            x = sub["dataset_size"].astype(float).to_numpy()
+            axes[1].plot(x, sub["gen_nn_q99"], "o-", label=label_for(group_name, "generated q99"))
+            axes[1].plot(x, sub["val_nn_q99"], "o-", label=label_for(group_name, "held-out real q99"))
+            axes[1].plot(x, sub["threshold_q99"], "s:", label=label_for(group_name, "train real q99 threshold"))
         axes[1].set_ylabel("nearest-neighbor SSCD cosine")
         axes[1].set_title("q99 versus train-real threshold")
 
@@ -218,15 +248,23 @@ def plot_outputs(df: pd.DataFrame, output_dir: Path, out_prefix: str, primary_th
 
         if copy_col in df:
             fig, ax = plt.subplots(figsize=(7.5, 5.2))
-            ax.plot(x, df[copy_col], "o-", lw=2.5, label=f"generated > tau={primary_threshold:g}")
-            if f"val_copy_fraction_fixed_{primary_suffix}" in df:
+            for group_name, sub in groups:
+                x = sub["dataset_size"].astype(float).to_numpy()
                 ax.plot(
                     x,
-                    df[f"val_copy_fraction_fixed_{primary_suffix}"],
-                    "o--",
-                    alpha=0.75,
-                    label="held-out real > tau",
+                    sub[copy_col],
+                    "o-",
+                    lw=2.5,
+                    label=label_for(group_name, f"generated > tau={primary_threshold:g}"),
                 )
+                if f"val_copy_fraction_fixed_{primary_suffix}" in sub:
+                    ax.plot(
+                        x,
+                        sub[f"val_copy_fraction_fixed_{primary_suffix}"],
+                        "o--",
+                        alpha=0.75,
+                        label=label_for(group_name, "held-out real > tau"),
+                    )
             ax.set_xscale("log", base=2)
             ax.set_ylim(-0.03, 1.03)
             ax.set_xlabel("training dataset size N")
@@ -246,6 +284,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--project-dir", default=".", help="Repository root.")
     parser.add_argument("--manifest", type=Path, help="Optional manifest path.")
     parser.add_argument("--run-name", action="append", help="Restrict to one run name. Repeatable.")
+    parser.add_argument("--arch", action="append", help="Restrict to architecture tag like u64/u128. Repeatable.")
     parser.add_argument("--dataset-tag", action="append", help="Restrict to dataset tag like d2p11. Repeatable.")
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--sample-label", default=DEFAULT_SAMPLE_LABEL)
@@ -357,6 +396,8 @@ def main() -> None:
         }
         metrics: dict[str, Any] = {
             "run_name": row["run_name"],
+            "arch": row.get("arch", ""),
+            "arch_label": row.get("arch_label", row.get("arch", "")),
             "dataset_tag": row["dataset_tag"],
             "dataset_size": int(row["dataset_size"]),
             "n_train_ref": int(len(real_ref)),
@@ -401,13 +442,17 @@ def main() -> None:
         del real_ref, real_val, generated, ref_z, val_z, gen_z, ref_nn, val_nn, gen_nn
         gc.collect()
 
-    df = pd.DataFrame(metric_rows).sort_values("dataset_size")
+    sort_cols = ["dataset_size"]
+    if "arch" in metric_rows[0]:
+        sort_cols = ["arch", "dataset_size"]
+    df = pd.DataFrame(metric_rows).sort_values(sort_cols)
     metrics_path = table_dir / f"{args.out_prefix}_metrics.csv"
     df.to_csv(metrics_path, index=False)
     print("wrote", metrics_path)
     print(
         df[
             [
+                "arch",
                 "dataset_tag",
                 "dataset_size",
                 "n_train_ref",

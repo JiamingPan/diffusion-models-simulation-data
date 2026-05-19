@@ -295,18 +295,23 @@ def parse_float_list(value: str) -> list[float]:
 
 
 def sample_path_for(project_dir: Path, row: dict[str, Any], seed: int, sample_label: str) -> Path:
+    if row.get("sample_path"):
+        return project_dir / str(row["sample_path"]).format(seed=seed, sample_label=sample_label)
     return project_dir / "results" / SWEEP_NAME / "samples" / f"{row['run_name']}_seed{seed}_{sample_label}.npz"
 
 
 def selected_rows(rows: list[dict[str, Any]], args: argparse.Namespace) -> list[dict[str, Any]]:
     out = rows
+    if getattr(args, "arch", None):
+        wanted = set(args.arch)
+        out = [row for row in out if row.get("arch") in wanted]
     if args.dataset_tag:
         wanted = set(args.dataset_tag)
         out = [row for row in out if row["dataset_tag"] in wanted]
     if args.run_name:
         wanted = set(args.run_name)
         out = [row for row in out if row["run_name"] in wanted]
-    return sorted(out, key=lambda row: int(row["dataset_size"]))
+    return sorted(out, key=lambda row: (str(row.get("arch", "")), int(row["dataset_size"])))
 
 
 def plot_outputs(df: pd.DataFrame, output_dir: Path, out_prefix: str) -> None:
@@ -411,6 +416,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--project-dir", default=".", help="Repository root.")
     parser.add_argument("--manifest", type=Path, help="Optional manifest path.")
     parser.add_argument("--run-name", action="append", help="Restrict to one run name. Repeatable.")
+    parser.add_argument("--arch", action="append", help="Restrict to architecture tag like u64/u128. Repeatable.")
     parser.add_argument("--dataset-tag", action="append", help="Restrict to dataset tag like d2p11. Repeatable.")
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--sample-label", default=DEFAULT_SAMPLE_LABEL)
@@ -505,6 +511,8 @@ def main() -> None:
         }
         metrics: dict[str, Any] = {
             "run_name": row["run_name"],
+            "arch": row.get("arch", ""),
+            "arch_label": row.get("arch_label", row.get("arch", "")),
             "dataset_tag": row["dataset_tag"],
             "dataset_size": int(row["dataset_size"]),
             "n_train_ref": int(len(real_ref)),
@@ -548,13 +556,17 @@ def main() -> None:
         del real_ref, real_val, generated, ref_z, val_z, gen_z, ref_nn, val_nn, gen_nn
         gc.collect()
 
-    df = pd.DataFrame(metric_rows).sort_values("dataset_size")
+    sort_cols = ["dataset_size"]
+    if "arch" in metric_rows[0]:
+        sort_cols = ["arch", "dataset_size"]
+    df = pd.DataFrame(metric_rows).sort_values(sort_cols)
     metrics_path = table_dir / f"{args.out_prefix}_metrics.csv"
     df.to_csv(metrics_path, index=False)
     print("wrote", metrics_path)
     print(
         df[
             [
+                "arch",
                 "dataset_tag",
                 "dataset_size",
                 "n_train_ref",
