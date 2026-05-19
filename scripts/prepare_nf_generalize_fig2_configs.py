@@ -35,8 +35,8 @@ from prepare_nf_generalize_nick_data_configs import (
 
 SWEEP_NAME = "nf_generalize_fig2"
 CHECKPOINT_ROOT = f"/scratch/huterer_root/huterer0/jiamingp/saved_runs/{SWEEP_NAME}"
-TARGET_UPDATES = 100_000
-CHECKPOINT_EVERY_UPDATES = 5_000
+TARGET_UPDATES = 200_000
+CHECKPOINT_EVERY_UPDATES = 20_000
 GENERATE_N_SAMPLES = 512
 
 
@@ -71,7 +71,7 @@ RUN_SIZES = [
 
 
 def run_name(arch: str, dataset_tag: str) -> str:
-    return f"nf_fig2_{arch}_{dataset_tag}_noaug_100k"
+    return f"nf_fig2_{arch}_{dataset_tag}_noaug_200k"
 
 
 def steps_per_epoch(dataset_size: int, batch_size: int) -> int:
@@ -225,7 +225,7 @@ def iter_runs() -> list[dict[str, Any]]:
                     "arch": arch,
                     "arch_label": arch_cfg["label"],
                     "variant_tag": "noaug_fixed_updates",
-                    "variant_label": "No augmentation, fixed updates",
+                    "variant_label": "No augmentation, fixed 200k updates",
                     "dataset_tag": dataset_tag,
                     "dataset_group": "LH+CV z=0,1,2",
                     "target_2d": target_2d,
@@ -262,7 +262,7 @@ def iter_runs() -> list[dict[str, Any]]:
                     "config": f"local/{SWEEP_NAME}/configs/{name}.yaml",
                     "checkpoint_dir": f"{CHECKPOINT_ROOT}/{name}_checkpoints",
                     "sample_path": f"results/{SWEEP_NAME}/samples/{name}_seed{{seed}}_raw_train_full.npz",
-                    "note": "Fig.2-style run: no augmentation and about 100k optimizer updates.",
+                    "note": "Fig.2-style run: no augmentation and about 200k optimizer updates.",
                 }
             )
     return rows

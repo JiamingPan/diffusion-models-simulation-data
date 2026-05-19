@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=80gb
-#SBATCH --time=12:00:00
+#SBATCH --time=24:00:00
 #SBATCH --array=0-19%4
 #SBATCH -o /home/jiamingp/diffusion_models_repo/logs/nf_generalize_fig2/train_%A_%a.out
 #SBATCH -e /home/jiamingp/diffusion_models_repo/logs/nf_generalize_fig2/train_%A_%a.err
@@ -114,7 +114,7 @@ fi
 echo "Training ${RUN_NAME}"
 echo "  config:      ${CONFIG_PATH}"
 echo "  checkpoints: ${CHECKPOINT_DIR}"
-echo "  target:      about 100k optimizer updates, no augmentation"
+echo "  target:      about 200k optimizer updates, no augmentation"
 echo "  cosmodiff:   ${COSMODIFF_DIR}"
 echo "  python:      ${PYTHON_BIN}"
 
