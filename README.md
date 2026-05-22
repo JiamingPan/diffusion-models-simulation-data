@@ -133,6 +133,8 @@ The evaluation scripts include:
 - Field one-point histogram and quantiles.
 - Nearest-neighbor distance from generated images to real images in pixel space, as a simple memorization diagnostic.
 - Reproducibility diagnostics across generated sample sets, including power-spectrum consistency and one-point-statistic consistency.
+- Full-reference PCA nearest-neighbor diagnostics for Fig. 2 style reproducibility/generalizability checks.
+- Full-reference SSCD nearest-neighbor diagnostics for paper-style near-copy detection.
 
 The notebooks add richer diagnostics such as PCA feature-space comparisons, PCA-FID/KID, image grids, and run-by-run training curves.
 
@@ -171,6 +173,36 @@ physics-fidelity diagnostic. See `docs/sscd_generalizability_note.md` for the
 equations and the reason P(k)-nearest-neighbor scores are not equivalent to
 SSCD copy detection.
 
+Compute the current Fig. 2 style CAMELS diagnostics for the `nf_generalize_fig2`
+sweep:
+
+```bash
+python scripts/prepare_nf_generalize_fig2_configs.py --project-dir "$PWD" --check-only
+
+sbatch -A huterer0 scripts/slurm/analyze_nf_generalize_fig2_pca.sbatch
+sbatch -A huterer0 scripts/slurm/analyze_nf_generalize_fig2_sscd.sbatch
+```
+
+The PCA analyzer writes:
+
+```text
+results/nf_generalize_fig2/tables/nf_generalize_fig2_pca_full_nn_metrics.csv
+results/nf_generalize_fig2/tables/nf_generalize_fig2_pca_full_nn_reproducibility.csv
+```
+
+The SSCD analyzer writes:
+
+```text
+results/nf_generalize_fig2/tables/nf_generalize_fig2_sscd_full_nn_metrics.csv
+results/nf_generalize_fig2/tables/nf_generalize_fig2_sscd_full_nn_reproducibility.csv
+```
+
+Open `notebooks/nf_generalize_fig2_partial_quickcheck.ipynb` to inspect the
+available checkpoints/samples, training losses, image panels, one-point
+statistics, P(k), PCA Fig. 2 curves, and SSCD Fig. 2 curves. See
+`docs/encoder_roadmap.md` for the rationale behind PCA, SSCD, and possible
+CAMELS-native encoders.
+
 ## Current Experiment Notes
 
 The templates include U64, U128, and U256-width starting points with centered max-abs normalization and CAMELS slice-thinning via `zthin`.
@@ -188,7 +220,6 @@ This project builds on Nicholas Kern's `nkern/cosmo_diffusion` package for base 
 
 - Add sanitized example configs for the reproducibility/data-size experiment after the final run plan is fixed.
 - Add a documented sampling workflow that saves generated arrays for every major run.
-- Add command-line PCA metrics to match the notebook diagnostics.
 - Add tests for `simdiff_eval.metrics`.
 - Add a small CI job for linting/import checks.
 - Decide whether to track `cosmo_diffusion` as a git submodule or require it as an external dependency.
