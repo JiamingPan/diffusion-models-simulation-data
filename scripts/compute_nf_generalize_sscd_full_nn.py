@@ -283,6 +283,7 @@ def reproducibility_rows(
     generated_embeddings: dict[tuple[str, int], torch.Tensor],
     thresholds: list[float],
     adaptive_thresholds: dict[tuple[str, int], dict[str, float]] | None = None,
+    similarity_batch_size: int = 512,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     arches = sorted({arch for arch, _ in generated_embeddings})
@@ -302,20 +303,39 @@ def reproducibility_rows(
                 if n == 0:
                     continue
                 paired = (a[:n] * b[:n]).sum(dim=1).cpu().numpy()
+                a_to_b = max_similarity(a, b, batch_size=similarity_batch_size)
+                b_to_a = max_similarity(b, a, batch_size=similarity_batch_size)
+                unpaired = np.concatenate([a_to_b, b_to_a])
                 rec: dict[str, Any] = {
                     "arch_pair": f"{arch_a}_vs_{arch_b}",
                     "arch_a": arch_a,
                     "arch_b": arch_b,
                     "dataset_size": int(size),
                     "n_paired": int(n),
+                    "n_unpaired_query": int(len(unpaired)),
                     "paired_similarity_mean": float(np.mean(paired)),
                     "paired_similarity_median": float(np.median(paired)),
                     "paired_similarity_q90": float(np.quantile(paired, 0.90)),
                     "paired_similarity_q99": float(np.quantile(paired, 0.99)),
+                    "unpaired_nn_mean": float(np.mean(unpaired)),
+                    "unpaired_nn_median": float(np.median(unpaired)),
+                    "unpaired_nn_q90": float(np.quantile(unpaired, 0.90)),
+                    "unpaired_nn_q99": float(np.quantile(unpaired, 0.99)),
+                    "a_to_b_nn_mean": float(np.mean(a_to_b)),
+                    "a_to_b_nn_median": float(np.median(a_to_b)),
+                    "a_to_b_nn_q90": float(np.quantile(a_to_b, 0.90)),
+                    "a_to_b_nn_q99": float(np.quantile(a_to_b, 0.99)),
+                    "b_to_a_nn_mean": float(np.mean(b_to_a)),
+                    "b_to_a_nn_median": float(np.median(b_to_a)),
+                    "b_to_a_nn_q90": float(np.quantile(b_to_a, 0.90)),
+                    "b_to_a_nn_q99": float(np.quantile(b_to_a, 0.99)),
                 }
                 for threshold in thresholds:
                     suffix = threshold_label(threshold)
                     rec[f"rp_fixed_{suffix}"] = float(np.mean(paired > threshold))
+                    rec[f"rp_unpaired_fixed_{suffix}"] = float(np.mean(unpaired > threshold))
+                    rec[f"rp_unpaired_a_to_b_fixed_{suffix}"] = float(np.mean(a_to_b > threshold))
+                    rec[f"rp_unpaired_b_to_a_fixed_{suffix}"] = float(np.mean(b_to_a > threshold))
                 if adaptive_thresholds:
                     for suffix in ("q95", "q99"):
                         pair_thresholds = [
@@ -330,6 +350,9 @@ def reproducibility_rows(
                             adaptive_threshold = max(finite_thresholds)
                             rec[f"rp_threshold_{suffix}"] = adaptive_threshold
                             rec[f"rp_{suffix}"] = float(np.mean(paired > adaptive_threshold))
+                            rec[f"rp_unpaired_{suffix}"] = float(np.mean(unpaired > adaptive_threshold))
+                            rec[f"rp_unpaired_a_to_b_{suffix}"] = float(np.mean(a_to_b > adaptive_threshold))
+                            rec[f"rp_unpaired_b_to_a_{suffix}"] = float(np.mean(b_to_a > adaptive_threshold))
                 rows.append(rec)
     return rows
 
@@ -586,7 +609,12 @@ def main() -> None:
         }
         for row in metric_rows
     }
-    rp_rows = reproducibility_rows(generated_embeddings, fixed_thresholds, adaptive_thresholds)
+    rp_rows = reproducibility_rows(
+        generated_embeddings,
+        fixed_thresholds,
+        adaptive_thresholds,
+        similarity_batch_size=args.similarity_batch_size,
+    )
     if rp_rows:
         rp_df = pd.DataFrame(rp_rows).sort_values(["arch_pair", "dataset_size"])
         rp_path = table_dir / f"{args.out_prefix}_reproducibility.csv"
