@@ -314,9 +314,21 @@ def selected_rows(rows: list[dict[str, Any]], args: argparse.Namespace) -> list[
     return sorted(out, key=lambda row: (str(row.get("arch", "")), int(row["dataset_size"])))
 
 
+def _grouped_curve_inputs(df: pd.DataFrame) -> list[tuple[str | None, pd.DataFrame]]:
+    if "arch_label" in df.columns and df["arch_label"].nunique(dropna=True) > 1:
+        return list(df.groupby("arch_label", sort=False))
+    if "arch" in df.columns and df["arch"].nunique(dropna=True) > 1:
+        return list(df.groupby("arch", sort=False))
+    return [(None, df)]
+
+
+def _label_for(group_name: str | None, label: str) -> str:
+    return label if group_name is None else f"{group_name} {label}"
+
+
 def plot_outputs(df: pd.DataFrame, output_dir: Path, out_prefix: str) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
-    x = df["dataset_size"].astype(float).to_numpy()
+    groups = _grouped_curve_inputs(df)
 
     with plt.rc_context({
         "font.size": 13,
@@ -326,15 +338,19 @@ def plot_outputs(df: pd.DataFrame, output_dir: Path, out_prefix: str) -> None:
         "figure.titlesize": 17,
     }):
         fig, axes = plt.subplots(1, 2, figsize=(15, 5.2), sharex=True)
-        axes[0].plot(x, df["gen_nn_median"], "o-", label="generated -> train")
-        axes[0].plot(x, df["val_nn_median"], "o-", label="held-out real -> train")
-        axes[0].plot(x, df["ref_nn_median"], "o--", label="train real leave-one-out")
+        for group_name, sub in groups:
+            x = sub["dataset_size"].astype(float).to_numpy()
+            axes[0].plot(x, sub["gen_nn_median"], "o-", label=_label_for(group_name, "generated -> train"))
+            axes[0].plot(x, sub["val_nn_median"], "o-", label=_label_for(group_name, "held-out real -> train"))
+            axes[0].plot(x, sub["ref_nn_median"], "o--", label=_label_for(group_name, "train real leave-one-out"))
         axes[0].set_ylabel("median nearest-neighbor cosine")
         axes[0].set_title("median full-reference NN similarity")
 
-        axes[1].plot(x, df["gen_nn_q99"], "o-", label="generated q99")
-        axes[1].plot(x, df["val_nn_q99"], "o-", label="held-out real q99")
-        axes[1].plot(x, df["threshold_q99"], "s:", label="train real q99 threshold")
+        for group_name, sub in groups:
+            x = sub["dataset_size"].astype(float).to_numpy()
+            axes[1].plot(x, sub["gen_nn_q99"], "o-", label=_label_for(group_name, "generated q99"))
+            axes[1].plot(x, sub["val_nn_q99"], "o-", label=_label_for(group_name, "held-out real q99"))
+            axes[1].plot(x, sub["threshold_q99"], "s:", label=_label_for(group_name, "train real q99 threshold"))
         axes[1].set_ylabel("nearest-neighbor cosine")
         axes[1].set_title("q99 versus real-real threshold")
 
@@ -352,13 +368,17 @@ def plot_outputs(df: pd.DataFrame, output_dir: Path, out_prefix: str) -> None:
         plt.close(fig)
 
         fig, axes = plt.subplots(1, 2, figsize=(15, 5.2), sharex=True)
-        axes[0].plot(x, df["gen_copy_fraction_q95"], "o-", label="generated > q95")
-        axes[0].plot(x, df["gen_copy_fraction_q99"], "o-", label="generated > q99")
+        for group_name, sub in groups:
+            x = sub["dataset_size"].astype(float).to_numpy()
+            axes[0].plot(x, sub["gen_copy_fraction_q95"], "o-", label=_label_for(group_name, "generated > q95"))
+            axes[0].plot(x, sub["gen_copy_fraction_q99"], "o-", label=_label_for(group_name, "generated > q99"))
         axes[0].set_ylabel("copy-like fraction")
         axes[0].set_title("generated above real-real thresholds")
 
-        axes[1].plot(x, df["val_copy_fraction_q95"], "o-", label="held-out real > q95")
-        axes[1].plot(x, df["val_copy_fraction_q99"], "o-", label="held-out real > q99")
+        for group_name, sub in groups:
+            x = sub["dataset_size"].astype(float).to_numpy()
+            axes[1].plot(x, sub["val_copy_fraction_q95"], "o-", label=_label_for(group_name, "held-out real > q95"))
+            axes[1].plot(x, sub["val_copy_fraction_q99"], "o-", label=_label_for(group_name, "held-out real > q99"))
         axes[1].set_ylabel("near-real-neighbor fraction")
         axes[1].set_title("held-out real above real-real thresholds")
 
@@ -376,13 +396,15 @@ def plot_outputs(df: pd.DataFrame, output_dir: Path, out_prefix: str) -> None:
         plt.close(fig)
 
         fig, axes = plt.subplots(1, 2, figsize=(15, 5.2), sharex=True)
-        for suffix in ("q95", "q99"):
-            gen_col = f"gen_gl_{suffix}"
-            val_col = f"val_gl_{suffix}"
-            if gen_col in df:
-                axes[0].plot(x, df[gen_col], "o-", label=f"generated, train-real {suffix}")
-            if val_col in df:
-                axes[0].plot(x, df[val_col], "o--", alpha=0.7, label=f"held-out real, train-real {suffix}")
+        for group_name, sub in groups:
+            x = sub["dataset_size"].astype(float).to_numpy()
+            for suffix in ("q95", "q99"):
+                gen_col = f"gen_gl_{suffix}"
+                val_col = f"val_gl_{suffix}"
+                if gen_col in sub:
+                    axes[0].plot(x, sub[gen_col], "o-", label=_label_for(group_name, f"generated, train-real {suffix}"))
+                if val_col in sub:
+                    axes[0].plot(x, sub[val_col], "o--", alpha=0.7, label=_label_for(group_name, f"held-out real, train-real {suffix}"))
         axes[0].set_ylabel("PCA GL = 1 - fraction above threshold")
         axes[0].set_title("adaptive real-real threshold")
 
@@ -390,9 +412,11 @@ def plot_outputs(df: pd.DataFrame, output_dir: Path, out_prefix: str) -> None:
             (c for c in df.columns if c.startswith("gen_gl_fixed_")),
             key=lambda c: float(c.rsplit("_", 1)[-1].replace("p", ".")),
         )
-        for col in fixed_cols:
-            label = col.rsplit("_", 1)[-1].replace("p", ".")
-            axes[1].plot(x, df[col], "o-", label=f"generated, tau={label}")
+        for group_name, sub in groups:
+            x = sub["dataset_size"].astype(float).to_numpy()
+            for col in fixed_cols:
+                label = col.rsplit("_", 1)[-1].replace("p", ".")
+                axes[1].plot(x, sub[col], "o-", label=_label_for(group_name, f"generated, tau={label}"))
         axes[1].set_ylabel("PCA GL = 1 - fraction above fixed tau")
         axes[1].set_title("fixed PCA similarity threshold")
 
@@ -406,6 +430,89 @@ def plot_outputs(df: pd.DataFrame, output_dir: Path, out_prefix: str) -> None:
         fig.suptitle("PCA paper-style generalizability score")
         fig.tight_layout(rect=(0, 0, 1, 0.93))
         out = output_dir / f"{out_prefix}_paper_style_gl_curves.png"
+        fig.savefig(out, dpi=180, bbox_inches="tight")
+        print("wrote", out)
+        plt.close(fig)
+
+
+def reproducibility_rows(
+    generated_embeddings: dict[tuple[str, int], np.ndarray],
+    thresholds: list[float],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    arches = sorted({arch for arch, _ in generated_embeddings})
+    if len(arches) < 2:
+        return rows
+    for i, arch_a in enumerate(arches):
+        for arch_b in arches[i + 1:]:
+            sizes = sorted(
+                size
+                for size in {size for arch, size in generated_embeddings if arch == arch_a}
+                if (arch_b, size) in generated_embeddings
+            )
+            for size in sizes:
+                a = generated_embeddings[(arch_a, size)]
+                b = generated_embeddings[(arch_b, size)]
+                n = min(len(a), len(b))
+                if n == 0:
+                    continue
+                paired = np.sum(a[:n] * b[:n], axis=1)
+                rec: dict[str, Any] = {
+                    "arch_pair": f"{arch_a}_vs_{arch_b}",
+                    "arch_a": arch_a,
+                    "arch_b": arch_b,
+                    "dataset_size": int(size),
+                    "n_paired": int(n),
+                    "paired_similarity_mean": float(np.mean(paired)),
+                    "paired_similarity_median": float(np.median(paired)),
+                    "paired_similarity_q90": float(np.quantile(paired, 0.90)),
+                    "paired_similarity_q99": float(np.quantile(paired, 0.99)),
+                }
+                for threshold in thresholds:
+                    suffix = threshold_label(threshold)
+                    rec[f"rp_fixed_{suffix}"] = float(np.mean(paired > threshold))
+                rows.append(rec)
+    return rows
+
+
+def plot_reproducibility(rp_df: pd.DataFrame, output_dir: Path, out_prefix: str, thresholds: list[float]) -> None:
+    if rp_df.empty:
+        return
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with plt.rc_context({
+        "font.size": 13,
+        "axes.titlesize": 15,
+        "axes.labelsize": 14,
+        "legend.fontsize": 10,
+        "figure.titlesize": 17,
+    }):
+        fig, axes = plt.subplots(1, 2, figsize=(15, 5.2), sharex=True)
+        for pair, sub in rp_df.groupby("arch_pair", sort=False):
+            x = sub["dataset_size"].astype(float).to_numpy()
+            axes[0].plot(x, sub["paired_similarity_median"], "o-", label=f"{pair} median")
+            axes[0].plot(x, sub["paired_similarity_q90"], "o--", label=f"{pair} q90")
+        axes[0].set_ylabel("paired generated cosine")
+        axes[0].set_title("same-seed generated similarity")
+
+        for pair, sub in rp_df.groupby("arch_pair", sort=False):
+            x = sub["dataset_size"].astype(float).to_numpy()
+            for threshold in thresholds:
+                suffix = threshold_label(threshold)
+                col = f"rp_fixed_{suffix}"
+                if col in sub:
+                    axes[1].plot(x, sub[col], "o-", label=f"{pair} tau={threshold:g}")
+        axes[1].set_ylabel("RP = fraction above tau")
+        axes[1].set_ylim(-0.03, 1.03)
+        axes[1].set_title("paper-style reproducibility")
+
+        for ax in axes:
+            ax.set_xscale("log", base=2)
+            ax.set_xlabel("training dataset size")
+            ax.grid(alpha=0.25)
+            ax.legend()
+        fig.suptitle("PCA generated-pair reproducibility")
+        fig.tight_layout(rect=(0, 0, 1, 0.93))
+        out = output_dir / f"{out_prefix}_reproducibility_curves.png"
         fig.savefig(out, dpi=180, bbox_inches="tight")
         print("wrote", out)
         plt.close(fig)
@@ -481,6 +588,7 @@ def main() -> None:
     gc.collect()
 
     metric_rows: list[dict[str, Any]] = []
+    generated_embeddings: dict[tuple[str, int], np.ndarray] = {}
     for row in rows:
         config = load_config(project_dir, row)
         sample_path = sample_path_for(project_dir, row, args.seed, args.sample_label)
@@ -499,6 +607,7 @@ def main() -> None:
         ref_z = encoder.transform_images(real_ref, batch_size=args.embedding_batch_size)
         val_z = encoder.transform_images(real_val, batch_size=args.embedding_batch_size)
         gen_z = encoder.transform_images(generated, batch_size=args.embedding_batch_size)
+        generated_embeddings[(str(row.get("arch", "")), int(row["dataset_size"]))] = gen_z.copy()
 
         ref_nn = leave_one_out_max_similarity(ref_z, batch_size=args.similarity_batch_size)
         val_nn = max_similarity(val_z, ref_z, batch_size=args.similarity_batch_size)
@@ -581,6 +690,15 @@ def main() -> None:
         ].to_string(index=False)
     )
     plot_outputs(df, output_dir, args.out_prefix)
+
+    rp_rows = reproducibility_rows(generated_embeddings, fixed_thresholds)
+    if rp_rows:
+        rp_df = pd.DataFrame(rp_rows).sort_values(["arch_pair", "dataset_size"])
+        rp_path = table_dir / f"{args.out_prefix}_reproducibility.csv"
+        rp_df.to_csv(rp_path, index=False)
+        print("wrote", rp_path)
+        print(rp_df.to_string(index=False))
+        plot_reproducibility(rp_df, output_dir, args.out_prefix, fixed_thresholds)
 
 
 if __name__ == "__main__":

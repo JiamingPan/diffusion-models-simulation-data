@@ -279,6 +279,101 @@ def plot_outputs(df: pd.DataFrame, output_dir: Path, out_prefix: str, primary_th
             plt.close(fig)
 
 
+def reproducibility_rows(
+    generated_embeddings: dict[tuple[str, int], torch.Tensor],
+    thresholds: list[float],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    arches = sorted({arch for arch, _ in generated_embeddings})
+    if len(arches) < 2:
+        return rows
+    for i, arch_a in enumerate(arches):
+        for arch_b in arches[i + 1:]:
+            sizes = sorted(
+                size
+                for size in {size for arch, size in generated_embeddings if arch == arch_a}
+                if (arch_b, size) in generated_embeddings
+            )
+            for size in sizes:
+                a = F.normalize(generated_embeddings[(arch_a, size)].float(), dim=1)
+                b = F.normalize(generated_embeddings[(arch_b, size)].float(), dim=1)
+                n = min(len(a), len(b))
+                if n == 0:
+                    continue
+                paired = (a[:n] * b[:n]).sum(dim=1).cpu().numpy()
+                rec: dict[str, Any] = {
+                    "arch_pair": f"{arch_a}_vs_{arch_b}",
+                    "arch_a": arch_a,
+                    "arch_b": arch_b,
+                    "dataset_size": int(size),
+                    "n_paired": int(n),
+                    "paired_similarity_mean": float(np.mean(paired)),
+                    "paired_similarity_median": float(np.median(paired)),
+                    "paired_similarity_q90": float(np.quantile(paired, 0.90)),
+                    "paired_similarity_q99": float(np.quantile(paired, 0.99)),
+                }
+                for threshold in thresholds:
+                    suffix = threshold_label(threshold)
+                    rec[f"rp_fixed_{suffix}"] = float(np.mean(paired > threshold))
+                rows.append(rec)
+    return rows
+
+
+def plot_reproducibility(
+    rp_df: pd.DataFrame,
+    output_dir: Path,
+    out_prefix: str,
+    thresholds: list[float],
+    primary_threshold: float,
+) -> None:
+    if rp_df.empty:
+        return
+    primary_suffix = threshold_label(primary_threshold)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with plt.rc_context({
+        "font.size": 13,
+        "axes.titlesize": 15,
+        "axes.labelsize": 14,
+        "legend.fontsize": 10,
+        "figure.titlesize": 17,
+    }):
+        fig, axes = plt.subplots(1, 2, figsize=(15, 5.2), sharex=True)
+        for pair, sub in rp_df.groupby("arch_pair", sort=False):
+            x = sub["dataset_size"].astype(float).to_numpy()
+            axes[0].plot(x, sub["paired_similarity_median"], "o-", label=f"{pair} median")
+            axes[0].plot(x, sub["paired_similarity_q90"], "o--", label=f"{pair} q90")
+        axes[0].set_ylabel("paired generated SSCD cosine")
+        axes[0].set_title("same-seed generated similarity")
+
+        for pair, sub in rp_df.groupby("arch_pair", sort=False):
+            x = sub["dataset_size"].astype(float).to_numpy()
+            primary_col = f"rp_fixed_{primary_suffix}"
+            if primary_col in sub:
+                axes[1].plot(x, sub[primary_col], "o-", lw=2.5, label=f"{pair} tau={primary_threshold:g}")
+            for threshold in thresholds:
+                if threshold == primary_threshold:
+                    continue
+                suffix = threshold_label(threshold)
+                col = f"rp_fixed_{suffix}"
+                if col in sub:
+                    axes[1].plot(x, sub[col], "o--", alpha=0.45, label=f"{pair} tau={threshold:g}")
+        axes[1].set_ylabel("RP = fraction above tau")
+        axes[1].set_ylim(-0.03, 1.03)
+        axes[1].set_title("paper-style reproducibility")
+
+        for ax in axes:
+            ax.set_xscale("log", base=2)
+            ax.set_xlabel("training dataset size N")
+            ax.grid(alpha=0.25)
+            ax.legend()
+        fig.suptitle("SSCD generated-pair reproducibility")
+        fig.tight_layout(rect=(0, 0, 1, 0.93))
+        out = output_dir / f"{out_prefix}_reproducibility_curves.png"
+        fig.savefig(out, dpi=180, bbox_inches="tight")
+        print("wrote", out)
+        plt.close(fig)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-dir", default=".", help="Repository root.")
@@ -359,6 +454,7 @@ def main() -> None:
         fixed_thresholds = sorted([*fixed_thresholds, float(args.threshold)])
 
     metric_rows: list[dict[str, Any]] = []
+    generated_embeddings: dict[tuple[str, int], torch.Tensor] = {}
     for row in rows:
         config = load_config(project_dir, row)
         sample_path = sample_path_for(project_dir, row, args.seed, args.sample_label)
@@ -384,6 +480,7 @@ def main() -> None:
         gen_z = embed_with_cache(
             generated, model=model, embed_fn=embed_fn, row=row, args=args, cache_dir=cache_dir, kind="generated"
         )
+        generated_embeddings[(str(row.get("arch", "")), int(row["dataset_size"]))] = gen_z.cpu().clone()
 
         ref_nn = leave_one_out_max_similarity(ref_z, batch_size=args.similarity_batch_size)
         val_nn = max_similarity(val_z, ref_z, batch_size=args.similarity_batch_size)
@@ -466,6 +563,15 @@ def main() -> None:
         ].to_string(index=False)
     )
     plot_outputs(df, output_dir, args.out_prefix, args.threshold)
+
+    rp_rows = reproducibility_rows(generated_embeddings, fixed_thresholds)
+    if rp_rows:
+        rp_df = pd.DataFrame(rp_rows).sort_values(["arch_pair", "dataset_size"])
+        rp_path = table_dir / f"{args.out_prefix}_reproducibility.csv"
+        rp_df.to_csv(rp_path, index=False)
+        print("wrote", rp_path)
+        print(rp_df.to_string(index=False))
+        plot_reproducibility(rp_df, output_dir, args.out_prefix, fixed_thresholds, args.threshold)
 
 
 if __name__ == "__main__":
