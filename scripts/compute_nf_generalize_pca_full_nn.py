@@ -527,28 +527,33 @@ def plot_reproducibility(rp_df: pd.DataFrame, output_dir: Path, out_prefix: str,
         fig, axes = plt.subplots(1, 2, figsize=(15, 5.2), sharex=True)
         for pair, sub in rp_df.groupby("arch_pair", sort=False):
             x = sub["dataset_size"].astype(float).to_numpy()
-            axes[0].plot(x, sub["paired_similarity_median"], "o-", label=f"{pair} median")
-            axes[0].plot(x, sub["paired_similarity_q90"], "o--", label=f"{pair} q90")
-        axes[0].set_ylabel("paired generated cosine")
-        axes[0].set_title("same-seed generated similarity")
+            if "unpaired_nn_median" in sub and "unpaired_nn_q90" in sub:
+                axes[0].plot(x, sub["unpaired_nn_median"], "o-", label=f"{pair} unpaired NN median")
+                axes[0].plot(x, sub["unpaired_nn_q90"], "o--", label=f"{pair} unpaired NN q90")
+            else:
+                axes[0].plot(x, sub["paired_similarity_median"], "o-", label=f"{pair} paired median")
+                axes[0].plot(x, sub["paired_similarity_q90"], "o--", label=f"{pair} paired q90")
+        axes[0].set_ylabel("generated-to-generated cosine")
+        axes[0].set_title("unpaired nearest-neighbor generated similarity")
 
         for pair, sub in rp_df.groupby("arch_pair", sort=False):
             x = sub["dataset_size"].astype(float).to_numpy()
             for threshold in thresholds:
                 suffix = threshold_label(threshold)
-                col = f"rp_fixed_{suffix}"
+                col = f"rp_unpaired_fixed_{suffix}" if f"rp_unpaired_fixed_{suffix}" in sub else f"rp_fixed_{suffix}"
                 if col in sub:
-                    axes[1].plot(x, sub[col], "o-", label=f"{pair} tau={threshold:g}")
+                    label_kind = "unpaired NN" if col.startswith("rp_unpaired_") else "paired"
+                    axes[1].plot(x, sub[col], "o-", label=f"{pair} {label_kind} tau={threshold:g}")
         axes[1].set_ylabel("RP = fraction above tau")
         axes[1].set_ylim(-0.03, 1.03)
-        axes[1].set_title("paper-style reproducibility")
+        axes[1].set_title("nearest-neighbor reproducibility")
 
         for ax in axes:
             ax.set_xscale("log", base=2)
             ax.set_xlabel("training dataset size")
             ax.grid(alpha=0.25)
             ax.legend()
-        fig.suptitle("PCA generated-pair reproducibility")
+        fig.suptitle("PCA generated-set reproducibility")
         fig.tight_layout(rect=(0, 0, 1, 0.93))
         out = output_dir / f"{out_prefix}_reproducibility_curves.png"
         fig.savefig(out, dpi=180, bbox_inches="tight")
