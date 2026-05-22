@@ -438,6 +438,7 @@ def plot_outputs(df: pd.DataFrame, output_dir: Path, out_prefix: str) -> None:
 def reproducibility_rows(
     generated_embeddings: dict[tuple[str, int], np.ndarray],
     thresholds: list[float],
+    adaptive_thresholds: dict[tuple[str, int], dict[str, float]] | None = None,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     arches = sorted({arch for arch, _ in generated_embeddings})
@@ -471,6 +472,20 @@ def reproducibility_rows(
                 for threshold in thresholds:
                     suffix = threshold_label(threshold)
                     rec[f"rp_fixed_{suffix}"] = float(np.mean(paired > threshold))
+                if adaptive_thresholds:
+                    for suffix in ("q95", "q99"):
+                        pair_thresholds = [
+                            adaptive_thresholds.get((arch_a, size), {}).get(suffix, np.nan),
+                            adaptive_thresholds.get((arch_b, size), {}).get(suffix, np.nan),
+                        ]
+                        finite_thresholds = [float(x) for x in pair_thresholds if np.isfinite(x)]
+                        if finite_thresholds:
+                            # Use the stricter of the two train-real thresholds.  For
+                            # the u64/u128 Fig. 2 runs these should be nearly identical,
+                            # because the real training reference set is the same.
+                            adaptive_threshold = max(finite_thresholds)
+                            rec[f"rp_threshold_{suffix}"] = adaptive_threshold
+                            rec[f"rp_{suffix}"] = float(np.mean(paired > adaptive_threshold))
                 rows.append(rec)
     return rows
 
@@ -691,7 +706,14 @@ def main() -> None:
     )
     plot_outputs(df, output_dir, args.out_prefix)
 
-    rp_rows = reproducibility_rows(generated_embeddings, fixed_thresholds)
+    adaptive_thresholds = {
+        (str(row["arch"]), int(row["dataset_size"])): {
+            "q95": float(row["threshold_q95"]),
+            "q99": float(row["threshold_q99"]),
+        }
+        for row in metric_rows
+    }
+    rp_rows = reproducibility_rows(generated_embeddings, fixed_thresholds, adaptive_thresholds)
     if rp_rows:
         rp_df = pd.DataFrame(rp_rows).sort_values(["arch_pair", "dataset_size"])
         rp_path = table_dir / f"{args.out_prefix}_reproducibility.csv"
