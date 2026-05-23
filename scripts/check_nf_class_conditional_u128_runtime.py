@@ -24,6 +24,16 @@ import yaml
 DEFAULT_COSMODIFF_DIR = "/home/jiamingp/Diffusion_model/cosmo_diffusion_main"
 
 
+def parse_version(value: str) -> tuple[int, ...]:
+    parts: list[int] = []
+    for token in value.replace("+", ".").split("."):
+        digits = "".join(ch for ch in token if ch.isdigit())
+        if digits == "":
+            break
+        parts.append(int(digits))
+    return tuple(parts)
+
+
 class TorchOptionalDeviceStub:
     """Small false backend so import-time optional-device probes do not fail."""
 
@@ -167,6 +177,16 @@ def preflight(args: argparse.Namespace) -> None:
 
     import diffusers
     from cosmodiff import optim, utils
+
+    torch_version = parse_version(torch.__version__)
+    diffusers_version = parse_version(getattr(diffusers, "__version__", "0"))
+    if torch_version < (2, 1) and diffusers_version >= (0, 32):
+        raise RuntimeError(
+            "Incompatible runtime: diffusers "
+            f"{getattr(diffusers, '__version__', 'unknown')} with torch {torch.__version__}. "
+            "Run `bash scripts/setup_nf_class_conditional_diffusers_compat.sh` and make sure "
+            "the preflight imports diffusers from local/python_packages/diffusers_0p31."
+        )
 
     optim_path = Path(inspect.getsourcefile(optim)).resolve()
     utils_path = Path(inspect.getsourcefile(utils)).resolve()
