@@ -82,6 +82,7 @@ if [[ ! -f "${COSMODIFF_DIR}/scripts/cosmodiff_train.py" ]]; then
   exit 1
 fi
 
+"${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_package_metadata.py" "${COSMODIFF_DIR}"
 "${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_continuous_labels.py" "${COSMODIFF_DIR}"
 
 echo "project:    ${PROJECT_DIR}"
