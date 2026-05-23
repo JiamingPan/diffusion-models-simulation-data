@@ -127,6 +127,27 @@ try:
         for _name in ("disable", "is_compiling", "is_exporting"):
             if not hasattr(_compiler, _name):
                 setattr(_compiler, _name, getattr(_compiler_stub, _name))
+    try:
+        from torch.utils import _pytree
+    except Exception:
+        _pytree = None
+    if _pytree is not None and not hasattr(_pytree, "register_pytree_node"):
+        _private_register = getattr(_pytree, "_register_pytree_node", None)
+        if _private_register is not None:
+            def _register_pytree_node(cls, flatten_fn, unflatten_fn, *args, **kwargs):
+                try:
+                    return _private_register(cls, flatten_fn, unflatten_fn, *args, **kwargs)
+                except TypeError:
+                    _supported = {
+                        _key: kwargs[_key]
+                        for _key in ("to_dumpable_context", "from_dumpable_context")
+                        if _key in kwargs
+                    }
+                    try:
+                        return _private_register(cls, flatten_fn, unflatten_fn, *args, **_supported)
+                    except TypeError:
+                        return _private_register(cls, flatten_fn, unflatten_fn)
+            _pytree.register_pytree_node = _register_pytree_node
     if hasattr(torch, "distributed") and not hasattr(torch.distributed, "device_mesh"):
         from types import SimpleNamespace
         torch.distributed.device_mesh = SimpleNamespace(DeviceMesh=object)

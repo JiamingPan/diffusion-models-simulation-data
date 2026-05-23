@@ -170,6 +170,29 @@ def ensure_torch_optional_device_stubs():
         for name in ("disable", "is_compiling", "is_exporting"):
             if not hasattr(compiler, name):
                 setattr(compiler, name, getattr(compiler_stub, name))
+    try:
+        from torch.utils import _pytree
+    except Exception:
+        _pytree = None
+    if _pytree is not None and not hasattr(_pytree, "register_pytree_node"):
+        private_register = getattr(_pytree, "_register_pytree_node", None)
+        if private_register is not None:
+
+            def register_pytree_node(cls, flatten_fn, unflatten_fn, *args, **kwargs):
+                try:
+                    return private_register(cls, flatten_fn, unflatten_fn, *args, **kwargs)
+                except TypeError:
+                    supported = {
+                        key: kwargs[key]
+                        for key in ("to_dumpable_context", "from_dumpable_context")
+                        if key in kwargs
+                    }
+                    try:
+                        return private_register(cls, flatten_fn, unflatten_fn, *args, **supported)
+                    except TypeError:
+                        return private_register(cls, flatten_fn, unflatten_fn)
+
+            _pytree.register_pytree_node = register_pytree_node
     if hasattr(torch, "distributed") and not hasattr(torch.distributed, "device_mesh"):
         torch.distributed.device_mesh = SimpleNamespace(DeviceMesh=object)
     if hasattr(torch, "distributed") and "torch.distributed._functional_collectives" not in sys.modules:
