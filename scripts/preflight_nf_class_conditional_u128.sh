@@ -3,14 +3,16 @@ set -euo pipefail
 
 PROJECT_DIR=${PROJECT_DIR:-/home/jiamingp/diffusion_models_repo}
 COSMODIFF_DIR=${COSMODIFF_DIR:-/home/jiamingp/Diffusion_model/cosmo_diffusion_main}
-VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
+VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf_class}
 PYTHON_BIN=${PYTHON_BIN:-python}
-DIFFUSERS_COMPAT_VERSION=${DIFFUSERS_COMPAT_VERSION:-0.31.0}
-DIFFUSERS_COMPAT_DIR=${DIFFUSERS_COMPAT_DIR:-${PROJECT_DIR}/local/python_packages/diffusers_${DIFFUSERS_COMPAT_VERSION//./p}}
 
 cd "${PROJECT_DIR}"
 if [[ -f "${VENV_PATH}/bin/activate" ]]; then
   source "${VENV_PATH}/bin/activate"
+else
+  echo "Missing class-conditional env: ${VENV_PATH}" >&2
+  echo "Run first: bash scripts/setup_nf_class_conditional_env.sh" >&2
+  exit 1
 fi
 
 RUN_NAME=$("${PYTHON_BIN}" scripts/prepare_nf_class_conditional_u128_config.py --project-dir "${PROJECT_DIR}" --print-runs)
@@ -84,13 +86,7 @@ except Exception:
 PY
 export COSMODIFF_STUB_SKLEARN=1
 export TORCHDYNAMO_DISABLE=1
-if [[ -d "${DIFFUSERS_COMPAT_DIR}/diffusers" ]]; then
-  export PYTHONPATH="${DIFFUSERS_COMPAT_DIR}:${STUB_ROOT}:${COSMODIFF_DIR}:${PROJECT_DIR}:${PYTHONPATH:-}"
-else
-  echo "Missing compatible diffusers target: ${DIFFUSERS_COMPAT_DIR}" >&2
-  echo "Run first: bash scripts/setup_nf_class_conditional_diffusers_compat.sh" >&2
-  export PYTHONPATH="${STUB_ROOT}:${COSMODIFF_DIR}:${PROJECT_DIR}:${PYTHONPATH:-}"
-fi
+export PYTHONPATH="${STUB_ROOT}:${COSMODIFF_DIR}:${PROJECT_DIR}:${PYTHONPATH:-}"
 export COSMODIFF_DIR
 
 if [[ ! -f "${CONFIG_PATH}" ]]; then
@@ -110,7 +106,7 @@ fi
 echo "project:    ${PROJECT_DIR}"
 echo "cosmodiff:  ${COSMODIFF_DIR}"
 echo "config:     ${CONFIG_PATH}"
-echo "diffusers:  ${DIFFUSERS_COMPAT_DIR}"
+echo "venv:       ${VENV_PATH}"
 echo "python:     $(${PYTHON_BIN} -c 'import sys; print(sys.executable)')"
 echo "repo head:  $(git -C "${PROJECT_DIR}" rev-parse --short HEAD)"
 echo "cosmodiff:  $(git -C "${COSMODIFF_DIR}" rev-parse --abbrev-ref HEAD) $(git -C "${COSMODIFF_DIR}" rev-parse --short HEAD)"

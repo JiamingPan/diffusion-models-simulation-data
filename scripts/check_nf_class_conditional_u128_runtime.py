@@ -184,8 +184,8 @@ def preflight(args: argparse.Namespace) -> None:
         raise RuntimeError(
             "Incompatible runtime: diffusers "
             f"{getattr(diffusers, '__version__', 'unknown')} with torch {torch.__version__}. "
-            "Run `bash scripts/setup_nf_class_conditional_diffusers_compat.sh` and make sure "
-            "the preflight imports diffusers from local/python_packages/diffusers_0p31."
+            "Run `bash scripts/setup_nf_class_conditional_env.sh` and make sure preflight uses "
+            "/home/jiamingp/venvs/cosmodiff_nf_class with diffusers==0.31.0."
         )
 
     optim_path = Path(inspect.getsourcefile(optim)).resolve()
@@ -195,7 +195,9 @@ def preflight(args: argparse.Namespace) -> None:
     if cosmodiff_dir not in utils_path.parents:
         raise RuntimeError(f"Imported cosmodiff.utils from {utils_path}, expected under {cosmodiff_dir}")
 
+    diffusers_path = Path(getattr(diffusers, "__file__", "unknown")).resolve()
     print(f"[preflight] diffusers={getattr(diffusers, '__version__', 'unknown')}", flush=True)
+    print(f"[preflight] diffusers_file={diffusers_path}", flush=True)
     print(f"[preflight] cosmodiff.optim={optim_path}", flush=True)
     print(f"[preflight] cosmodiff.utils={utils_path}", flush=True)
 

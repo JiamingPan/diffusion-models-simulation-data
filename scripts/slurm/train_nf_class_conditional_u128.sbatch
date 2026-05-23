@@ -24,16 +24,18 @@ fi
 if [[ -n "${INHERITED_COSMODIFF_DIR}" && -z "${COSMODIFF_DIR_OVERRIDE:-}" && "${INHERITED_COSMODIFF_DIR}" != "${COSMODIFF_DIR}" ]]; then
   echo "Ignoring inherited COSMODIFF_DIR=${INHERITED_COSMODIFF_DIR}; using ${COSMODIFF_DIR}" >&2
 fi
-VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
+VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf_class}
 PYTHON_BIN=${PYTHON_BIN:-python}
 REQUIRED_COSMODIFF_BRANCH=${REQUIRED_COSMODIFF_BRANCH:-main}
-DIFFUSERS_COMPAT_VERSION=${DIFFUSERS_COMPAT_VERSION:-0.31.0}
-DIFFUSERS_COMPAT_DIR=${DIFFUSERS_COMPAT_DIR:-${PROJECT_DIR}/local/python_packages/diffusers_${DIFFUSERS_COMPAT_VERSION//./p}}
 
 cd "${PROJECT_DIR}"
 mkdir -p logs/nf_class_conditional_u128
 if [[ -f "${VENV_PATH}/bin/activate" ]]; then
   source "${VENV_PATH}/bin/activate"
+else
+  echo "Missing class-conditional env: ${VENV_PATH}" >&2
+  echo "Run first: bash scripts/setup_nf_class_conditional_env.sh" >&2
+  exit 1
 fi
 
 RUN_NAME=$("${PYTHON_BIN}" scripts/prepare_nf_class_conditional_u128_config.py --project-dir "${PROJECT_DIR}" --print-runs)
@@ -108,12 +110,7 @@ except Exception:
 PY
 export COSMODIFF_STUB_SKLEARN=1
 export TORCHDYNAMO_DISABLE=1
-if [[ ! -d "${DIFFUSERS_COMPAT_DIR}/diffusers" ]]; then
-  echo "Missing compatible diffusers target: ${DIFFUSERS_COMPAT_DIR}" >&2
-  echo "Run first: bash scripts/setup_nf_class_conditional_diffusers_compat.sh" >&2
-  exit 1
-fi
-export PYTHONPATH="${DIFFUSERS_COMPAT_DIR}:${STUB_ROOT}:${COSMODIFF_DIR}:${PROJECT_DIR}:${PYTHONPATH:-}"
+export PYTHONPATH="${STUB_ROOT}:${COSMODIFF_DIR}:${PROJECT_DIR}:${PYTHONPATH:-}"
 export COSMODIFF_DIR
 
 if [[ ! -f "${CONFIG_PATH}" ]]; then
@@ -158,7 +155,7 @@ fi
 echo "Training discrete class-conditional ${RUN_NAME}"
 echo "  config:    ${CONFIG_PATH}"
 echo "  cosmodiff: ${COSMODIFF_DIR}"
-echo "  diffusers: ${DIFFUSERS_COMPAT_DIR}"
+echo "  venv:      ${VENV_PATH}"
 echo "  python:    ${PYTHON_BIN}"
 
 "${PYTHON_BIN}" scripts/train_cosmodiff.py \
