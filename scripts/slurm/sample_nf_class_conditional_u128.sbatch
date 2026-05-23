@@ -59,7 +59,13 @@ try:
         def current_device(self): return 0
         def set_device(self, *args, **kwargs): return None
         def synchronize(self, *args, **kwargs): return None
+        def manual_seed(self, *args, **kwargs): return None
         def manual_seed_all(self, *args, **kwargs): return None
+        def seed(self, *args, **kwargs): return 0
+        def initial_seed(self, *args, **kwargs): return 0
+        def get_rng_state(self, *args, **kwargs): return None
+        def set_rng_state(self, *args, **kwargs): return None
+        def is_built(self, *args, **kwargs): return False
         def current_stream(self, *args, **kwargs): return None
         def stream(self, *args, **kwargs): return nullcontext()
         def device(self, *args, **kwargs): return nullcontext()
@@ -75,11 +81,12 @@ try:
                 return None
             return missing
     _stub = _XPUStub()
+    _required = ("empty_cache", "is_available", "device_count", "manual_seed")
     for _backend in ("xpu", "mps"):
-        if not hasattr(torch, _backend):
+        _existing = getattr(torch, _backend, None)
+        if _existing is None or any(not hasattr(_existing, _name) for _name in _required):
             setattr(torch, _backend, _stub)
             continue
-        _existing = getattr(torch, _backend)
         for _name in dir(_stub):
             if _name.startswith("__"):
                 continue

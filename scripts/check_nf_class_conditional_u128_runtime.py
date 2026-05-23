@@ -48,8 +48,26 @@ class TorchOptionalDeviceStub:
     def synchronize(self, *args, **kwargs) -> None:
         return None
 
+    def manual_seed(self, *args, **kwargs) -> None:
+        return None
+
     def manual_seed_all(self, *args, **kwargs) -> None:
         return None
+
+    def seed(self, *args, **kwargs) -> int:
+        return 0
+
+    def initial_seed(self, *args, **kwargs) -> int:
+        return 0
+
+    def get_rng_state(self, *args, **kwargs):
+        return None
+
+    def set_rng_state(self, *args, **kwargs) -> None:
+        return None
+
+    def is_built(self, *args, **kwargs) -> bool:
+        return False
 
     def current_stream(self, *args, **kwargs):
         return None
@@ -88,11 +106,12 @@ def ensure_torch_optional_device_stubs():
     import torch
 
     stub = TorchOptionalDeviceStub()
+    required = ("empty_cache", "is_available", "device_count", "manual_seed")
     for backend in ("xpu", "mps"):
-        if not hasattr(torch, backend):
+        existing = getattr(torch, backend, None)
+        if existing is None or any(not hasattr(existing, name) for name in required):
             setattr(torch, backend, stub)
             continue
-        existing = getattr(torch, backend)
         for name in dir(stub):
             if name.startswith("__"):
                 continue
