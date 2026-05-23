@@ -25,10 +25,12 @@ if [[ -n "${INHERITED_COSMODIFF_DIR}" && -z "${COSMODIFF_DIR_OVERRIDE:-}" && "${
   echo "Ignoring inherited COSMODIFF_DIR=${INHERITED_COSMODIFF_DIR}; using ${COSMODIFF_DIR}" >&2
 fi
 VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf_class}
+BASE_VENV_PATH=${BASE_VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
 PYTHON_BIN=${PYTHON_BIN:-python}
 REQUIRED_COSMODIFF_BRANCH=${REQUIRED_COSMODIFF_BRANCH:-main}
 
 cd "${PROJECT_DIR}"
+source "${PROJECT_DIR}/scripts/nf_class_conditional_pythonpath.sh"
 mkdir -p logs/nf_class_conditional_u128
 if [[ -f "${VENV_PATH}/bin/activate" ]]; then
   source "${VENV_PATH}/bin/activate"
@@ -37,6 +39,8 @@ else
   echo "Run first: bash scripts/setup_nf_class_conditional_env.sh" >&2
   exit 1
 fi
+
+set_nf_class_conditional_pythonpath "${PYTHON_BIN}" "${BASE_VENV_PATH}"
 
 RUN_NAME=$("${PYTHON_BIN}" scripts/prepare_nf_class_conditional_u128_config.py --project-dir "${PROJECT_DIR}" --print-runs)
 CONFIG_PATH="${PROJECT_DIR}/local/nf_class_conditional_u128/configs/${RUN_NAME}.yaml"

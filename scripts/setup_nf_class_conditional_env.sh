@@ -5,20 +5,11 @@ PROJECT_DIR=${PROJECT_DIR:-/home/jiamingp/diffusion_models_repo}
 BASE_VENV_PATH=${BASE_VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
 CLASS_VENV_PATH=${CLASS_VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf_class}
 DIFFUSERS_VERSION=${DIFFUSERS_VERSION:-0.31.0}
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+source "${SCRIPT_DIR}/nf_class_conditional_pythonpath.sh"
 
 if [[ ! -x "${BASE_VENV_PATH}/bin/python" ]]; then
   echo "Missing base venv python: ${BASE_VENV_PATH}/bin/python" >&2
-  exit 1
-fi
-
-BASE_SITE=$("${BASE_VENV_PATH}/bin/python" - <<'PY'
-import sysconfig
-print(sysconfig.get_paths()["purelib"])
-PY
-)
-
-if [[ ! -d "${BASE_SITE}" ]]; then
-  echo "Could not find base venv site-packages: ${BASE_SITE}" >&2
   exit 1
 fi
 
@@ -27,19 +18,14 @@ if [[ ! -x "${CLASS_VENV_PATH}/bin/python" ]]; then
   "${BASE_VENV_PATH}/bin/python" -m venv "${CLASS_VENV_PATH}"
 fi
 
-CLASS_SITE=$("${CLASS_VENV_PATH}/bin/python" - <<'PY'
-import sysconfig
-print(sysconfig.get_paths()["purelib"])
-PY
-)
-mkdir -p "${CLASS_SITE}"
-printf '%s\n' "${BASE_SITE}" > "${CLASS_SITE}/00-cosmodiff-base-venv.pth"
-
-echo "Base package fallback: ${BASE_SITE}"
 echo "Class env:             ${CLASS_VENV_PATH}"
 echo "Installing diffusers==${DIFFUSERS_VERSION} directly into the class env"
 "${CLASS_VENV_PATH}/bin/python" -m pip install --upgrade pip setuptools wheel
 "${CLASS_VENV_PATH}/bin/python" -m pip install --upgrade --no-deps "diffusers==${DIFFUSERS_VERSION}"
+
+set_nf_class_conditional_pythonpath "${CLASS_VENV_PATH}/bin/python" "${BASE_VENV_PATH}"
+echo "Class package path:    ${NF_CLASS_CONDITIONAL_CLASS_SITES}"
+echo "Base package fallback: ${NF_CLASS_CONDITIONAL_BASE_SITES}"
 
 DIFFUSERS_VERSION="${DIFFUSERS_VERSION}" "${CLASS_VENV_PATH}/bin/python" - <<'PY'
 import os
@@ -54,6 +40,7 @@ from diffusers import DDPMScheduler, UNet2DModel
 print("python:", sys.executable)
 print("torch:", torch.__version__, torch.__file__)
 print("diffusers:", diffusers.__version__, diffusers.__file__)
+print("sys.path[:5]:", sys.path[:5])
 
 if diffusers.__version__ != expected:
     raise SystemExit(f"Expected diffusers=={expected}, got {diffusers.__version__}")
