@@ -16,6 +16,7 @@ import inspect
 import sys
 from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import yaml
@@ -146,6 +147,8 @@ def ensure_torch_optional_device_stubs():
         name = f"uint{bits}"
         if not hasattr(torch, name):
             setattr(torch, name, torch.uint8)
+    if hasattr(torch, "distributed") and not hasattr(torch.distributed, "device_mesh"):
+        torch.distributed.device_mesh = SimpleNamespace(DeviceMesh=object)
     return torch
 
 
@@ -176,16 +179,15 @@ def preflight(args: argparse.Namespace) -> None:
     print(f"[preflight] torch.float8_e4m3fn={torch.float8_e4m3fn}", flush=True)
 
     import diffusers
+    from diffusers import AutoModel
     from cosmodiff import optim, utils
 
     torch_version = parse_version(torch.__version__)
     diffusers_version = parse_version(getattr(diffusers, "__version__", "0"))
     if torch_version < (2, 1) and diffusers_version >= (0, 32):
-        raise RuntimeError(
-            "Incompatible runtime: diffusers "
-            f"{getattr(diffusers, '__version__', 'unknown')} with torch {torch.__version__}. "
-            "Run `bash scripts/setup_nf_class_conditional_env.sh` and make sure preflight uses "
-            "/home/jiamingp/venvs/cosmodiff_nf_class with diffusers==0.31.0."
+        print(
+            "[preflight] torch<2.1 with recent diffusers; using Great Lakes optional-backend import shims",
+            flush=True,
         )
 
     optim_path = Path(inspect.getsourcefile(optim)).resolve()
@@ -198,6 +200,7 @@ def preflight(args: argparse.Namespace) -> None:
     diffusers_path = Path(getattr(diffusers, "__file__", "unknown")).resolve()
     print(f"[preflight] diffusers={getattr(diffusers, '__version__', 'unknown')}", flush=True)
     print(f"[preflight] diffusers_file={diffusers_path}", flush=True)
+    print(f"[preflight] diffusers.AutoModel={AutoModel}", flush=True)
     print(f"[preflight] cosmodiff.optim={optim_path}", flush=True)
     print(f"[preflight] cosmodiff.utils={utils_path}", flush=True)
 

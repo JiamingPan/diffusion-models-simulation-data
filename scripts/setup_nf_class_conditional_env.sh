@@ -4,7 +4,7 @@ set -euo pipefail
 PROJECT_DIR=${PROJECT_DIR:-/home/jiamingp/diffusion_models_repo}
 BASE_VENV_PATH=${BASE_VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
 CLASS_VENV_PATH=${CLASS_VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf_class}
-DIFFUSERS_VERSION=${DIFFUSERS_VERSION:-0.31.0}
+DIFFUSERS_VERSION=${DIFFUSERS_VERSION:-0.38.0}
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${SCRIPT_DIR}/nf_class_conditional_pythonpath.sh"
 
@@ -35,12 +35,78 @@ import sys
 expected = os.environ["DIFFUSERS_VERSION"]
 
 import torch
+
+from contextlib import nullcontext
+from types import SimpleNamespace
+
+
+class _OptionalDeviceStub:
+    def is_available(self): return False
+    def device_count(self): return 0
+    def empty_cache(self): return None
+    def _is_compiled(self): return False
+    def current_device(self): return 0
+    def set_device(self, *args, **kwargs): return None
+    def synchronize(self, *args, **kwargs): return None
+    def manual_seed(self, *args, **kwargs): return None
+    def manual_seed_all(self, *args, **kwargs): return None
+    def seed(self, *args, **kwargs): return 0
+    def initial_seed(self, *args, **kwargs): return 0
+    def get_rng_state(self, *args, **kwargs): return None
+    def set_rng_state(self, *args, **kwargs): return None
+    def is_built(self, *args, **kwargs): return False
+    def current_stream(self, *args, **kwargs): return None
+    def stream(self, *args, **kwargs): return nullcontext()
+    def device(self, *args, **kwargs): return nullcontext()
+    def memory_allocated(self, *args, **kwargs): return 0
+    def max_memory_allocated(self, *args, **kwargs): return 0
+    def reset_peak_memory_stats(self, *args, **kwargs): return None
+    def get_device_name(self, *args, **kwargs): return "optional-device-unavailable"
+    def get_device_properties(self, *args, **kwargs): return None
+    def __getattr__(self, name):
+        def missing(*args, **kwargs):
+            if name.startswith("is_"):
+                return False
+            return None
+        return missing
+
+
+_stub = _OptionalDeviceStub()
+_required = ("empty_cache", "is_available", "device_count", "manual_seed")
+for _backend in ("xpu", "mps"):
+    _existing = getattr(torch, _backend, None)
+    if _existing is None or any(not hasattr(_existing, _name) for _name in _required):
+        setattr(torch, _backend, _stub)
+        continue
+    for _name in dir(_stub):
+        if _name.startswith("__"):
+            continue
+        if not hasattr(_existing, _name):
+            setattr(_existing, _name, getattr(_stub, _name))
+for _name in (
+    "float8_e4m3fn",
+    "float8_e4m3fnuz",
+    "float8_e5m2",
+    "float8_e5m2fnuz",
+    "float8_e8m0fnu",
+    "float4_e2m1fn_x2",
+):
+    if not hasattr(torch, _name):
+        setattr(torch, _name, torch.float16)
+for _bits in range(1, 8):
+    _name = f"uint{_bits}"
+    if not hasattr(torch, _name):
+        setattr(torch, _name, torch.uint8)
+if hasattr(torch, "distributed") and not hasattr(torch.distributed, "device_mesh"):
+    torch.distributed.device_mesh = SimpleNamespace(DeviceMesh=object)
+
 import diffusers
-from diffusers import DDPMScheduler, UNet2DModel
+from diffusers import AutoModel, DDPMScheduler, UNet2DModel
 
 print("python:", sys.executable)
 print("torch:", torch.__version__, torch.__file__)
 print("diffusers:", diffusers.__version__, diffusers.__file__)
+print("AutoModel:", AutoModel)
 print("sys.path[:5]:", sys.path[:5])
 
 if diffusers.__version__ != expected:

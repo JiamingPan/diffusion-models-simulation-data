@@ -86,6 +86,9 @@ try:
         _name = f"uint{_bits}"
         if not hasattr(torch, _name):
             setattr(torch, _name, torch.uint8)
+    if hasattr(torch, "distributed") and not hasattr(torch.distributed, "device_mesh"):
+        from types import SimpleNamespace
+        torch.distributed.device_mesh = SimpleNamespace(DeviceMesh=object)
 except Exception:
     pass
 PY
@@ -106,7 +109,6 @@ if [[ ! -f "${COSMODIFF_DIR}/scripts/cosmodiff_train.py" ]]; then
 fi
 
 "${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_package_metadata.py" "${COSMODIFF_DIR}"
-"${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_diffusers_automodel.py" "${COSMODIFF_DIR}"
 "${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_continuous_labels.py" "${COSMODIFF_DIR}"
 
 echo "project:    ${PROJECT_DIR}"

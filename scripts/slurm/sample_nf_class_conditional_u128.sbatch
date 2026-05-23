@@ -115,6 +115,9 @@ try:
         _name = f"uint{_bits}"
         if not hasattr(torch, _name):
             setattr(torch, _name, torch.uint8)
+    if hasattr(torch, "distributed") and not hasattr(torch.distributed, "device_mesh"):
+        from types import SimpleNamespace
+        torch.distributed.device_mesh = SimpleNamespace(DeviceMesh=object)
 except Exception:
     pass
 PY
@@ -142,7 +145,6 @@ while ! mkdir "${PATCH_LOCK}" 2>/dev/null; do
 done
 trap 'rmdir "${PATCH_LOCK}" 2>/dev/null || true' EXIT
 "${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_package_metadata.py" "${COSMODIFF_DIR}"
-"${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_diffusers_automodel.py" "${COSMODIFF_DIR}"
 "${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_sampling_compat.py" "${COSMODIFF_DIR}"
 rmdir "${PATCH_LOCK}" 2>/dev/null || true
 trap - EXIT
