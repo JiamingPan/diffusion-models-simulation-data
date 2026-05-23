@@ -86,6 +86,13 @@ try:
                     return False
                 return None
             return missing
+    class _CompilerStub:
+        def disable(self, fn=None, recursive=True):
+            if fn is None:
+                return lambda inner: inner
+            return fn
+        def is_compiling(self): return False
+        def is_exporting(self): return False
     _stub = _XPUStub()
     _required = ("empty_cache", "is_available", "device_count", "manual_seed")
     for _backend in ("xpu", "mps"):
@@ -112,6 +119,14 @@ try:
         _name = f"uint{_bits}"
         if not hasattr(torch, _name):
             setattr(torch, _name, torch.uint8)
+    _compiler_stub = _CompilerStub()
+    _compiler = getattr(torch, "compiler", None)
+    if _compiler is None:
+        torch.compiler = _compiler_stub
+    else:
+        for _name in ("disable", "is_compiling", "is_exporting"):
+            if not hasattr(_compiler, _name):
+                setattr(_compiler, _name, getattr(_compiler_stub, _name))
     if hasattr(torch, "distributed") and not hasattr(torch.distributed, "device_mesh"):
         from types import SimpleNamespace
         torch.distributed.device_mesh = SimpleNamespace(DeviceMesh=object)

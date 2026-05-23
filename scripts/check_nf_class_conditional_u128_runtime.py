@@ -113,6 +113,21 @@ class TorchOptionalDeviceStub:
         return missing
 
 
+class TorchCompilerStub:
+    """No-op torch.compiler facade for import-time diffusers decorators."""
+
+    def disable(self, fn=None, recursive: bool = True):
+        if fn is None:
+            return lambda inner: inner
+        return fn
+
+    def is_compiling(self) -> bool:
+        return False
+
+    def is_exporting(self) -> bool:
+        return False
+
+
 def ensure_torch_optional_device_stubs():
     import torch
 
@@ -147,6 +162,14 @@ def ensure_torch_optional_device_stubs():
         name = f"uint{bits}"
         if not hasattr(torch, name):
             setattr(torch, name, torch.uint8)
+    compiler_stub = TorchCompilerStub()
+    compiler = getattr(torch, "compiler", None)
+    if compiler is None:
+        torch.compiler = compiler_stub
+    else:
+        for name in ("disable", "is_compiling", "is_exporting"):
+            if not hasattr(compiler, name):
+                setattr(compiler, name, getattr(compiler_stub, name))
     if hasattr(torch, "distributed") and not hasattr(torch.distributed, "device_mesh"):
         torch.distributed.device_mesh = SimpleNamespace(DeviceMesh=object)
     if hasattr(torch, "distributed") and "torch.distributed._functional_collectives" not in sys.modules:
