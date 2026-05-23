@@ -37,7 +37,7 @@ expected = os.environ["DIFFUSERS_VERSION"]
 import torch
 
 from contextlib import nullcontext
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 
 class _OptionalDeviceStub:
@@ -99,6 +99,21 @@ for _bits in range(1, 8):
         setattr(torch, _name, torch.uint8)
 if hasattr(torch, "distributed") and not hasattr(torch.distributed, "device_mesh"):
     torch.distributed.device_mesh = SimpleNamespace(DeviceMesh=object)
+if hasattr(torch, "distributed") and "torch.distributed._functional_collectives" not in sys.modules:
+    funcol = ModuleType("torch.distributed._functional_collectives")
+
+    class AsyncCollectiveTensor:
+        pass
+
+    def _identity_collective(tensor, *args, **kwargs):
+        return tensor
+
+    funcol.AsyncCollectiveTensor = AsyncCollectiveTensor
+    funcol.all_to_all_single = _identity_collective
+    funcol.all_gather_tensor = _identity_collective
+    funcol.permute_tensor = _identity_collective
+    sys.modules["torch.distributed._functional_collectives"] = funcol
+    torch.distributed._functional_collectives = funcol
 
 import diffusers
 from diffusers import AutoModel, DDPMScheduler, UNet2DModel

@@ -54,6 +54,8 @@ printf "def roc_curve(*args, **kwargs):\n    raise RuntimeError('sklearn.metrics
 cat > "${STUB_ROOT}/sitecustomize.py" <<'PY'
 try:
     from contextlib import nullcontext
+    import sys
+    from types import ModuleType
     import torch
     class _XPUStub:
         def is_available(self): return False
@@ -113,6 +115,18 @@ try:
     if hasattr(torch, "distributed") and not hasattr(torch.distributed, "device_mesh"):
         from types import SimpleNamespace
         torch.distributed.device_mesh = SimpleNamespace(DeviceMesh=object)
+    if hasattr(torch, "distributed") and "torch.distributed._functional_collectives" not in sys.modules:
+        _funcol = ModuleType("torch.distributed._functional_collectives")
+        class _AsyncCollectiveTensor:
+            pass
+        def _identity_collective(tensor, *args, **kwargs):
+            return tensor
+        _funcol.AsyncCollectiveTensor = _AsyncCollectiveTensor
+        _funcol.all_to_all_single = _identity_collective
+        _funcol.all_gather_tensor = _identity_collective
+        _funcol.permute_tensor = _identity_collective
+        sys.modules["torch.distributed._functional_collectives"] = _funcol
+        torch.distributed._functional_collectives = _funcol
 except Exception:
     pass
 PY
