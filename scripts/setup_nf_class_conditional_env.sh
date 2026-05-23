@@ -5,6 +5,9 @@ PROJECT_DIR=${PROJECT_DIR:-/home/jiamingp/diffusion_models_repo}
 BASE_VENV_PATH=${BASE_VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
 CLASS_VENV_PATH=${CLASS_VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf_class}
 DIFFUSERS_VERSION=${DIFFUSERS_VERSION:-0.38.0}
+INSTALL_TORCH=${INSTALL_TORCH:-1}
+TORCH_VERSION=${TORCH_VERSION:-2.1.2+cu118}
+TORCH_CUDA_INDEX_URL=${TORCH_CUDA_INDEX_URL:-https://download.pytorch.org/whl/cu118}
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${SCRIPT_DIR}/nf_class_conditional_pythonpath.sh"
 
@@ -19,8 +22,14 @@ if [[ ! -x "${CLASS_VENV_PATH}/bin/python" ]]; then
 fi
 
 echo "Class env:             ${CLASS_VENV_PATH}"
+if [[ "${INSTALL_TORCH}" != "0" ]]; then
+  echo "Installing CUDA PyTorch ${TORCH_VERSION} directly into the class env"
+fi
 echo "Installing diffusers==${DIFFUSERS_VERSION} directly into the class env"
 "${CLASS_VENV_PATH}/bin/python" -m pip install --upgrade pip setuptools wheel
+if [[ "${INSTALL_TORCH}" != "0" ]]; then
+  "${CLASS_VENV_PATH}/bin/python" -m pip install --upgrade --extra-index-url "${TORCH_CUDA_INDEX_URL}" "torch==${TORCH_VERSION}"
+fi
 "${CLASS_VENV_PATH}/bin/python" -m pip install --upgrade --no-deps "diffusers==${DIFFUSERS_VERSION}"
 
 set_nf_class_conditional_pythonpath "${CLASS_VENV_PATH}/bin/python" "${BASE_VENV_PATH}"
@@ -137,12 +146,19 @@ from diffusers import AutoModel, DDPMScheduler, UNet2DModel
 
 print("python:", sys.executable)
 print("torch:", torch.__version__, torch.__file__)
+print("torch_cuda_build:", torch.version.cuda)
+print("torch_cuda_available:", torch.cuda.is_available())
 print("diffusers:", diffusers.__version__, diffusers.__file__)
 print("AutoModel:", AutoModel)
 print("sys.path[:5]:", sys.path[:5])
 
 if diffusers.__version__ != expected:
     raise SystemExit(f"Expected diffusers=={expected}, got {diffusers.__version__}")
+if torch.version.cuda is None:
+    raise SystemExit(
+        "Class env is importing a CPU-only PyTorch build. "
+        "Install a CUDA wheel in the class env before submitting GPU training."
+    )
 
 scheduler = DDPMScheduler(
     num_train_timesteps=500,

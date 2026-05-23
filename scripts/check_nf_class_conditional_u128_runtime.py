@@ -212,9 +212,19 @@ def preflight(args: argparse.Namespace) -> None:
     torch = ensure_torch_optional_device_stubs()
     print(f"[preflight] python={sys.executable}", flush=True)
     print(f"[preflight] torch={torch.__version__} cuda_available={torch.cuda.is_available()}", flush=True)
+    print(f"[preflight] torch_cuda_build={torch.version.cuda}", flush=True)
     print(f"[preflight] torch.xpu.is_available={torch.xpu.is_available()}", flush=True)
     print(f"[preflight] torch.mps.is_available={torch.mps.is_available()}", flush=True)
     print(f"[preflight] torch.float8_e4m3fn={torch.float8_e4m3fn}", flush=True)
+
+    with config_path.open() as f:
+        config = yaml.safe_load(f)
+    requested_device = str(config.get("global", {}).get("device", ""))
+    if requested_device.startswith("cuda") and torch.version.cuda is None:
+        raise RuntimeError(
+            "Config requests CUDA, but this environment is importing a CPU-only PyTorch build. "
+            "Run scripts/setup_nf_class_conditional_env.sh after pulling the CUDA torch fix."
+        )
 
     import diffusers
     from diffusers import AutoModel
@@ -255,9 +265,6 @@ def preflight(args: argparse.Namespace) -> None:
     if missing:
         raise RuntimeError(f"cosmodiff.optim.train missing required args: {sorted(missing)}")
     print("[preflight] cosmodiff train signature supports conditional training", flush=True)
-
-    with config_path.open() as f:
-        config = yaml.safe_load(f)
 
     if config["train"].get("conditioning") != "discrete":
         raise RuntimeError(f"Expected train.conditioning=discrete, got {config['train'].get('conditioning')!r}")
