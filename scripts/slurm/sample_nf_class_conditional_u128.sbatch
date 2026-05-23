@@ -66,7 +66,7 @@ try:
         def memory_allocated(self, *args, **kwargs): return 0
         def max_memory_allocated(self, *args, **kwargs): return 0
         def reset_peak_memory_stats(self, *args, **kwargs): return None
-        def get_device_name(self, *args, **kwargs): return "xpu-unavailable"
+        def get_device_name(self, *args, **kwargs): return "optional-device-unavailable"
         def get_device_properties(self, *args, **kwargs): return None
         def __getattr__(self, name):
             def missing(*args, **kwargs):
@@ -75,14 +75,16 @@ try:
                 return None
             return missing
     _stub = _XPUStub()
-    if not hasattr(torch, "xpu"):
-        torch.xpu = _stub
-    else:
+    for _backend in ("xpu", "mps"):
+        if not hasattr(torch, _backend):
+            setattr(torch, _backend, _stub)
+            continue
+        _existing = getattr(torch, _backend)
         for _name in dir(_stub):
             if _name.startswith("__"):
                 continue
-            if not hasattr(torch.xpu, _name):
-                setattr(torch.xpu, _name, getattr(_stub, _name))
+            if not hasattr(_existing, _name):
+                setattr(_existing, _name, getattr(_stub, _name))
 except Exception:
     pass
 PY

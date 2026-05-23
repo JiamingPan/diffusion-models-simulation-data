@@ -24,8 +24,8 @@ import yaml
 DEFAULT_COSMODIFF_DIR = "/home/jiamingp/Diffusion_model/cosmo_diffusion_main"
 
 
-class TorchXPUStub:
-    """Small false XPU backend so import-time optional-XPU probes do not fail."""
+class TorchOptionalDeviceStub:
+    """Small false backend so import-time optional-device probes do not fail."""
 
     def is_available(self) -> bool:
         return False
@@ -70,7 +70,7 @@ class TorchXPUStub:
         return None
 
     def get_device_name(self, *args, **kwargs) -> str:
-        return "xpu-unavailable"
+        return "optional-device-unavailable"
 
     def get_device_properties(self, *args, **kwargs):
         return None
@@ -84,18 +84,20 @@ class TorchXPUStub:
         return missing
 
 
-def ensure_torch_xpu_stub():
+def ensure_torch_optional_device_stubs():
     import torch
 
-    stub = TorchXPUStub()
-    if not hasattr(torch, "xpu"):
-        torch.xpu = stub
-    else:
+    stub = TorchOptionalDeviceStub()
+    for backend in ("xpu", "mps"):
+        if not hasattr(torch, backend):
+            setattr(torch, backend, stub)
+            continue
+        existing = getattr(torch, backend)
         for name in dir(stub):
             if name.startswith("__"):
                 continue
-            if not hasattr(torch.xpu, name):
-                setattr(torch.xpu, name, getattr(stub, name))
+            if not hasattr(existing, name):
+                setattr(existing, name, getattr(stub, name))
     return torch
 
 
@@ -118,10 +120,11 @@ def preflight(args: argparse.Namespace) -> None:
     sys.path.insert(0, str(project_dir))
     sys.path.insert(0, str(cosmodiff_dir))
 
-    torch = ensure_torch_xpu_stub()
+    torch = ensure_torch_optional_device_stubs()
     print(f"[preflight] python={sys.executable}", flush=True)
     print(f"[preflight] torch={torch.__version__} cuda_available={torch.cuda.is_available()}", flush=True)
     print(f"[preflight] torch.xpu.is_available={torch.xpu.is_available()}", flush=True)
+    print(f"[preflight] torch.mps.is_available={torch.mps.is_available()}", flush=True)
 
     import diffusers
     from cosmodiff import optim, utils
