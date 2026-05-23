@@ -135,6 +135,7 @@ while ! mkdir "${PATCH_LOCK}" 2>/dev/null; do
 done
 trap 'rmdir "${PATCH_LOCK}" 2>/dev/null || true' EXIT
 "${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_package_metadata.py" "${COSMODIFF_DIR}"
+"${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_diffusers_automodel.py" "${COSMODIFF_DIR}"
 "${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_continuous_labels.py" "${COSMODIFF_DIR}"
 rmdir "${PATCH_LOCK}" 2>/dev/null || true
 trap - EXIT
