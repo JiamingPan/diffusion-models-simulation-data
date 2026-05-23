@@ -42,6 +42,21 @@ STUB_ROOT="${PROJECT_DIR}/results/cache/python_stubs"
 mkdir -p "${STUB_ROOT}/sklearn/metrics"
 printf 'from . import metrics\n' > "${STUB_ROOT}/sklearn/__init__.py"
 printf "def roc_curve(*args, **kwargs):\n    raise RuntimeError('sklearn.metrics.roc_curve is stubbed for cosmodiff training')\n" > "${STUB_ROOT}/sklearn/metrics/__init__.py"
+cat > "${STUB_ROOT}/sitecustomize.py" <<'PY'
+try:
+    import types
+    import torch
+    if not hasattr(torch, "xpu"):
+        torch.xpu = types.SimpleNamespace()
+    if not hasattr(torch.xpu, "empty_cache"):
+        torch.xpu.empty_cache = lambda: None
+    if not hasattr(torch.xpu, "is_available"):
+        torch.xpu.is_available = lambda: False
+    if not hasattr(torch.xpu, "device_count"):
+        torch.xpu.device_count = lambda: 0
+except Exception:
+    pass
+PY
 export COSMODIFF_STUB_SKLEARN=1
 export TORCHDYNAMO_DISABLE=1
 export PYTHONPATH="${STUB_ROOT}:${COSMODIFF_DIR}:${PROJECT_DIR}:${PYTHONPATH:-}"
