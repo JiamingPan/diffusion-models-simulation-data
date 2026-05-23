@@ -15,7 +15,7 @@ fi
 
 if [[ ! -x "${CLASS_VENV_PATH}/bin/python" ]]; then
   echo "Creating class-conditional venv: ${CLASS_VENV_PATH}"
-  "${BASE_VENV_PATH}/bin/python" -m venv "${CLASS_VENV_PATH}"
+  "${BASE_VENV_PATH}/bin/python" -m venv --system-site-packages "${CLASS_VENV_PATH}"
 fi
 
 echo "Class env:             ${CLASS_VENV_PATH}"
@@ -26,6 +26,7 @@ echo "Installing diffusers==${DIFFUSERS_VERSION} directly into the class env"
 set_nf_class_conditional_pythonpath "${CLASS_VENV_PATH}/bin/python" "${BASE_VENV_PATH}"
 echo "Class package path:    ${NF_CLASS_CONDITIONAL_CLASS_SITES}"
 echo "Base package fallback: ${NF_CLASS_CONDITIONAL_BASE_SITES}"
+echo "PYTHONPATH:            ${PYTHONPATH:-<empty>}"
 
 DIFFUSERS_VERSION="${DIFFUSERS_VERSION}" "${CLASS_VENV_PATH}/bin/python" - <<'PY'
 import os
