@@ -167,6 +167,17 @@ if hasattr(torch, "distributed") and "torch.distributed._functional_collectives"
     sys.modules["torch.distributed._functional_collectives"] = funcol
     torch.distributed._functional_collectives = funcol
 
+sklearn = ModuleType("sklearn")
+sklearn_metrics = ModuleType("sklearn.metrics")
+
+def _stubbed_roc_curve(*args, **kwargs):
+    raise RuntimeError("sklearn.metrics.roc_curve is stubbed for class-env setup validation")
+
+sklearn_metrics.roc_curve = _stubbed_roc_curve
+sklearn.metrics = sklearn_metrics
+sys.modules["sklearn"] = sklearn
+sys.modules["sklearn.metrics"] = sklearn_metrics
+
 import diffusers
 from diffusers import AutoModel, DDPMScheduler, UNet2DModel
 import numpy
