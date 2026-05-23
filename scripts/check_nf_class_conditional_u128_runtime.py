@@ -117,6 +117,25 @@ def ensure_torch_optional_device_stubs():
                 continue
             if not hasattr(existing, name):
                 setattr(existing, name, getattr(stub, name))
+
+    # diffusers>=0.32 imports TorchAO quantizer modules at model import time.
+    # Those modules reference float8/float4 dtype names added in much newer
+    # PyTorch releases.  The class-conditional UNet does not use quantization;
+    # these aliases only keep the import path alive under torch 1.12.
+    for name in (
+        "float8_e4m3fn",
+        "float8_e4m3fnuz",
+        "float8_e5m2",
+        "float8_e5m2fnuz",
+        "float8_e8m0fnu",
+        "float4_e2m1fn_x2",
+    ):
+        if not hasattr(torch, name):
+            setattr(torch, name, torch.float16)
+    for bits in range(1, 8):
+        name = f"uint{bits}"
+        if not hasattr(torch, name):
+            setattr(torch, name, torch.uint8)
     return torch
 
 
@@ -144,6 +163,7 @@ def preflight(args: argparse.Namespace) -> None:
     print(f"[preflight] torch={torch.__version__} cuda_available={torch.cuda.is_available()}", flush=True)
     print(f"[preflight] torch.xpu.is_available={torch.xpu.is_available()}", flush=True)
     print(f"[preflight] torch.mps.is_available={torch.mps.is_available()}", flush=True)
+    print(f"[preflight] torch.float8_e4m3fn={torch.float8_e4m3fn}", flush=True)
 
     import diffusers
     from cosmodiff import optim, utils

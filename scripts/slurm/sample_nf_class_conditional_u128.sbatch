@@ -92,6 +92,20 @@ try:
                 continue
             if not hasattr(_existing, _name):
                 setattr(_existing, _name, getattr(_stub, _name))
+    for _name in (
+        "float8_e4m3fn",
+        "float8_e4m3fnuz",
+        "float8_e5m2",
+        "float8_e5m2fnuz",
+        "float8_e8m0fnu",
+        "float4_e2m1fn_x2",
+    ):
+        if not hasattr(torch, _name):
+            setattr(torch, _name, torch.float16)
+    for _bits in range(1, 8):
+        _name = f"uint{_bits}"
+        if not hasattr(torch, _name):
+            setattr(torch, _name, torch.uint8)
 except Exception:
     pass
 PY
