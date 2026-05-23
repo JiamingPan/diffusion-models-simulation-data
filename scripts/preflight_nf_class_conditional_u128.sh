@@ -17,6 +17,7 @@ fi
 
 RUN_NAME=$("${PYTHON_BIN}" scripts/prepare_nf_class_conditional_u128_config.py --project-dir "${PROJECT_DIR}" --print-runs)
 CONFIG_PATH="${PROJECT_DIR}/local/nf_class_conditional_u128/configs/${RUN_NAME}.yaml"
+"${PYTHON_BIN}" scripts/prepare_nf_class_conditional_u128_config.py --project-dir "${PROJECT_DIR}"
 
 STUB_ROOT="${PROJECT_DIR}/results/cache/python_stubs"
 mkdir -p "${STUB_ROOT}/sklearn/metrics"

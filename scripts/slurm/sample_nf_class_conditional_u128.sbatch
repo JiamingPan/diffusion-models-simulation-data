@@ -46,6 +46,7 @@ RUN_NAME=$("${PYTHON_BIN}" scripts/prepare_nf_class_conditional_u128_config.py -
 CONFIG_PATH="${PROJECT_DIR}/local/nf_class_conditional_u128/configs/${RUN_NAME}.yaml"
 CHECKPOINT_DIR="/scratch/huterer_root/huterer0/jiamingp/saved_runs/nf_class_conditional_u128/${RUN_NAME}_checkpoints"
 OUTPUT_PATH="${PROJECT_DIR}/results/nf_class_conditional_u128/samples/${RUN_NAME}_seed${SEED}_raw_class_conditional.npz"
+"${PYTHON_BIN}" scripts/prepare_nf_class_conditional_u128_config.py --project-dir "${PROJECT_DIR}"
 
 STUB_ROOT="${PROJECT_DIR}/results/cache/python_stubs"
 mkdir -p "${STUB_ROOT}/sklearn/metrics"
