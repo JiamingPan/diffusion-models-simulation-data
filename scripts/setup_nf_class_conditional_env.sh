@@ -8,6 +8,8 @@ DIFFUSERS_VERSION=${DIFFUSERS_VERSION:-0.38.0}
 INSTALL_TORCH=${INSTALL_TORCH:-1}
 TORCH_VERSION=${TORCH_VERSION:-2.1.2+cu118}
 TORCH_CUDA_INDEX_URL=${TORCH_CUDA_INDEX_URL:-https://download.pytorch.org/whl/cu118}
+NUMPY_VERSION=${NUMPY_VERSION:-1.26.4}
+SCIPY_VERSION=${SCIPY_VERSION:-1.11.4}
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${SCRIPT_DIR}/nf_class_conditional_pythonpath.sh"
 
@@ -25,11 +27,13 @@ echo "Class env:             ${CLASS_VENV_PATH}"
 if [[ "${INSTALL_TORCH}" != "0" ]]; then
   echo "Installing CUDA PyTorch ${TORCH_VERSION} directly into the class env"
 fi
+echo "Installing numpy==${NUMPY_VERSION} and scipy==${SCIPY_VERSION} directly into the class env"
 echo "Installing diffusers==${DIFFUSERS_VERSION} directly into the class env"
 "${CLASS_VENV_PATH}/bin/python" -m pip install --upgrade pip setuptools wheel
 if [[ "${INSTALL_TORCH}" != "0" ]]; then
   "${CLASS_VENV_PATH}/bin/python" -m pip install --upgrade --extra-index-url "${TORCH_CUDA_INDEX_URL}" "torch==${TORCH_VERSION}"
 fi
+"${CLASS_VENV_PATH}/bin/python" -m pip install --upgrade --only-binary=:all: --ignore-installed "numpy==${NUMPY_VERSION}" "scipy==${SCIPY_VERSION}"
 "${CLASS_VENV_PATH}/bin/python" -m pip install --upgrade --no-deps "diffusers==${DIFFUSERS_VERSION}"
 
 set_nf_class_conditional_pythonpath "${CLASS_VENV_PATH}/bin/python" "${BASE_VENV_PATH}"
@@ -40,6 +44,7 @@ echo "PYTHONPATH:            ${PYTHONPATH:-<empty>}"
 DIFFUSERS_VERSION="${DIFFUSERS_VERSION}" "${CLASS_VENV_PATH}/bin/python" - <<'PY'
 import os
 import sys
+from pathlib import Path
 
 expected = os.environ["DIFFUSERS_VERSION"]
 
@@ -164,11 +169,16 @@ if hasattr(torch, "distributed") and "torch.distributed._functional_collectives"
 
 import diffusers
 from diffusers import AutoModel, DDPMScheduler, UNet2DModel
+import numpy
+import scipy
+import scipy.stats
 
 print("python:", sys.executable)
 print("torch:", torch.__version__, torch.__file__)
 print("torch_cuda_build:", torch.version.cuda)
 print("torch_cuda_available:", torch.cuda.is_available())
+print("numpy:", numpy.__version__, numpy.__file__)
+print("scipy:", scipy.__version__, scipy.__file__)
 print("diffusers:", diffusers.__version__, diffusers.__file__)
 print("AutoModel:", AutoModel)
 print("sys.path[:5]:", sys.path[:5])
@@ -180,6 +190,14 @@ if torch.version.cuda is None:
         "Class env is importing a CPU-only PyTorch build. "
         "Install a CUDA wheel in the class env before submitting GPU training."
     )
+class_prefix = Path(sys.prefix).resolve()
+for name, module in (("numpy", numpy), ("scipy", scipy)):
+    module_path = Path(module.__file__).resolve()
+    if not module_path.is_relative_to(class_prefix):
+        raise SystemExit(
+            f"{name} is being imported from {module_path}, outside the class env {class_prefix}. "
+            "Re-run setup so the class env shadows the Great Lakes Anaconda binary packages."
+        )
 
 scheduler = DDPMScheduler(
     num_train_timesteps=500,

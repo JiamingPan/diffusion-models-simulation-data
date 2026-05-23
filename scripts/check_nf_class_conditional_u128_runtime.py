@@ -248,6 +248,30 @@ def preflight(args: argparse.Namespace) -> None:
             "Config requests CUDA, but this environment is importing a CPU-only PyTorch build. "
             "Run scripts/setup_nf_class_conditional_env.sh after pulling the CUDA torch fix."
         )
+    class_prefix = Path(sys.prefix).resolve()
+    numpy_path = Path(np.__file__).resolve()
+    print(f"[preflight] numpy={np.__version__} {numpy_path}", flush=True)
+    if not numpy_path.is_relative_to(class_prefix):
+        raise RuntimeError(
+            f"numpy is being imported from {numpy_path}, outside the class env {class_prefix}. "
+            "Run scripts/setup_nf_class_conditional_env.sh to install numpy/scipy into the class env."
+        )
+    try:
+        import scipy
+        import scipy.stats
+    except Exception as exc:
+        raise RuntimeError(
+            "Failed to import scipy.stats. diffusers needs this for scheduler imports, including "
+            "DPMSolverMultistepScheduler. Run scripts/setup_nf_class_conditional_env.sh so the "
+            "class env shadows the incompatible Great Lakes Anaconda scipy build."
+        ) from exc
+    scipy_path = Path(scipy.__file__).resolve()
+    print(f"[preflight] scipy={scipy.__version__} {scipy_path}", flush=True)
+    if not scipy_path.is_relative_to(class_prefix):
+        raise RuntimeError(
+            f"scipy is being imported from {scipy_path}, outside the class env {class_prefix}. "
+            "Run scripts/setup_nf_class_conditional_env.sh to install a compatible scipy wheel."
+        )
 
     import diffusers
     from diffusers import AutoModel
