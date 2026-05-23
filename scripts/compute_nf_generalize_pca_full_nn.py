@@ -296,7 +296,10 @@ def parse_float_list(value: str) -> list[float]:
 
 def sample_path_for(project_dir: Path, row: dict[str, Any], seed: int, sample_label: str) -> Path:
     if row.get("sample_path"):
-        return project_dir / str(row["sample_path"]).format(seed=seed, sample_label=sample_label)
+        raw = str(row["sample_path"])
+        if sample_label != DEFAULT_SAMPLE_LABEL and "{sample_label}" not in raw:
+            raw = raw.replace(DEFAULT_SAMPLE_LABEL, sample_label)
+        return project_dir / raw.format(seed=seed, sample_label=sample_label)
     return project_dir / "results" / SWEEP_NAME / "samples" / f"{row['run_name']}_seed{seed}_{sample_label}.npz"
 
 
