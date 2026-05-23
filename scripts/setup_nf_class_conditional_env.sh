@@ -51,6 +51,7 @@ expected = os.environ["DIFFUSERS_VERSION"]
 import torch
 
 from contextlib import nullcontext
+from importlib.machinery import ModuleSpec
 from types import ModuleType, SimpleNamespace
 
 
@@ -169,6 +170,10 @@ if hasattr(torch, "distributed") and "torch.distributed._functional_collectives"
 
 sklearn = ModuleType("sklearn")
 sklearn_metrics = ModuleType("sklearn.metrics")
+sklearn.__path__ = []
+sklearn.__spec__ = ModuleSpec("sklearn", loader=None, is_package=True)
+sklearn.__spec__.submodule_search_locations = []
+sklearn_metrics.__spec__ = ModuleSpec("sklearn.metrics", loader=None)
 
 def _stubbed_roc_curve(*args, **kwargs):
     raise RuntimeError("sklearn.metrics.roc_curve is stubbed for class-env setup validation")
