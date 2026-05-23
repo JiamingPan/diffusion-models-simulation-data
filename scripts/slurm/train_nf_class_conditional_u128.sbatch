@@ -44,16 +44,40 @@ printf 'from . import metrics\n' > "${STUB_ROOT}/sklearn/__init__.py"
 printf "def roc_curve(*args, **kwargs):\n    raise RuntimeError('sklearn.metrics.roc_curve is stubbed for cosmodiff training')\n" > "${STUB_ROOT}/sklearn/metrics/__init__.py"
 cat > "${STUB_ROOT}/sitecustomize.py" <<'PY'
 try:
-    import types
+    from contextlib import nullcontext
     import torch
+    class _XPUStub:
+        def is_available(self): return False
+        def device_count(self): return 0
+        def empty_cache(self): return None
+        def _is_compiled(self): return False
+        def current_device(self): return 0
+        def set_device(self, *args, **kwargs): return None
+        def synchronize(self, *args, **kwargs): return None
+        def manual_seed_all(self, *args, **kwargs): return None
+        def current_stream(self, *args, **kwargs): return None
+        def stream(self, *args, **kwargs): return nullcontext()
+        def device(self, *args, **kwargs): return nullcontext()
+        def memory_allocated(self, *args, **kwargs): return 0
+        def max_memory_allocated(self, *args, **kwargs): return 0
+        def reset_peak_memory_stats(self, *args, **kwargs): return None
+        def get_device_name(self, *args, **kwargs): return "xpu-unavailable"
+        def get_device_properties(self, *args, **kwargs): return None
+        def __getattr__(self, name):
+            def missing(*args, **kwargs):
+                if name.startswith("is_"):
+                    return False
+                return None
+            return missing
+    _stub = _XPUStub()
     if not hasattr(torch, "xpu"):
-        torch.xpu = types.SimpleNamespace()
-    if not hasattr(torch.xpu, "empty_cache"):
-        torch.xpu.empty_cache = lambda: None
-    if not hasattr(torch.xpu, "is_available"):
-        torch.xpu.is_available = lambda: False
-    if not hasattr(torch.xpu, "device_count"):
-        torch.xpu.device_count = lambda: 0
+        torch.xpu = _stub
+    else:
+        for _name in dir(_stub):
+            if _name.startswith("__"):
+                continue
+            if not hasattr(torch.xpu, _name):
+                setattr(torch.xpu, _name, getattr(_stub, _name))
 except Exception:
     pass
 PY
@@ -91,54 +115,10 @@ if [[ "${COSMODIFF_BRANCH}" != "${REQUIRED_COSMODIFF_BRANCH}" ]]; then
   exit 1
 fi
 
-"${PYTHON_BIN}" - <<'PY'
-import inspect
-import os
-import yaml
-import torch
-from pathlib import Path
-from cosmodiff import optim, utils
-
-expected_root = Path(os.environ["COSMODIFF_DIR"]).resolve()
-optim_path = Path(inspect.getsourcefile(optim)).resolve()
-utils_path = Path(inspect.getsourcefile(utils)).resolve()
-if expected_root not in optim_path.parents:
-    raise SystemExit(f"Imported cosmodiff from {optim_path}, expected under {expected_root}")
-
-required_train = {"conditioning", "cfg_dropout", "ema_sigma_rels", "ema_update_every", "ema_burn_in", "min_snr_gamma", "sigma_log_normal"}
-missing = required_train.difference(inspect.signature(optim.train).parameters)
-if missing:
-    raise SystemExit(f"cosmodiff.optim.train is too old; missing {sorted(missing)}")
-
-with open(os.environ["CONFIG_PATH"]) as f:
-    config = yaml.safe_load(f)
-if config["train"].get("conditioning") != "discrete":
-    raise SystemExit(f"Expected discrete conditioning, got {config['train'].get('conditioning')!r}.")
-if config["model"].get("class") != "UNet2DModel":
-    raise SystemExit(f"Expected UNet2DModel, got {config['model'].get('class')!r}.")
-
-data_out = utils.parse_config_data(config)
-dataset = data_out["data"] if isinstance(data_out, dict) else data_out
-sample = dataset[0]
-labels = sample.get("labels")
-if labels is None:
-    raise SystemExit("Class-conditional dataset did not return labels.")
-if torch.is_floating_point(labels):
-    raise SystemExit(f"Discrete labels must be integer/long, got dtype {labels.dtype}.")
-if labels.numel() != 1:
-    raise SystemExit(f"Expected one scalar class label, got shape {tuple(labels.shape)}.")
-all_labels = dataset.labels.detach().cpu()
-num_classes = len(config["data"]["img_path"])
-uniq = sorted(int(x) for x in torch.unique(all_labels).tolist())
-if uniq != list(range(num_classes)):
-    raise SystemExit(f"Expected class ids 0..{num_classes - 1}, got {uniq}.")
-
-print("cosmodiff conditional support:", optim_path)
-print("cosmodiff data support:", utils_path)
-print("first class label:", int(labels.item()))
-print("class ids:", uniq)
-print("dataset size:", len(dataset))
-PY
+"${PYTHON_BIN}" scripts/check_nf_class_conditional_u128_runtime.py \
+  --project-dir "${PROJECT_DIR}" \
+  --cosmodiff-dir "${COSMODIFF_DIR}" \
+  --config "${CONFIG_PATH}"
 
 "${PYTHON_BIN}" scripts/prepare_nf_class_conditional_u128_config.py \
   --project-dir "${PROJECT_DIR}" \

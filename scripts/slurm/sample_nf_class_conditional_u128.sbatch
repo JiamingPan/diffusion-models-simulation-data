@@ -49,16 +49,40 @@ printf 'from . import metrics\n' > "${STUB_ROOT}/sklearn/__init__.py"
 printf "def roc_curve(*args, **kwargs):\n    raise RuntimeError('sklearn.metrics.roc_curve is stubbed for cosmodiff sampling')\n" > "${STUB_ROOT}/sklearn/metrics/__init__.py"
 cat > "${STUB_ROOT}/sitecustomize.py" <<'PY'
 try:
-    import types
+    from contextlib import nullcontext
     import torch
+    class _XPUStub:
+        def is_available(self): return False
+        def device_count(self): return 0
+        def empty_cache(self): return None
+        def _is_compiled(self): return False
+        def current_device(self): return 0
+        def set_device(self, *args, **kwargs): return None
+        def synchronize(self, *args, **kwargs): return None
+        def manual_seed_all(self, *args, **kwargs): return None
+        def current_stream(self, *args, **kwargs): return None
+        def stream(self, *args, **kwargs): return nullcontext()
+        def device(self, *args, **kwargs): return nullcontext()
+        def memory_allocated(self, *args, **kwargs): return 0
+        def max_memory_allocated(self, *args, **kwargs): return 0
+        def reset_peak_memory_stats(self, *args, **kwargs): return None
+        def get_device_name(self, *args, **kwargs): return "xpu-unavailable"
+        def get_device_properties(self, *args, **kwargs): return None
+        def __getattr__(self, name):
+            def missing(*args, **kwargs):
+                if name.startswith("is_"):
+                    return False
+                return None
+            return missing
+    _stub = _XPUStub()
     if not hasattr(torch, "xpu"):
-        torch.xpu = types.SimpleNamespace()
-    if not hasattr(torch.xpu, "empty_cache"):
-        torch.xpu.empty_cache = lambda: None
-    if not hasattr(torch.xpu, "is_available"):
-        torch.xpu.is_available = lambda: False
-    if not hasattr(torch.xpu, "device_count"):
-        torch.xpu.device_count = lambda: 0
+        torch.xpu = _stub
+    else:
+        for _name in dir(_stub):
+            if _name.startswith("__"):
+                continue
+            if not hasattr(torch.xpu, _name):
+                setattr(torch.xpu, _name, getattr(_stub, _name))
 except Exception:
     pass
 PY
