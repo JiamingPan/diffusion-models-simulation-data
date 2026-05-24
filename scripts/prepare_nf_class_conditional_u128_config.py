@@ -38,6 +38,7 @@ TARGET_UPDATES = 200_000
 CHECKPOINT_EVERY_UPDATES = 20_000
 SAMPLE_N = 512
 BATCH_SIZE = 32
+RUN_VARIANT = "logfloor"
 
 
 def parse_fields(value: str) -> list[str]:
@@ -54,7 +55,7 @@ def dataset_slug(fields: list[str], n_train_sims: int) -> str:
 
 def run_name(fields: list[str] | None = None, n_train_sims: int = N_TRAIN_SIMS) -> str:
     fields = fields or FIELDS
-    return f"nf_class_u128_{dataset_slug(fields, n_train_sims)}_200k"
+    return f"nf_class_u128_{dataset_slug(fields, n_train_sims)}_{RUN_VARIANT}_200k"
 
 
 def image_path(data_root: str | Path, field: str) -> Path:
@@ -271,7 +272,7 @@ def manifest_row(
         "arch": "u128",
         "arch_label": "UNet-128 class conditional",
         "variant_tag": "discrete_field_class",
-        "variant_label": "u128 conditional on field type",
+        "variant_label": "u128 conditional on field type, log floor",
         "fields": fields,
         "class_map": label_paths["class_map"],
         "simulation": SIM,
@@ -302,7 +303,10 @@ def manifest_row(
         "config": f"local/{SWEEP_NAME}/configs/{name}.yaml",
         "checkpoint_dir": str(checkpoint_root / f"{name}_checkpoints"),
         "sample_path": f"results/{SWEEP_NAME}/samples/{name}_seed{{seed}}_raw_class_conditional.npz",
-        "note": "Discrete field-class conditional run requested by Nick; no cosmology-parameter conditioning.",
+        "note": (
+            "Discrete field-class conditional run requested by Nick; no cosmology-parameter conditioning. "
+            "Uses a safe log floor in cosmo_diffusion to avoid non-finite zero-valued field voxels."
+        ),
     }
 
 

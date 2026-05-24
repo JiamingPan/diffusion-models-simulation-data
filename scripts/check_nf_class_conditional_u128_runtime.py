@@ -219,6 +219,19 @@ def as_list(value):
     return [value]
 
 
+def finite_summary(tensor) -> str:
+    import torch
+
+    finite = tensor[torch.isfinite(tensor)]
+    if finite.numel() == 0:
+        return "finite=0"
+    return (
+        f"finite={finite.numel()}/{tensor.numel()} "
+        f"min={finite.min().item():.6g} max={finite.max().item():.6g} "
+        f"mean={finite.float().mean().item():.6g}"
+    )
+
+
 def preflight(args: argparse.Namespace) -> None:
     project_dir = Path(args.project_dir).resolve()
     cosmodiff_dir = Path(args.cosmodiff_dir).resolve()
@@ -347,6 +360,7 @@ def preflight(args: argparse.Namespace) -> None:
         raise RuntimeError(f"num_class_embeds={num_class_embeds} < n_classes={n_classes}")
     print(f"[preflight] class ids={label_values} num_class_embeds={num_class_embeds}", flush=True)
 
+    model = None
     if not args.skip_model_forward:
         model_kwargs = copy.deepcopy(config["model"]["kwargs"])
         model = getattr(diffusers, config["model"]["class"])(**model_kwargs).cpu().eval()
@@ -365,11 +379,21 @@ def preflight(args: argparse.Namespace) -> None:
         small_config = copy.deepcopy(config)
         small_config.setdefault("global", {})["device"] = "cpu"
         small_config["data"]["keep_on_cpu"] = True
-        small_config["data"]["n_samples"] = [1] * n_classes
+        small_config["data"]["n_samples"] = [int(args.finite_samples_per_field)] * n_classes
         small_config["data"]["seed"] = [None] * n_classes
         data_out = utils.parse_config_data(small_config)
         dataset = data_out["data"] if isinstance(data_out, dict) else data_out
         sample = dataset[0]
+        if not torch.isfinite(dataset.arrays).all():
+            lines = ["Non-finite values found after transform/normalization:"]
+            all_labels = dataset.labels.detach().cpu() if dataset.labels is not None else None
+            for class_id in range(n_classes):
+                if all_labels is None:
+                    values = dataset.arrays
+                else:
+                    values = dataset.arrays[all_labels == class_id]
+                lines.append(f"  class {class_id}: {finite_summary(values)}")
+            raise RuntimeError("\n".join(lines))
         labels = sample.get("labels")
         if labels is None:
             raise RuntimeError("Small data load did not return labels.")
@@ -381,9 +405,41 @@ def preflight(args: argparse.Namespace) -> None:
             raise RuntimeError(f"Small data load expected class ids 0..{n_classes - 1}, got {uniq}")
         print(
             f"[preflight] small data load ok: len={len(dataset)} image_shape={tuple(sample['images'].shape)} "
-            f"label_dtype={labels.dtype} class_ids={uniq}",
+            f"label_dtype={labels.dtype} class_ids={uniq} data_stats=({finite_summary(dataset.arrays)})",
             flush=True,
         )
+        if not args.skip_training_step and model is not None:
+            batch_size = min(4, len(dataset))
+            batch_images = dataset.arrays[:batch_size].float()
+            batch_labels = dataset.labels[:batch_size].long()
+            scheduler_cls = getattr(diffusers, config["noise_scheduler"]["class"])
+            scheduler = scheduler_cls(**copy.deepcopy(config["noise_scheduler"].get("kwargs", {})))
+            noise = torch.randn_like(batch_images)
+            timesteps = torch.randint(
+                0,
+                int(scheduler.config.num_train_timesteps),
+                (batch_size,),
+                dtype=torch.long,
+            )
+            noisy_images, target = optim.noise_and_target(scheduler, batch_images, noise, timesteps)
+            with torch.no_grad():
+                pred = model(noisy_images, timestep=timesteps, class_labels=batch_labels, return_dict=False)[0]
+                per_sample_mse = torch.nn.functional.mse_loss(pred, target, reduction="none").mean(
+                    dim=list(range(1, pred.ndim))
+                )
+                loss = per_sample_mse.mean()
+            checks = {
+                "batch_images": batch_images,
+                "noisy_images": noisy_images,
+                "target": target,
+                "pred": pred,
+                "loss": loss.reshape(1),
+            }
+            bad = [name for name, tensor in checks.items() if not torch.isfinite(tensor).all()]
+            if bad:
+                details = "\n".join(f"  {name}: {finite_summary(tensor)}" for name, tensor in checks.items())
+                raise RuntimeError(f"Non-finite one-step training check: {bad}\n{details}")
+            print(f"[preflight] one-step loss check ok: loss={loss.item():.6g}", flush=True)
 
     print("[preflight] nf_class_conditional_u128 runtime checks passed", flush=True)
 
@@ -395,6 +451,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", required=True)
     parser.add_argument("--skip-model-forward", action="store_true")
     parser.add_argument("--skip-small-data-load", action="store_true")
+    parser.add_argument("--skip-training-step", action="store_true")
+    parser.add_argument("--finite-samples-per-field", type=int, default=4)
     return parser.parse_args()
 
 
