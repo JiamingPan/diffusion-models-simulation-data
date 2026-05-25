@@ -13,6 +13,25 @@ import torch
 import yaml
 
 
+def _install_torch_optional_device_stubs() -> None:
+    """Mask optional accelerator APIs that old Torch builds do not expose.
+
+    Newer diffusers versions reference ``torch.xpu`` while importing, even on
+    CPU/CUDA-only systems.  Older Great Lakes Torch builds do not have that
+    attribute, so declare it unavailable before importing diffusers.
+    """
+    import types
+
+    if not hasattr(torch, "xpu"):
+        torch.xpu = types.SimpleNamespace(
+            empty_cache=lambda: None,
+            is_available=lambda: False,
+            device_count=lambda: 0,
+            synchronize=lambda: None,
+            manual_seed_all=lambda _seed=None: None,
+        )
+
+
 def _install_sklearn_roc_curve_stub() -> None:
     """Avoid optional transformers -> sklearn imports on mixed HPC envs.
 
@@ -53,7 +72,9 @@ def _ensure_cosmodiff_on_path(project_root: Path) -> None:
     env_candidate = os.environ.get("COSMODIFF_DIR")
     if env_candidate:
         path = Path(env_candidate)
-        if path.exists() and str(path) not in sys.path:
+        if not path.exists():
+            raise FileNotFoundError(f"COSMODIFF_DIR does not exist: {path}")
+        if str(path) not in sys.path:
             sys.path.insert(0, str(path))
         return
 
@@ -75,6 +96,21 @@ def _looks_like_checkpoint(path: Path) -> bool:
             or path.name.startswith("checkpoint-")
         )
     )
+
+
+def _find_latest_checkpoint(output_dir: Path) -> Path | None:
+    checkpoints = []
+    for path in output_dir.glob("checkpoint-epoch-*"):
+        if not path.is_dir():
+            continue
+        try:
+            epoch = int(path.name.rsplit("-", 1)[-1])
+        except ValueError:
+            continue
+        checkpoints.append((epoch, path))
+    if not checkpoints:
+        return None
+    return max(checkpoints, key=lambda item: item[0])[1]
 
 
 def _load_scheduler_from_config(config_path: Path | None, *, allow_default_scheduler: bool = False):
@@ -143,8 +179,6 @@ def _load_unet_direct(checkpoint: Path, config_path: Path | None, *, allow_defau
 
 
 def _load_for_sampling(checkpoint: Path, config_path: Path | None, *, allow_default_scheduler: bool = False):
-    from cosmodiff import utils
-
     model_class = _config_model_class(config_path)
     if model_class in {"UNet2DModel", "diffusers.UNet2DModel"}:
         try:
@@ -155,6 +189,8 @@ def _load_for_sampling(checkpoint: Path, config_path: Path | None, *, allow_defa
             )
         except Exception as exc:
             print(f"Direct UNet load failed, trying cosmodiff load_checkpoint: {exc}")
+
+    from cosmodiff import utils
 
     try:
         model, scheduler, _, _, _ = utils.load_checkpoint(str(checkpoint))
@@ -238,16 +274,16 @@ def main() -> None:
     args = parser.parse_args()
 
     project_root = Path.cwd()
+    _install_torch_optional_device_stubs()
     _install_sklearn_roc_curve_stub()
     _ensure_cosmodiff_on_path(project_root)
-    from cosmodiff import utils
 
     checkpoint = Path(args.checkpoint)
     if checkpoint.is_dir() and not _looks_like_checkpoint(checkpoint):
-        latest = utils.find_latest_checkpoint(str(checkpoint))
+        latest = _find_latest_checkpoint(checkpoint)
         if latest is None:
             raise FileNotFoundError(f"No checkpoint found under {checkpoint}")
-        checkpoint = Path(latest)
+        checkpoint = latest
 
     config_path = Path(args.config) if args.config else None
     model, scheduler = _load_for_sampling(

@@ -26,6 +26,9 @@ MAX_VAL_SLICES=${MAX_VAL_SLICES:-512}
 EMBEDDING_BATCH_SIZE=${EMBEDDING_BATCH_SIZE:-512}
 SIMILARITY_BATCH_SIZE=${SIMILARITY_BATCH_SIZE:-512}
 OUT_PREFIX=${OUT_PREFIX:-nf_generalize_nick_data_pca_full_nn}
+PCA_FIT_ONLY=${PCA_FIT_ONLY:-0}
+RUN_NAME=${RUN_NAME:-}
+DATASET_TAG=${DATASET_TAG:-}
 
 cd "${PROJECT_DIR}"
 mkdir -p logs/nf_generalize_nick_data results/cache/matplotlib
@@ -35,6 +38,17 @@ fi
 
 export PYTHONPATH="${PROJECT_DIR}:${PYTHONPATH:-}"
 export MPLCONFIGDIR="${PROJECT_DIR}/results/cache/matplotlib"
+
+EXTRA_ARGS=()
+if [[ -n "${RUN_NAME}" ]]; then
+  EXTRA_ARGS+=(--run-name "${RUN_NAME}")
+fi
+if [[ -n "${DATASET_TAG}" ]]; then
+  EXTRA_ARGS+=(--dataset-tag "${DATASET_TAG}")
+fi
+if [[ "${PCA_FIT_ONLY}" == "1" ]]; then
+  EXTRA_ARGS+=(--pca-fit-only)
+fi
 
 "${PYTHON_BIN}" scripts/compute_nf_generalize_pca_full_nn.py \
   --project-dir "${PROJECT_DIR}" \
@@ -46,4 +60,5 @@ export MPLCONFIGDIR="${PROJECT_DIR}/results/cache/matplotlib"
   --val-raw-per-source "${VAL_RAW_PER_SOURCE}" \
   --max-val-slices "${MAX_VAL_SLICES}" \
   --embedding-batch-size "${EMBEDDING_BATCH_SIZE}" \
-  --similarity-batch-size "${SIMILARITY_BATCH_SIZE}"
+  --similarity-batch-size "${SIMILARITY_BATCH_SIZE}" \
+  "${EXTRA_ARGS[@]}"

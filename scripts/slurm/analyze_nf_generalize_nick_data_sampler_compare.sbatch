@@ -19,6 +19,8 @@ SEED=${SEED:-123}
 DDPM_LABEL=${DDPM_LABEL:-raw_train_full}
 DPM_LABEL=${DPM_LABEL:-dpm50}
 MAX_SAMPLES=${MAX_SAMPLES:-96}
+RUN_NAME=${RUN_NAME:-}
+DATASET_TAG=${DATASET_TAG:-}
 
 cd "${PROJECT_DIR}"
 mkdir -p logs/nf_generalize_nick_data results/nf_generalize_nick_data/sampler_compare results/cache/matplotlib
@@ -31,10 +33,19 @@ export MPLCONFIGDIR="${PROJECT_DIR}/results/cache/matplotlib"
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
 export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
 
+EXTRA_ARGS=()
+if [[ -n "${RUN_NAME}" ]]; then
+  EXTRA_ARGS+=(--run-name "${RUN_NAME}")
+fi
+if [[ -n "${DATASET_TAG}" ]]; then
+  EXTRA_ARGS+=(--dataset-tag "${DATASET_TAG}")
+fi
+
 "${PYTHON_BIN}" scripts/compare_nf_generalize_nick_samplers.py \
   --project-dir "${PROJECT_DIR}" \
   --seed "${SEED}" \
   --ddpm-label "${DDPM_LABEL}" \
   --dpm-label "${DPM_LABEL}" \
   --max-samples "${MAX_SAMPLES}" \
-  --output-dir "${PROJECT_DIR}/results/nf_generalize_nick_data/sampler_compare"
+  --output-dir "${PROJECT_DIR}/results/nf_generalize_nick_data/sampler_compare" \
+  "${EXTRA_ARGS[@]}"

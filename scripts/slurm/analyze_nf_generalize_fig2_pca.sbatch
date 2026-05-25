@@ -25,6 +25,7 @@ MAX_VAL_SLICES=${MAX_VAL_SLICES:-512}
 SIMILARITY_BATCH_SIZE=${SIMILARITY_BATCH_SIZE:-512}
 FIXED_THRESHOLDS=${FIXED_THRESHOLDS:-0.5,0.6,0.7,0.8,0.9,0.95}
 OUT_PREFIX=${OUT_PREFIX:-nf_generalize_fig2_pca_full_nn}
+PCA_FIT_ONLY=${PCA_FIT_ONLY:-0}
 
 cd "${PROJECT_DIR}"
 mkdir -p logs/nf_generalize_fig2 results/cache/matplotlib
@@ -36,6 +37,11 @@ export PYTHONPATH="${PROJECT_DIR}:${PYTHONPATH:-}"
 export MPLCONFIGDIR="${PROJECT_DIR}/results/cache/matplotlib"
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
+
+EXTRA_ARGS=()
+if [[ "${PCA_FIT_ONLY}" == "1" ]]; then
+  EXTRA_ARGS+=(--pca-fit-only)
+fi
 
 "${PYTHON_BIN}" scripts/compute_nf_generalize_pca_full_nn.py \
   --project-dir "${PROJECT_DIR}" \
@@ -51,4 +57,5 @@ export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
   --max-val-slices "${MAX_VAL_SLICES}" \
   --similarity-batch-size "${SIMILARITY_BATCH_SIZE}" \
   --fixed-similarity-thresholds "${FIXED_THRESHOLDS}" \
-  --skip-missing-samples
+  --skip-missing-samples \
+  "${EXTRA_ARGS[@]}"

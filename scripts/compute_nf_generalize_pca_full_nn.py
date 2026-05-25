@@ -615,6 +615,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--table-dir", type=Path, help="CSV output directory.")
     parser.add_argument("--out-prefix", default="nf_generalize_nick_data_pca_full_nn")
     parser.add_argument(
+        "--pca-fit-only",
+        action="store_true",
+        help="Fit the PCA encoder, print the selected rank/explained variance, and exit before scoring samples.",
+    )
+    parser.add_argument(
         "--fixed-similarity-thresholds",
         default="0.5,0.6,0.7,0.8,0.9,0.95",
         help="Comma-separated fixed PCA cosine thresholds for paper-style GL curves.",
@@ -666,6 +671,9 @@ def main() -> None:
     )
     pca_evr_sum = float(np.sum(encoder.explained_variance_ratio))
     print(f"PCA rank={len(encoder.explained_variance_ratio)} explained_variance_sum={pca_evr_sum:.4f}")
+    if args.pca_fit_only:
+        print("PCA fit-only requested; exiting before nearest-neighbor scoring.")
+        return
     del fit_train
     gc.collect()
 
