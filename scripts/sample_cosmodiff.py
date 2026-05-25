@@ -44,6 +44,7 @@ def _install_torch_optional_device_stubs() -> None:
     attribute, so declare it unavailable before importing diffusers.
     """
     from contextlib import nullcontext
+    from types import ModuleType, SimpleNamespace
 
     class _OptionalDeviceStub:
         def is_available(self): return False
@@ -87,6 +88,82 @@ def _install_torch_optional_device_stubs() -> None:
                 continue
             if not hasattr(existing, name):
                 setattr(existing, name, getattr(stub, name))
+
+    for name in (
+        "float8_e4m3fn",
+        "float8_e4m3fnuz",
+        "float8_e5m2",
+        "float8_e5m2fnuz",
+        "float8_e8m0fnu",
+        "float4_e2m1fn_x2",
+    ):
+        if not hasattr(torch, name):
+            setattr(torch, name, torch.float16)
+    for bits in range(1, 8):
+        name = f"uint{bits}"
+        if not hasattr(torch, name):
+            setattr(torch, name, torch.uint8)
+
+    class _CompilerStub:
+        def disable(self, fn=None, recursive=True):
+            if fn is None:
+                return lambda inner: inner
+            return fn
+        def is_compiling(self): return False
+        def is_exporting(self): return False
+
+    compiler_stub = _CompilerStub()
+    compiler = getattr(torch, "compiler", None)
+    if compiler is None:
+        torch.compiler = compiler_stub
+    else:
+        for name in ("disable", "is_compiling", "is_exporting"):
+            if not hasattr(compiler, name):
+                setattr(compiler, name, getattr(compiler_stub, name))
+
+    try:
+        from torch.utils import _pytree
+    except Exception:
+        _pytree = None
+    if _pytree is not None and not hasattr(_pytree, "register_pytree_node"):
+        private_register = getattr(_pytree, "_register_pytree_node", None)
+        if private_register is not None:
+            def register_pytree_node(cls, flatten_fn, unflatten_fn, *args, **kwargs):
+                try:
+                    return private_register(cls, flatten_fn, unflatten_fn, *args, **kwargs)
+                except TypeError:
+                    supported = {
+                        key: kwargs[key]
+                        for key in ("to_dumpable_context", "from_dumpable_context")
+                        if key in kwargs
+                    }
+                    try:
+                        return private_register(cls, flatten_fn, unflatten_fn, *args, **supported)
+                    except TypeError:
+                        return private_register(cls, flatten_fn, unflatten_fn)
+            _pytree.register_pytree_node = register_pytree_node
+
+    try:
+        import torch.distributed as torch_distributed
+    except Exception:
+        torch_distributed = None
+    if torch_distributed is not None and not hasattr(torch_distributed, "device_mesh"):
+        torch_distributed.device_mesh = SimpleNamespace(DeviceMesh=object)
+    if torch_distributed is not None and "torch.distributed._functional_collectives" not in sys.modules:
+        funcol = ModuleType("torch.distributed._functional_collectives")
+
+        class AsyncCollectiveTensor:
+            pass
+
+        def identity_collective(tensor, *args, **kwargs):
+            return tensor
+
+        funcol.AsyncCollectiveTensor = AsyncCollectiveTensor
+        funcol.all_to_all_single = identity_collective
+        funcol.all_gather_tensor = identity_collective
+        funcol.permute_tensor = identity_collective
+        sys.modules["torch.distributed._functional_collectives"] = funcol
+        torch_distributed._functional_collectives = funcol
 
 
 def _install_sklearn_roc_curve_stub() -> None:
