@@ -86,7 +86,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset-tag", action="append")
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--ddpm-label", default=DEFAULT_SAMPLE_LABEL)
-    parser.add_argument("--dpm-label", default="dpm50_compare")
+    parser.add_argument("--dpm-label", default="dpm50")
     parser.add_argument("--max-samples", type=int, default=96)
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--skip-missing-samples", action="store_true")

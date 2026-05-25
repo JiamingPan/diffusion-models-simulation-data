@@ -17,7 +17,7 @@ VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
 PYTHON_BIN=${PYTHON_BIN:-python}
 SEED=${SEED:-123}
 DDPM_LABEL=${DDPM_LABEL:-raw_train_full}
-DPM_LABEL=${DPM_LABEL:-dpm50_compare}
+DPM_LABEL=${DPM_LABEL:-dpm50}
 MAX_SAMPLES=${MAX_SAMPLES:-96}
 
 cd "${PROJECT_DIR}"
