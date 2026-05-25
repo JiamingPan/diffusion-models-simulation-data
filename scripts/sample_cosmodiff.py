@@ -4,13 +4,36 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import inspect
+import re
 import sys
 from pathlib import Path
 
 import numpy as np
 import torch
 import yaml
+
+
+def _version_tuple(version: str) -> tuple[int, int, int]:
+    parts = re.findall(r"\d+", version.split("+", 1)[0])
+    padded = (parts + ["0", "0", "0"])[:3]
+    return tuple(int(part) for part in padded)
+
+
+def _reject_known_bad_runtime() -> None:
+    try:
+        diffusers_version = importlib.metadata.version("diffusers")
+    except importlib.metadata.PackageNotFoundError:
+        return
+
+    if _version_tuple(torch.__version__) < (2, 1, 0) and _version_tuple(diffusers_version) >= (0, 38, 0):
+        raise SystemExit(
+            "This Python environment has torch "
+            f"{torch.__version__} with diffusers {diffusers_version}, which is not a usable "
+            "Great Lakes sampling runtime. Use /home/jiamingp/venvs/cosmodiff_nf_class "
+            "or run scripts/setup_nf_class_conditional_env.sh first."
+        )
 
 
 def _install_torch_optional_device_stubs() -> None:
@@ -273,6 +296,7 @@ def main() -> None:
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()
 
+    _reject_known_bad_runtime()
     project_root = Path.cwd()
     _install_torch_optional_device_stubs()
     _install_sklearn_roc_curve_stub()

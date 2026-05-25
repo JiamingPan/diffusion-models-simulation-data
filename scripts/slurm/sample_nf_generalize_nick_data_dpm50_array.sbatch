@@ -25,7 +25,8 @@ fi
 if [[ -n "${INHERITED_COSMODIFF_DIR}" && -z "${COSMODIFF_DIR_OVERRIDE:-}" && "${INHERITED_COSMODIFF_DIR}" != "${COSMODIFF_DIR}" ]]; then
   echo "Ignoring inherited COSMODIFF_DIR=${INHERITED_COSMODIFF_DIR}; using ${COSMODIFF_DIR}" >&2
 fi
-VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
+VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf_class}
+BASE_VENV_PATH=${BASE_VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
 CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-/scratch/huterer_root/huterer0/jiamingp/saved_runs/nf_generalize_nick_data}
 CONFIG_DIR=${CONFIG_DIR:-${PROJECT_DIR}/local/nf_generalize_nick_data/sampling_configs}
 SAMPLE_ROOT=${SAMPLE_ROOT:-${PROJECT_DIR}/results/nf_generalize_nick_data/samples}
@@ -44,6 +45,8 @@ mkdir -p logs/nf_generalize_nick_data "${SAMPLE_ROOT}"
 if [[ -f "${VENV_PATH}/bin/activate" ]]; then
   source "${VENV_PATH}/bin/activate"
 fi
+source "${PROJECT_DIR}/scripts/nf_class_conditional_pythonpath.sh"
+set_nf_class_conditional_pythonpath "${VENV_PATH}/bin/python" "${BASE_VENV_PATH}"
 
 "${PYTHON_BIN}" scripts/prepare_nf_generalize_nick_data_configs.py --project-dir "${PROJECT_DIR}"
 "${PYTHON_BIN}" scripts/prepare_nf_generalize_nick_data_sampling_configs.py \
