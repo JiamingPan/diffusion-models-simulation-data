@@ -43,16 +43,50 @@ def _install_torch_optional_device_stubs() -> None:
     CPU/CUDA-only systems.  Older Great Lakes Torch builds do not have that
     attribute, so declare it unavailable before importing diffusers.
     """
-    import types
+    from contextlib import nullcontext
 
-    if not hasattr(torch, "xpu"):
-        torch.xpu = types.SimpleNamespace(
-            empty_cache=lambda: None,
-            is_available=lambda: False,
-            device_count=lambda: 0,
-            synchronize=lambda: None,
-            manual_seed_all=lambda _seed=None: None,
-        )
+    class _OptionalDeviceStub:
+        def is_available(self): return False
+        def device_count(self): return 0
+        def empty_cache(self): return None
+        def _is_compiled(self): return False
+        def current_device(self): return 0
+        def set_device(self, *args, **kwargs): return None
+        def synchronize(self, *args, **kwargs): return None
+        def manual_seed(self, *args, **kwargs): return None
+        def manual_seed_all(self, *args, **kwargs): return None
+        def seed(self, *args, **kwargs): return 0
+        def initial_seed(self, *args, **kwargs): return 0
+        def get_rng_state(self, *args, **kwargs): return None
+        def set_rng_state(self, *args, **kwargs): return None
+        def is_built(self, *args, **kwargs): return False
+        def current_stream(self, *args, **kwargs): return None
+        def stream(self, *args, **kwargs): return nullcontext()
+        def device(self, *args, **kwargs): return nullcontext()
+        def memory_allocated(self, *args, **kwargs): return 0
+        def max_memory_allocated(self, *args, **kwargs): return 0
+        def reset_peak_memory_stats(self, *args, **kwargs): return None
+        def get_device_name(self, *args, **kwargs): return "optional-device-unavailable"
+        def get_device_properties(self, *args, **kwargs): return None
+        def __getattr__(self, name):
+            def missing(*args, **kwargs):
+                if name.startswith("is_"):
+                    return False
+                return None
+            return missing
+
+    stub = _OptionalDeviceStub()
+    required = ("empty_cache", "is_available", "device_count", "manual_seed")
+    for backend in ("xpu", "mps"):
+        existing = getattr(torch, backend, None)
+        if existing is None or any(not hasattr(existing, name) for name in required):
+            setattr(torch, backend, stub)
+            continue
+        for name in dir(stub):
+            if name.startswith("__"):
+                continue
+            if not hasattr(existing, name):
+                setattr(existing, name, getattr(stub, name))
 
 
 def _install_sklearn_roc_curve_stub() -> None:
