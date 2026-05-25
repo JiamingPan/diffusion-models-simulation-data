@@ -19,11 +19,13 @@ PYTHON_BIN=${PYTHON_BIN:-python}
 
 PCA_COMPONENTS=${PCA_COMPONENTS:-32}
 PCA_FIT_MAX_SLICES=${PCA_FIT_MAX_SLICES:-4096}
+PCA_TARGET_VARIANCE=${PCA_TARGET_VARIANCE:-0}
 MAX_GENERATED=${MAX_GENERATED:-512}
 VAL_RAW_PER_SOURCE=${VAL_RAW_PER_SOURCE:-8}
 MAX_VAL_SLICES=${MAX_VAL_SLICES:-512}
 EMBEDDING_BATCH_SIZE=${EMBEDDING_BATCH_SIZE:-512}
 SIMILARITY_BATCH_SIZE=${SIMILARITY_BATCH_SIZE:-512}
+OUT_PREFIX=${OUT_PREFIX:-nf_generalize_nick_data_pca_full_nn}
 
 cd "${PROJECT_DIR}"
 mkdir -p logs/nf_generalize_nick_data results/cache/matplotlib
@@ -36,8 +38,10 @@ export MPLCONFIGDIR="${PROJECT_DIR}/results/cache/matplotlib"
 
 "${PYTHON_BIN}" scripts/compute_nf_generalize_pca_full_nn.py \
   --project-dir "${PROJECT_DIR}" \
+  --out-prefix "${OUT_PREFIX}" \
   --pca-components "${PCA_COMPONENTS}" \
   --pca-fit-max-slices "${PCA_FIT_MAX_SLICES}" \
+  --pca-target-variance "${PCA_TARGET_VARIANCE}" \
   --max-generated "${MAX_GENERATED}" \
   --val-raw-per-source "${VAL_RAW_PER_SOURCE}" \
   --max-val-slices "${MAX_VAL_SLICES}" \

@@ -212,7 +212,12 @@ def load_train_and_validation(
     return train, val, norm_info
 
 
-def fit_pca_encoder(images: np.ndarray, n_components: int, max_fit: int | None) -> PCAEncoder:
+def fit_pca_encoder(
+    images: np.ndarray,
+    n_components: int,
+    max_fit: int | None,
+    target_variance: float | None = None,
+) -> PCAEncoder:
     fit_images = evenly_limit(as_nchw(images), max_fit)
     x = fit_images.reshape(len(fit_images), -1).astype(np.float32, copy=False)
     mean = x.mean(axis=0, keepdims=True)
@@ -238,6 +243,22 @@ def fit_pca_encoder(images: np.ndarray, n_components: int, max_fit: int | None) 
         ev = (s[:rank] ** 2) / max(x.shape[0] - 1, 1)
         total = float(np.var(x, axis=0, ddof=1).sum())
         evr = (ev / max(total, 1e-12)).astype(np.float32, copy=False)
+
+    if target_variance is not None and target_variance > 0:
+        cumulative = np.cumsum(evr)
+        if cumulative[-1] + 1e-6 < target_variance:
+            raise RuntimeError(
+                f"PCA rank cap {rank} only explains {cumulative[-1]:.4f}, "
+                f"below requested target {target_variance:.4f}. Increase --pca-components."
+            )
+        keep = int(np.searchsorted(cumulative, target_variance, side="left") + 1)
+        components = components[:keep].astype(np.float32, copy=False)
+        evr = evr[:keep].astype(np.float32, copy=False)
+        print(
+            f"PCA target_variance={target_variance:.4f}: selected rank {keep} "
+            f"from cap {rank} with explained_variance_sum={float(evr.sum()):.4f}",
+            flush=True,
+        )
 
     return PCAEncoder(
         mean=mean.squeeze(0).astype(np.float32, copy=False),
@@ -575,6 +596,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sample-label", default=DEFAULT_SAMPLE_LABEL)
     parser.add_argument("--pca-components", type=int, default=32)
     parser.add_argument("--pca-fit-max-slices", type=int, default=4096)
+    parser.add_argument(
+        "--pca-target-variance",
+        type=float,
+        default=0.0,
+        help=(
+            "If >0, fit up to --pca-components and then keep the smallest rank whose "
+            "cumulative explained variance reaches this target. Use --pca-fit-max-slices 0 "
+            "to fit on all loaded training slices."
+        ),
+    )
     parser.add_argument("--max-generated", type=int, default=512)
     parser.add_argument("--val-raw-per-source", type=int, default=8)
     parser.add_argument("--max-val-slices", type=int, default=512)
@@ -627,7 +658,12 @@ def main() -> None:
         val_raw_per_source=0,
         max_val_slices=0,
     )
-    encoder = fit_pca_encoder(fit_train, args.pca_components, args.pca_fit_max_slices)
+    encoder = fit_pca_encoder(
+        fit_train,
+        args.pca_components,
+        args.pca_fit_max_slices,
+        target_variance=args.pca_target_variance,
+    )
     pca_evr_sum = float(np.sum(encoder.explained_variance_ratio))
     print(f"PCA rank={len(encoder.explained_variance_ratio)} explained_variance_sum={pca_evr_sum:.4f}")
     del fit_train
@@ -677,6 +713,7 @@ def main() -> None:
             "pca_fit_run_name": fit_row["run_name"],
             "pca_fit_dataset_size": int(fit_row["dataset_size"]),
             "pca_fit_max_slices": int(args.pca_fit_max_slices),
+            "pca_target_variance": float(args.pca_target_variance),
             "pca_rank": int(len(encoder.explained_variance_ratio)),
             "pca_explained_variance_sum": pca_evr_sum,
             "normalization_center": norm_info.get("center", math.nan),

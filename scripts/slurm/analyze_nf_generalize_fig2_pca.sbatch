@@ -18,11 +18,13 @@ PYTHON_BIN=${PYTHON_BIN:-python}
 
 PCA_COMPONENTS=${PCA_COMPONENTS:-32}
 PCA_FIT_MAX_SLICES=${PCA_FIT_MAX_SLICES:-4096}
+PCA_TARGET_VARIANCE=${PCA_TARGET_VARIANCE:-0}
 MAX_GENERATED=${MAX_GENERATED:-512}
 VAL_RAW_PER_SOURCE=${VAL_RAW_PER_SOURCE:-8}
 MAX_VAL_SLICES=${MAX_VAL_SLICES:-512}
 SIMILARITY_BATCH_SIZE=${SIMILARITY_BATCH_SIZE:-512}
 FIXED_THRESHOLDS=${FIXED_THRESHOLDS:-0.5,0.6,0.7,0.8,0.9,0.95}
+OUT_PREFIX=${OUT_PREFIX:-nf_generalize_fig2_pca_full_nn}
 
 cd "${PROJECT_DIR}"
 mkdir -p logs/nf_generalize_fig2 results/cache/matplotlib
@@ -40,9 +42,10 @@ export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
   --manifest "${PROJECT_DIR}/local/nf_generalize_fig2/manifest.json" \
   --output-dir "${PROJECT_DIR}/results/nf_generalize_fig2/quickcheck" \
   --table-dir "${PROJECT_DIR}/results/nf_generalize_fig2/tables" \
-  --out-prefix nf_generalize_fig2_pca_full_nn \
+  --out-prefix "${OUT_PREFIX}" \
   --pca-components "${PCA_COMPONENTS}" \
   --pca-fit-max-slices "${PCA_FIT_MAX_SLICES}" \
+  --pca-target-variance "${PCA_TARGET_VARIANCE}" \
   --max-generated "${MAX_GENERATED}" \
   --val-raw-per-source "${VAL_RAW_PER_SOURCE}" \
   --max-val-slices "${MAX_VAL_SLICES}" \
