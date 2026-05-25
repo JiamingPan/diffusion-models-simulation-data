@@ -84,8 +84,8 @@ if [[ ! -d "${CHECKPOINT_DIR}" ]]; then
   exit 1
 fi
 
-if [[ ! -f "${COSMODIFF_DIR}/scripts/cosmodiff_sample.py" ]]; then
-  echo "Missing main cosmo_diffusion sampler: ${COSMODIFF_DIR}" >&2
+if [[ ! -f "${PROJECT_DIR}/scripts/sample_cosmodiff.py" ]]; then
+  echo "Missing local sampling wrapper: ${PROJECT_DIR}/scripts/sample_cosmodiff.py" >&2
   exit 1
 fi
 
@@ -121,13 +121,27 @@ echo "  batch:           ${BATCH_SIZE}"
 echo "  sampler:         ${SAMPLE_LABEL} (${SAMPLER_CLASS}, ${SAMPLER_STEPS} steps)"
 echo "  cosmodiff:       ${COSMODIFF_DIR}"
 
-"${PYTHON_BIN}" "${COSMODIFF_DIR}/scripts/cosmodiff_sample.py" \
+"${PYTHON_BIN}" "${PROJECT_DIR}/scripts/sample_cosmodiff.py" \
+  --checkpoint "${CHECKPOINT_DIR}" \
   --config "${CONFIG_PATH}" \
-  --filepath "${OUTPUT_PATH}" \
-  --n_samples "${NUM_SAMPLES}" \
-  --batch_size "${BATCH_SIZE}" \
+  --output "${OUTPUT_PATH}" \
+  --num-samples 1 \
+  --batch-size 1 \
+  --image-size 128 \
   --scheduler "${SAMPLER_CLASS}" \
-  --num_steps "${SAMPLER_STEPS}" \
+  --num-steps "${SAMPLER_STEPS}" \
   --seed "${SEED}" \
-  --device cuda \
-  --verbose
+  --device cpu \
+  --preflight-only
+
+"${PYTHON_BIN}" "${PROJECT_DIR}/scripts/sample_cosmodiff.py" \
+  --checkpoint "${CHECKPOINT_DIR}" \
+  --config "${CONFIG_PATH}" \
+  --output "${OUTPUT_PATH}" \
+  --num-samples "${NUM_SAMPLES}" \
+  --batch-size "${BATCH_SIZE}" \
+  --image-size 128 \
+  --scheduler "${SAMPLER_CLASS}" \
+  --num-steps "${SAMPLER_STEPS}" \
+  --seed "${SEED}" \
+  --device cuda

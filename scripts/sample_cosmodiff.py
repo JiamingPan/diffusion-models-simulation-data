@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import sys
 from pathlib import Path
 
@@ -102,6 +103,19 @@ def _load_scheduler_from_config(config_path: Path | None, *, allow_default_sched
     return scheduler_cls(**scheduler_config.get("kwargs", {}))
 
 
+def build_inference_scheduler(base_scheduler, scheduler_name: str | None):
+    """Optionally replace the training scheduler with an inference scheduler."""
+    if not scheduler_name:
+        return base_scheduler
+
+    import diffusers
+
+    scheduler_cls = getattr(diffusers, scheduler_name)
+    if hasattr(scheduler_cls, "from_config"):
+        return scheduler_cls.from_config(base_scheduler.config)
+    return scheduler_cls(**dict(base_scheduler.config))
+
+
 def _config_model_class(config_path: Path | None) -> str | None:
     if config_path is None:
         return None
@@ -171,6 +185,38 @@ def _load_for_sampling(checkpoint: Path, config_path: Path | None, *, allow_defa
     )
 
 
+def generate_samples(
+    model: torch.nn.Module,
+    noise_scheduler,
+    *,
+    batch_size: int,
+    image_shape: tuple[int, ...],
+    num_steps: int | None,
+    device: torch.device,
+    generator: torch.Generator | None,
+) -> torch.Tensor:
+    model.eval()
+    n_steps = int(num_steps or noise_scheduler.config.num_train_timesteps)
+    noise_scheduler.set_timesteps(n_steps)
+
+    images = torch.randn((batch_size, *image_shape), device=device, generator=generator)
+
+    try:
+        step_params = inspect.signature(noise_scheduler.step).parameters
+    except (TypeError, ValueError):
+        step_params = {}
+
+    for t in noise_scheduler.timesteps:
+        timesteps = torch.full((batch_size,), t, device=device, dtype=torch.long)
+        noise_pred = model(images, timesteps, return_dict=False)[0]
+        step_kwargs = {}
+        if "generator" in step_params:
+            step_kwargs["generator"] = generator
+        images = noise_scheduler.step(noise_pred, t, images, **step_kwargs).prev_sample
+
+    return images
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", required=True, help="Checkpoint directory or run output directory.")
@@ -185,13 +231,15 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--image-size", type=int, default=128)
     parser.add_argument("--seed", type=int, default=123)
+    parser.add_argument("--scheduler", default=None, help="Optional inference scheduler class, e.g. DPMSolverMultistepScheduler.")
+    parser.add_argument("--num-steps", type=int, default=None, help="Optional inference-step count for the scheduler.")
+    parser.add_argument("--preflight-only", action="store_true", help="Load the model/scheduler and exit without sampling.")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()
 
     project_root = Path.cwd()
     _install_sklearn_roc_curve_stub()
     _ensure_cosmodiff_on_path(project_root)
-    from cosmodiff.optim import generate
     from cosmodiff import utils
 
     checkpoint = Path(args.checkpoint)
@@ -207,6 +255,16 @@ def main() -> None:
         config_path,
         allow_default_scheduler=args.allow_default_scheduler,
     )
+    scheduler = build_inference_scheduler(scheduler, args.scheduler)
+    if args.preflight_only:
+        n_steps = int(args.num_steps or scheduler.config.num_train_timesteps)
+        scheduler.set_timesteps(n_steps)
+        print(
+            "preflight ok: "
+            f"checkpoint={checkpoint} scheduler={scheduler.__class__.__name__} steps={len(scheduler.timesteps)}"
+        )
+        return
+
     device = torch.device(args.device)
     model.to(device)
     model.eval()
@@ -217,11 +275,12 @@ def main() -> None:
     with torch.no_grad():
         while remaining > 0:
             n = min(args.batch_size, remaining)
-            samples = generate(
+            samples = generate_samples(
                 model,
                 scheduler,
                 batch_size=n,
                 image_shape=(1, args.image_size, args.image_size),
+                num_steps=args.num_steps,
                 device=device,
                 generator=generator,
             )
@@ -230,7 +289,11 @@ def main() -> None:
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    np.save(output, np.concatenate(batches, axis=0))
+    samples = np.concatenate(batches, axis=0)
+    if output.suffix == ".npz":
+        np.savez(output, samples=samples)
+    else:
+        np.save(output, samples)
     print(f"Wrote {args.num_samples} samples to {output}")
 
 
