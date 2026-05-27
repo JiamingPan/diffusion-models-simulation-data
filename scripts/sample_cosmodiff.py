@@ -355,6 +355,41 @@ def _load_for_sampling(checkpoint: Path, config_path: Path | None, *, allow_defa
     )
 
 
+def _checkpoint_root_for_ema(requested_checkpoint: Path, resolved_checkpoint: Path) -> Path:
+    if requested_checkpoint.is_dir() and not _looks_like_checkpoint(requested_checkpoint):
+        return requested_checkpoint
+    if resolved_checkpoint.name.startswith("checkpoint-epoch-"):
+        return resolved_checkpoint.parent
+    return requested_checkpoint.parent if requested_checkpoint.is_dir() else resolved_checkpoint.parent
+
+
+def _apply_posthoc_ema(
+    model: torch.nn.Module,
+    *,
+    requested_checkpoint: Path,
+    resolved_checkpoint: Path,
+    sigma_rel: float | None,
+) -> torch.nn.Module:
+    if sigma_rel is None:
+        return model
+
+    try:
+        from cosmodiff.optim import synthesize_ema_from_checkpoints
+    except ImportError as exc:
+        raise RuntimeError(
+            "--ema-sigma-rel requires cosmodiff.optim.synthesize_ema_from_checkpoints "
+            "from the patched Great Lakes cosmo_diffusion checkout."
+        ) from exc
+
+    checkpoint_root = _checkpoint_root_for_ema(requested_checkpoint, resolved_checkpoint)
+    ema_model = synthesize_ema_from_checkpoints(
+        model,
+        str(checkpoint_root),
+        sigma_rel_target=float(sigma_rel),
+    )
+    return ema_model.ema_model if hasattr(ema_model, "ema_model") else ema_model
+
+
 def generate_samples(
     model: torch.nn.Module,
     noise_scheduler,
@@ -403,6 +438,12 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--scheduler", default=None, help="Optional inference scheduler class, e.g. DPMSolverMultistepScheduler.")
     parser.add_argument("--num-steps", type=int, default=None, help="Optional inference-step count for the scheduler.")
+    parser.add_argument(
+        "--ema-sigma-rel",
+        type=float,
+        default=None,
+        help="Optional post-hoc EMA target sigma_rel synthesized from the checkpoint root.",
+    )
     parser.add_argument("--preflight-only", action="store_true", help="Load the model/scheduler and exit without sampling.")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()
@@ -413,7 +454,8 @@ def main() -> None:
     _install_sklearn_roc_curve_stub()
     _ensure_cosmodiff_on_path(project_root)
 
-    checkpoint = Path(args.checkpoint)
+    requested_checkpoint = Path(args.checkpoint)
+    checkpoint = requested_checkpoint
     if checkpoint.is_dir() and not _looks_like_checkpoint(checkpoint):
         latest = _find_latest_checkpoint(checkpoint)
         if latest is None:
@@ -426,13 +468,20 @@ def main() -> None:
         config_path,
         allow_default_scheduler=args.allow_default_scheduler,
     )
+    model = _apply_posthoc_ema(
+        model,
+        requested_checkpoint=requested_checkpoint,
+        resolved_checkpoint=checkpoint,
+        sigma_rel=args.ema_sigma_rel,
+    )
     scheduler = build_inference_scheduler(scheduler, args.scheduler)
     if args.preflight_only:
         n_steps = int(args.num_steps or scheduler.config.num_train_timesteps)
         scheduler.set_timesteps(n_steps)
         print(
             "preflight ok: "
-            f"checkpoint={checkpoint} scheduler={scheduler.__class__.__name__} steps={len(scheduler.timesteps)}"
+            f"checkpoint={checkpoint} scheduler={scheduler.__class__.__name__} "
+            f"steps={len(scheduler.timesteps)} ema_sigma_rel={args.ema_sigma_rel}"
         )
         return
 
