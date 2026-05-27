@@ -21,7 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from simdiff_eval.io import _load_real_tanh_from_config, as_nchw
+from simdiff_eval.io import _cap_n_samples, _load_real_tanh_from_config, as_nchw
 from simdiff_eval.metrics import batch_power_spectra, field_histogram
 
 
@@ -110,7 +110,11 @@ def load_real_lightweight(config_path: Path, max_raw_samples: int) -> np.ndarray
     cfg = dict(cfg)
     data_cfg = dict(cfg.get("data", {}))
     current = data_cfg.get("n_samples")
-    data_cfg["n_samples"] = int(max_raw_samples) if current is None else min(int(current), int(max_raw_samples))
+    data_cfg["n_samples"] = _cap_n_samples(
+        current,
+        max_raw_samples=max_raw_samples,
+        img_path=data_cfg.get("img_path"),
+    )
     cfg["data"] = data_cfg
     return _load_real_tanh_from_config(cfg, utils_module=None)
 
