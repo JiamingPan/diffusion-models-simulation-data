@@ -307,6 +307,42 @@ def summarize(values: np.ndarray, prefix: str) -> dict[str, float]:
     }
 
 
+def similarity_histogram_rows(
+    values: np.ndarray,
+    *,
+    row: dict[str, Any],
+    score_kind: str,
+    bins: np.ndarray,
+    pca_rank: int,
+    pca_explained_variance_sum: float,
+) -> list[dict[str, Any]]:
+    """Return histogram rows for nearest-neighbor similarity diagnostics."""
+    values = np.asarray(values, dtype=np.float32)
+    counts, edges = np.histogram(values, bins=bins)
+    widths = np.diff(edges)
+    total = int(len(values))
+    densities = counts / np.maximum(total * widths, 1e-30)
+    return [
+        {
+            "run_name": row["run_name"],
+            "arch": row.get("arch", ""),
+            "arch_label": row.get("arch_label", row.get("arch", "")),
+            "dataset_tag": row["dataset_tag"],
+            "dataset_size": int(row["dataset_size"]),
+            "score_kind": score_kind,
+            "n_scores": total,
+            "bin_left": float(edges[i]),
+            "bin_right": float(edges[i + 1]),
+            "bin_center": float(0.5 * (edges[i] + edges[i + 1])),
+            "count": int(counts[i]),
+            "density": float(densities[i]),
+            "pca_rank": int(pca_rank),
+            "pca_explained_variance_sum": float(pca_explained_variance_sum),
+        }
+        for i in range(len(counts))
+    ]
+
+
 def threshold_label(value: float) -> str:
     return f"{value:.3f}".rstrip("0").rstrip(".").replace(".", "p")
 
@@ -624,6 +660,12 @@ def parse_args() -> argparse.Namespace:
         default="0.5,0.6,0.7,0.8,0.9,0.95",
         help="Comma-separated fixed PCA cosine thresholds for paper-style GL curves.",
     )
+    parser.add_argument(
+        "--histogram-bins",
+        type=int,
+        default=120,
+        help="Number of bins for saved nearest-neighbor similarity histograms.",
+    )
     parser.add_argument("--skip-missing-samples", action="store_true")
     return parser.parse_args()
 
@@ -678,6 +720,8 @@ def main() -> None:
     gc.collect()
 
     metric_rows: list[dict[str, Any]] = []
+    histogram_rows: list[dict[str, Any]] = []
+    histogram_bins = np.linspace(-1.0, 1.0, int(args.histogram_bins) + 1)
     generated_embeddings: dict[tuple[str, int], np.ndarray] = {}
     for row in rows:
         config = load_config(project_dir, row)
@@ -702,6 +746,21 @@ def main() -> None:
         ref_nn = leave_one_out_max_similarity(ref_z, batch_size=args.similarity_batch_size)
         val_nn = max_similarity(val_z, ref_z, batch_size=args.similarity_batch_size)
         gen_nn = max_similarity(gen_z, ref_z, batch_size=args.similarity_batch_size)
+        for score_kind, values in (
+            ("train_real_leave_one_out", ref_nn),
+            ("held_out_real_to_train", val_nn),
+            ("generated_to_train", gen_nn),
+        ):
+            histogram_rows.extend(
+                similarity_histogram_rows(
+                    values,
+                    row=row,
+                    score_kind=score_kind,
+                    bins=histogram_bins,
+                    pca_rank=len(encoder.explained_variance_ratio),
+                    pca_explained_variance_sum=pca_evr_sum,
+                )
+            )
 
         thresholds = {
             "threshold_q90": float(np.quantile(ref_nn, 0.90)),
@@ -763,6 +822,10 @@ def main() -> None:
     metrics_path = table_dir / f"{args.out_prefix}_metrics.csv"
     df.to_csv(metrics_path, index=False)
     print("wrote", metrics_path)
+    if histogram_rows:
+        hist_path = table_dir / f"{args.out_prefix}_similarity_histograms.csv"
+        pd.DataFrame(histogram_rows).to_csv(hist_path, index=False)
+        print("wrote", hist_path)
     print(
         df[
             [
