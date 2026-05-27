@@ -1,15 +1,15 @@
 #!/bin/bash
-#SBATCH --job-name=nf_cond_continue
+#SBATCH --job-name=nf_cond_800k
 #SBATCH --partition=spgpu
 #SBATCH --gres=gpu:1
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=80gb
-#SBATCH --time=24:00:00
+#SBATCH --time=48:00:00
 #SBATCH --array=0-1%1
-#SBATCH -o /home/jiamingp/diffusion_models_repo/logs/nf_conditional_u128_continue400k/train_%A_%a.out
-#SBATCH -e /home/jiamingp/diffusion_models_repo/logs/nf_conditional_u128_continue400k/train_%A_%a.err
+#SBATCH -o /home/jiamingp/diffusion_models_repo/logs/nf_conditional_u128_continue800k/train_%A_%a.out
+#SBATCH -e /home/jiamingp/diffusion_models_repo/logs/nf_conditional_u128_continue800k/train_%A_%a.err
 #SBATCH -A huterer0
 
 set -euo pipefail
@@ -29,15 +29,15 @@ fi
 VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf_class}
 BASE_VENV_PATH=${BASE_VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
 PYTHON_BIN=${PYTHON_BIN:-python}
-ADDITIONAL_UPDATES=${ADDITIONAL_UPDATES:-400000}
-CONTINUE_SWEEP_NAME=${CONTINUE_SWEEP_NAME:-nf_conditional_u128_continue400k}
+ADDITIONAL_UPDATES=${ADDITIONAL_UPDATES:-800000}
+CONTINUE_SWEEP_NAME=${CONTINUE_SWEEP_NAME:-nf_conditional_u128_continue800k}
 CONT_CHECKPOINT_ROOT=${CONT_CHECKPOINT_ROOT:-/scratch/huterer_root/huterer0/jiamingp/saved_runs/nf_conditional_u128}
 CLASS_CHECKPOINT_ROOT=${CLASS_CHECKPOINT_ROOT:-/scratch/huterer_root/huterer0/jiamingp/saved_runs/nf_class_conditional_u128}
 REQUIRED_COSMODIFF_BRANCH=${REQUIRED_COSMODIFF_BRANCH:-main}
 
 cd "${PROJECT_DIR}"
 source "${PROJECT_DIR}/scripts/nf_class_conditional_pythonpath.sh"
-mkdir -p logs/nf_conditional_u128_continue400k
+mkdir -p logs/nf_conditional_u128_continue800k
 
 if [[ -f "${VENV_PATH}/bin/activate" ]]; then
   source "${VENV_PATH}/bin/activate"
@@ -197,7 +197,7 @@ echo "  kind:               ${RUN_KIND}"
 echo "  config:             ${CONFIG_PATH}"
 echo "  checkpoints:        ${CHECKPOINT_DIR}"
 echo "  additional target:  about ${ADDITIONAL_UPDATES} optimizer updates"
-echo "  walltime:           24:00:00"
+echo "  walltime:           48:00:00"
 echo "  cosmodiff:          ${COSMODIFF_DIR}"
 echo "  venv:               ${VENV_PATH}"
 echo "  python:             ${PYTHON_BIN}"

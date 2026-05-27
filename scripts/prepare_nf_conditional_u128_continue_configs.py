@@ -27,8 +27,8 @@ import prepare_nf_class_conditional_u128_config as cls_base
 import prepare_nf_conditional_u128_config as cont_base
 
 
-CONTINUE_SWEEP_NAME = "nf_conditional_u128_continue400k"
-ADDITIONAL_UPDATES = 400_000
+CONTINUE_SWEEP_NAME = "nf_conditional_u128_continue800k"
+ADDITIONAL_UPDATES = 800_000
 CHECKPOINT_EVERY_UPDATES = 20_000
 
 
@@ -75,14 +75,19 @@ def class_label_paths(
     }
 
 
-def update_row_for_continuation(row: dict[str, Any], *, additional_updates: int) -> dict[str, Any]:
+def update_row_for_continuation(
+    row: dict[str, Any],
+    *,
+    additional_updates: int,
+    continue_sweep_name: str,
+) -> dict[str, Any]:
     steps_per_epoch = int(row["steps_per_epoch"])
     continue_epochs = ceil_updates_to_epochs(steps_per_epoch, additional_updates)
     continue_actual_updates = continue_epochs * steps_per_epoch
     updated = dict(row)
     updated.update(
         {
-            "continue_sweep_name": CONTINUE_SWEEP_NAME,
+            "continue_sweep_name": continue_sweep_name,
             "base_sweep_name": (
                 cls_base.SWEEP_NAME
                 if row["conditioning"] == "discrete"
@@ -96,7 +101,7 @@ def update_row_for_continuation(row: dict[str, Any], *, additional_updates: int)
             "epochs": int(continue_epochs),
             "checkpoint_every_updates": CHECKPOINT_EVERY_UPDATES,
             "checkpoint_every_n_epochs": int(checkpoint_epochs_for(steps_per_epoch)),
-            "config": f"local/{CONTINUE_SWEEP_NAME}/configs/{row['run_name']}.yaml",
+            "config": f"local/{continue_sweep_name}/configs/{row['run_name']}.yaml",
             "note": (
                 "Continuation config: reuse the original checkpoint directory and "
                 f"run about {additional_updates} additional optimizer updates."
@@ -130,7 +135,11 @@ def build_continuous(
         sample_n=args.sample_n,
         label_paths=label_paths,
     )
-    row = update_row_for_continuation(row, additional_updates=args.additional_updates)
+    row = update_row_for_continuation(
+        row,
+        additional_updates=args.additional_updates,
+        continue_sweep_name=args.continue_sweep_name,
+    )
     config["train"]["num_epochs"] = int(row["continue_epochs"])
     config["train"]["checkpoint_every_n_epochs"] = int(row["checkpoint_every_n_epochs"])
     return config, row
@@ -161,7 +170,11 @@ def build_class(
         sample_n=args.sample_n,
         label_paths=label_paths,
     )
-    row = update_row_for_continuation(row, additional_updates=args.additional_updates)
+    row = update_row_for_continuation(
+        row,
+        additional_updates=args.additional_updates,
+        continue_sweep_name=args.continue_sweep_name,
+    )
     config["train"]["num_epochs"] = int(row["continue_epochs"])
     config["train"]["checkpoint_every_n_epochs"] = int(row["checkpoint_every_n_epochs"])
     return config, row
@@ -233,6 +246,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--n-train-sims", type=int, default=cont_base.N_TRAIN_SIMS)
     parser.add_argument("--sample-n", type=int, default=cont_base.SAMPLE_N)
     parser.add_argument("--additional-updates", type=int, default=ADDITIONAL_UPDATES)
+    parser.add_argument("--continue-sweep-name", default=CONTINUE_SWEEP_NAME)
     parser.add_argument("--run-kind", choices=["continuous", "class"], action="append")
     parser.add_argument("--check-only", action="store_true", help="Validate selected continuation configs.")
     parser.add_argument("--print-runs", action="store_true", help="Print '<kind>\\t<run_name>' rows and exit.")
@@ -243,8 +257,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     project_dir = Path(args.project_dir).resolve()
-    config_dir = project_dir / "local" / CONTINUE_SWEEP_NAME / "configs"
-    manifest_path = project_dir / "local" / CONTINUE_SWEEP_NAME / "manifest.json"
+    config_dir = project_dir / "local" / args.continue_sweep_name / "configs"
+    manifest_path = project_dir / "local" / args.continue_sweep_name / "manifest.json"
     items = selected_items(args, project_dir)
 
     if args.print_runs:
@@ -274,7 +288,7 @@ def main() -> None:
     if args.check_only:
         for _kind, _config, row in items:
             assert_config(config_dir / f"{row['run_name']}.yaml", row)
-        print(f"Validated {len(items)} {CONTINUE_SWEEP_NAME} configs.")
+        print(f"Validated {len(items)} {args.continue_sweep_name} configs.")
         return
 
     config_dir.mkdir(parents=True, exist_ok=True)
