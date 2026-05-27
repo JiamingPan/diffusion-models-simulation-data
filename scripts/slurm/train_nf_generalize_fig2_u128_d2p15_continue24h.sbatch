@@ -56,6 +56,8 @@ if [[ ! -f "${COSMODIFF_DIR}/scripts/cosmodiff_train.py" ]]; then
   exit 1
 fi
 
+"${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_direct_unet_checkpoint.py" "${COSMODIFF_DIR}"
+
 COSMODIFF_BRANCH=$(git -C "${COSMODIFF_DIR}" rev-parse --abbrev-ref HEAD)
 COSMODIFF_COMMIT=$(git -C "${COSMODIFF_DIR}" rev-parse --short HEAD)
 echo "cosmodiff git branch: ${COSMODIFF_BRANCH}"
