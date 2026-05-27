@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=80gb
 #SBATCH --time=04:00:00
-#SBATCH --array=0-2%3
+#SBATCH --array=0-15%3
 #SBATCH -o /home/jiamingp/diffusion_models_repo/logs/nf_generalize_fig2/original_ema_%A_%a.out
 #SBATCH -e /home/jiamingp/diffusion_models_repo/logs/nf_generalize_fig2/original_ema_%A_%a.err
 #SBATCH -A huterer0
@@ -44,8 +44,8 @@ SEED=${SEED:-123}
 OVERWRITE=${OVERWRITE:-0}
 REQUIRED_COSMODIFF_BRANCH=${REQUIRED_COSMODIFF_BRANCH:-main}
 
-EMA_TARGETS=(raw 0.020 0.100)
-EMA_LABELS=(raw ema0p02 ema0p10)
+EMA_TARGETS=(raw 0.001 0.002 0.003 0.004 0.005 0.006 0.008 0.010 0.015 0.020 0.030 0.040 0.050 0.075 0.100)
+EMA_LABELS=(raw ema0p001 ema0p002 ema0p003 ema0p004 ema0p005 ema0p006 ema0p008 ema0p01 ema0p015 ema0p02 ema0p03 ema0p04 ema0p05 ema0p075 ema0p10)
 N_EMA=${#EMA_TARGETS[@]}
 if (( SLURM_ARRAY_TASK_ID < 0 || SLURM_ARRAY_TASK_ID >= N_EMA )); then
   echo "Invalid array task ${SLURM_ARRAY_TASK_ID}; valid range is 0-$(( N_EMA - 1 ))" >&2

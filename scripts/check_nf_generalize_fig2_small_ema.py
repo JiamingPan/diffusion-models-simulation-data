@@ -27,7 +27,20 @@ from simdiff_eval.metrics import batch_power_spectra, field_histogram
 
 DEFAULT_LABELS = [
     "raw",
+    "ema0p001",
+    "ema0p002",
+    "ema0p003",
+    "ema0p004",
+    "ema0p005",
+    "ema0p006",
+    "ema0p008",
+    "ema0p01",
+    "ema0p015",
     "ema0p02",
+    "ema0p03",
+    "ema0p04",
+    "ema0p05",
+    "ema0p075",
     "ema0p10",
 ]
 
@@ -46,8 +59,20 @@ EMA_VALUES = {
     "ema0p03": 0.030,
     "ema0p04": 0.040,
     "ema0p05": 0.050,
+    "ema0p075": 0.075,
     "ema0p10": 0.100,
 }
+
+
+def ema_value_for_label(label: str) -> float:
+    if label in EMA_VALUES:
+        return EMA_VALUES[label]
+    if label.startswith("ema"):
+        try:
+            return float(label[3:].replace("p", "."))
+        except ValueError:
+            return float("nan")
+    return float("nan")
 
 
 def parse_args() -> argparse.Namespace:
@@ -203,7 +228,7 @@ def main() -> None:
                 "dataset_size": row.get("dataset_size"),
                 "sampler": args.sampler,
                 "ema_label": label,
-                "ema_value": EMA_VALUES.get(label, np.nan),
+                "ema_value": ema_value_for_label(label),
                 "n_available": n_available,
                 "status": "ok" if n_available >= args.max_generated else ("short" if n_available > 0 else "missing"),
                 "sample_path": str(path),
