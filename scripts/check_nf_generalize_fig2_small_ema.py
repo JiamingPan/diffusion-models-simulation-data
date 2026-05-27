@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Score small post-hoc EMA samples for one Fig. 2 generalization run."""
+"""Score post-hoc EMA samples for one Fig. 2 generalization run."""
 
 from __future__ import annotations
 
@@ -27,19 +27,8 @@ from simdiff_eval.metrics import batch_power_spectra, field_histogram
 
 DEFAULT_LABELS = [
     "raw",
-    "ema0p001",
-    "ema0p002",
-    "ema0p003",
-    "ema0p004",
-    "ema0p005",
-    "ema0p006",
-    "ema0p008",
-    "ema0p01",
-    "ema0p015",
     "ema0p02",
-    "ema0p03",
-    "ema0p04",
-    "ema0p05",
+    "ema0p10",
 ]
 
 EMA_VALUES = {
@@ -57,6 +46,7 @@ EMA_VALUES = {
     "ema0p03": 0.030,
     "ema0p04": 0.040,
     "ema0p05": 0.050,
+    "ema0p10": 0.100,
 }
 
 
@@ -217,7 +207,7 @@ def main() -> None:
         )
 
     audit_df = pd.DataFrame(audit_rows)
-    audit_out = output_dir / f"{args.run_name}_{args.sampler}_small_ema_audit.csv"
+    audit_out = output_dir / f"{args.run_name}_{args.sampler}_ema_audit.csv"
     audit_df.to_csv(audit_out, index=False)
     print("audit:", audit_df["status"].value_counts().to_dict(), flush=True)
     print(audit_df[["ema_label", "n_available", "status", "sample_path"]].to_string(index=False), flush=True)
@@ -255,7 +245,7 @@ def main() -> None:
         )
 
     metrics_df = pd.DataFrame(metric_rows).sort_values("ema_value", na_position="first")
-    metrics_out = output_dir / f"{args.run_name}_{args.sampler}_small_ema_metrics.csv"
+    metrics_out = output_dir / f"{args.run_name}_{args.sampler}_ema_metrics.csv"
     metrics_df.to_csv(metrics_out, index=False)
     print("wrote", metrics_out, flush=True)
 
@@ -266,11 +256,11 @@ def main() -> None:
     print("\nBest by one-point histogram L1:", flush=True)
     print(best_hist[["ema_label", "n_used", "hist_l1", "pk_log10_mae", "std_ratio", "pk_ratio_low_k", "pk_ratio_mid_k", "pk_ratio_high_k"]].to_string(), flush=True)
 
-    plot_path = output_dir / f"{args.run_name}_{args.sampler}_small_ema_sweep.png"
+    plot_path = output_dir / f"{args.run_name}_{args.sampler}_ema_sweep.png"
     plot_metrics(
         metrics_df,
         plot_path,
-        f"{row.get('arch', '')}: small EMA sweep for {args.run_name} ({args.sampler})",
+        f"{row.get('arch', '')}: EMA sweep for {args.run_name} ({args.sampler})",
     )
     print("wrote", plot_path, flush=True)
 
