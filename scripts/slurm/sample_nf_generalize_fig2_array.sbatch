@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=80gb
 #SBATCH --time=04:00:00
-#SBATCH --array=0-19%4
+#SBATCH --array=0-29%4
 #SBATCH -o /home/jiamingp/diffusion_models_repo/logs/nf_generalize_fig2/sample_%A_%a.out
 #SBATCH -e /home/jiamingp/diffusion_models_repo/logs/nf_generalize_fig2/sample_%A_%a.err
 #SBATCH -A huterer0

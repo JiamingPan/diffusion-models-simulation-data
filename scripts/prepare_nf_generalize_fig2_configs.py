@@ -5,7 +5,7 @@ This sweep is meant to reproduce the training-size experiment in
 Zhang et al. (arXiv:2310.05264) in our CAMELS/HI setting:
 
 - train separate models for powers-of-two dataset sizes
-- run both u64 and u128 model widths
+- run u64, u128, and u256 model widths
 - use a fixed optimizer-update budget across N
 - remove data augmentation so low-N memorization is not hidden by shifts/flips
 
@@ -52,6 +52,12 @@ ARCHES = {
         "block_out_channels": [32, 64, 128],
         "norm_num_groups": 32,
         "batch_size": 32,
+    },
+    "u256": {
+        "label": "UNet-256",
+        "block_out_channels": [64, 128, 256],
+        "norm_num_groups": 32,
+        "batch_size": 16,
     },
 }
 
