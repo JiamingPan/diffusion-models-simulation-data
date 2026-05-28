@@ -267,7 +267,7 @@ def iter_runs() -> list[dict[str, Any]]:
                     "augmentations": None,
                     "config": f"local/{SWEEP_NAME}/configs/{name}.yaml",
                     "checkpoint_dir": f"{CHECKPOINT_ROOT}/{name}_checkpoints",
-                    "sample_path": f"results/{SWEEP_NAME}/samples/{name}_seed{{seed}}_raw_train_full.npz",
+                    "sample_path": f"results/{SWEEP_NAME}/samples/{name}_seed{{seed}}_{{sample_label}}.npz",
                     "note": "Fig.2-style run: no augmentation and about 200k optimizer updates.",
                 }
             )

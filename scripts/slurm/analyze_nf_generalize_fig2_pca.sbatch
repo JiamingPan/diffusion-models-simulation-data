@@ -19,6 +19,7 @@ PYTHON_BIN=${PYTHON_BIN:-python}
 PCA_COMPONENTS=${PCA_COMPONENTS:-32}
 PCA_FIT_MAX_SLICES=${PCA_FIT_MAX_SLICES:-4096}
 PCA_TARGET_VARIANCE=${PCA_TARGET_VARIANCE:-0}
+SAMPLE_LABEL=${SAMPLE_LABEL:-dpm50}
 MAX_GENERATED=${MAX_GENERATED:-512}
 VAL_RAW_PER_SOURCE=${VAL_RAW_PER_SOURCE:-8}
 MAX_VAL_SLICES=${MAX_VAL_SLICES:-512}
@@ -52,6 +53,7 @@ fi
   --pca-components "${PCA_COMPONENTS}" \
   --pca-fit-max-slices "${PCA_FIT_MAX_SLICES}" \
   --pca-target-variance "${PCA_TARGET_VARIANCE}" \
+  --sample-label "${SAMPLE_LABEL}" \
   --max-generated "${MAX_GENERATED}" \
   --val-raw-per-source "${VAL_RAW_PER_SOURCE}" \
   --max-val-slices "${MAX_VAL_SLICES}" \

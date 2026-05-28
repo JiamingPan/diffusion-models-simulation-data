@@ -25,13 +25,18 @@ fi
 if [[ -n "${INHERITED_COSMODIFF_DIR}" && -z "${COSMODIFF_DIR_OVERRIDE:-}" && "${INHERITED_COSMODIFF_DIR}" != "${COSMODIFF_DIR}" ]]; then
   echo "Ignoring inherited COSMODIFF_DIR=${INHERITED_COSMODIFF_DIR}; using ${COSMODIFF_DIR}" >&2
 fi
-VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
+VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf_class}
+BASE_VENV_PATH=${BASE_VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
 CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-/scratch/huterer_root/huterer0/jiamingp/saved_runs/nf_generalize_fig2}
 CONFIG_DIR=${CONFIG_DIR:-${PROJECT_DIR}/local/nf_generalize_fig2/configs}
 SAMPLE_ROOT=${SAMPLE_ROOT:-${PROJECT_DIR}/results/nf_generalize_fig2/samples}
 PYTHON_BIN=${PYTHON_BIN:-python}
+SAMPLE_LABEL=${SAMPLE_LABEL:-dpm50}
+SAMPLER_CLASS=${SAMPLER_CLASS:-DPMSolverMultistepScheduler}
+SAMPLER_STEPS=${SAMPLER_STEPS:-50}
 NUM_SAMPLES=${NUM_SAMPLES:-512}
 BATCH_SIZE=${BATCH_SIZE:-8}
+IMAGE_SIZE=${IMAGE_SIZE:-128}
 SEED=${SEED:-123}
 OVERWRITE=${OVERWRITE:-0}
 REQUIRED_COSMODIFF_BRANCH=${REQUIRED_COSMODIFF_BRANCH:-main}
@@ -41,6 +46,8 @@ mkdir -p logs/nf_generalize_fig2 "${SAMPLE_ROOT}"
 if [[ -f "${VENV_PATH}/bin/activate" ]]; then
   source "${VENV_PATH}/bin/activate"
 fi
+source "${PROJECT_DIR}/scripts/nf_class_conditional_pythonpath.sh"
+set_nf_class_conditional_pythonpath "${VENV_PATH}/bin/python" "${BASE_VENV_PATH}"
 
 mapfile -t RUNS < <("${PYTHON_BIN}" scripts/prepare_nf_generalize_fig2_configs.py --project-dir "${PROJECT_DIR}" --print-runs)
 if (( SLURM_ARRAY_TASK_ID < 0 || SLURM_ARRAY_TASK_ID >= ${#RUNS[@]} )); then
@@ -51,7 +58,7 @@ fi
 RUN_NAME=${RUNS[$SLURM_ARRAY_TASK_ID]}
 CONFIG_PATH=${CONFIG_DIR}/${RUN_NAME}.yaml
 CHECKPOINT_DIR=${CHECKPOINT_ROOT}/${RUN_NAME}_checkpoints
-OUTPUT_PATH=${SAMPLE_ROOT}/${RUN_NAME}_seed${SEED}_raw_train_full.npz
+OUTPUT_PATH=${SAMPLE_ROOT}/${RUN_NAME}_seed${SEED}_${SAMPLE_LABEL}.npz
 
 STUB_ROOT="${PROJECT_DIR}/results/cache/python_stubs"
 mkdir -p "${STUB_ROOT}/sklearn/metrics"
@@ -72,20 +79,10 @@ if [[ ! -d "${CHECKPOINT_DIR}" ]]; then
   exit 1
 fi
 
-if [[ ! -f "${COSMODIFF_DIR}/scripts/cosmodiff_sample.py" ]]; then
-  echo "Missing main cosmo_diffusion sampler: ${COSMODIFF_DIR}" >&2
+if [[ ! -f "${PROJECT_DIR}/scripts/sample_cosmodiff.py" ]]; then
+  echo "Missing local sampling wrapper: ${PROJECT_DIR}/scripts/sample_cosmodiff.py" >&2
   exit 1
 fi
-
-PATCH_LOCK="${COSMODIFF_DIR}/.codex_sampling_patch.lock"
-while ! mkdir "${PATCH_LOCK}" 2>/dev/null; do
-  sleep 1
-done
-trap 'rmdir "${PATCH_LOCK}" 2>/dev/null || true' EXIT
-"${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_direct_unet_checkpoint.py" "${COSMODIFF_DIR}"
-"${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_sampling_compat.py" "${COSMODIFF_DIR}"
-rmdir "${PATCH_LOCK}" 2>/dev/null || true
-trap - EXIT
 
 COSMODIFF_BRANCH=$(git -C "${COSMODIFF_DIR}" rev-parse --abbrev-ref HEAD)
 COSMODIFF_COMMIT=$(git -C "${COSMODIFF_DIR}" rev-parse --short HEAD)
@@ -107,14 +104,31 @@ echo "  config:          ${CONFIG_PATH}"
 echo "  output:          ${OUTPUT_PATH}"
 echo "  samples:         ${NUM_SAMPLES}"
 echo "  batch:           ${BATCH_SIZE}"
-echo "  sampler:         train_full"
+echo "  sampler:         ${SAMPLE_LABEL} (${SAMPLER_CLASS}, ${SAMPLER_STEPS} steps)"
 echo "  cosmodiff:       ${COSMODIFF_DIR}"
+echo "  venv:            ${VENV_PATH}"
 
-"${PYTHON_BIN}" "${COSMODIFF_DIR}/scripts/cosmodiff_sample.py" \
+"${PYTHON_BIN}" "${PROJECT_DIR}/scripts/sample_cosmodiff.py" \
+  --checkpoint "${CHECKPOINT_DIR}" \
   --config "${CONFIG_PATH}" \
-  --filepath "${OUTPUT_PATH}" \
-  --n_samples "${NUM_SAMPLES}" \
-  --batch_size "${BATCH_SIZE}" \
+  --output "${OUTPUT_PATH}" \
+  --num-samples 1 \
+  --batch-size 1 \
+  --image-size "${IMAGE_SIZE}" \
+  --scheduler "${SAMPLER_CLASS}" \
+  --num-steps "${SAMPLER_STEPS}" \
   --seed "${SEED}" \
-  --device cuda \
-  --verbose
+  --device cpu \
+  --preflight-only
+
+"${PYTHON_BIN}" "${PROJECT_DIR}/scripts/sample_cosmodiff.py" \
+  --checkpoint "${CHECKPOINT_DIR}" \
+  --config "${CONFIG_PATH}" \
+  --output "${OUTPUT_PATH}" \
+  --num-samples "${NUM_SAMPLES}" \
+  --batch-size "${BATCH_SIZE}" \
+  --image-size "${IMAGE_SIZE}" \
+  --scheduler "${SAMPLER_CLASS}" \
+  --num-steps "${SAMPLER_STEPS}" \
+  --seed "${SEED}" \
+  --device cuda
