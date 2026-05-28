@@ -25,7 +25,8 @@ fi
 if [[ -n "${INHERITED_COSMODIFF_DIR}" && -z "${COSMODIFF_DIR_OVERRIDE:-}" && "${INHERITED_COSMODIFF_DIR}" != "${COSMODIFF_DIR}" ]]; then
   echo "Ignoring inherited COSMODIFF_DIR=${INHERITED_COSMODIFF_DIR}; using ${COSMODIFF_DIR}" >&2
 fi
-VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
+VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf_class}
+BASE_VENV_PATH=${BASE_VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
 CONFIG_DIR=${CONFIG_DIR:-${PROJECT_DIR}/local/nf_generalize_fig2/configs}
 CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-/scratch/huterer_root/huterer0/jiamingp/saved_runs/nf_generalize_fig2}
 PYTHON_BIN=${PYTHON_BIN:-python}
@@ -37,6 +38,8 @@ mkdir -p logs/nf_generalize_fig2
 if [[ -f "${VENV_PATH}/bin/activate" ]]; then
   source "${VENV_PATH}/bin/activate"
 fi
+source "${PROJECT_DIR}/scripts/nf_class_conditional_pythonpath.sh"
+set_nf_class_conditional_pythonpath "${VENV_PATH}/bin/python" "${BASE_VENV_PATH}"
 
 mapfile -t RUNS < <("${PYTHON_BIN}" scripts/prepare_nf_generalize_fig2_configs.py --project-dir "${PROJECT_DIR}" --print-runs)
 if (( SLURM_ARRAY_TASK_ID < 0 || SLURM_ARRAY_TASK_ID >= ${#RUNS[@]} )); then
@@ -53,6 +56,7 @@ STUB_ROOT="${PROJECT_DIR}/results/cache/python_stubs"
 mkdir -p "${STUB_ROOT}/sklearn/metrics"
 printf 'from . import metrics\n' > "${STUB_ROOT}/sklearn/__init__.py"
 printf "def roc_curve(*args, **kwargs):\n    raise RuntimeError('sklearn.metrics.roc_curve is stubbed for cosmodiff training')\n" > "${STUB_ROOT}/sklearn/metrics/__init__.py"
+"${PYTHON_BIN}" scripts/write_diffusers_runtime_sitecustomize.py "${STUB_ROOT}/sitecustomize.py"
 export COSMODIFF_STUB_SKLEARN=1
 export TORCHDYNAMO_DISABLE=1
 export PYTHONPATH="${STUB_ROOT}:${COSMODIFF_DIR}:${PROJECT_DIR}:${PYTHONPATH:-}"
