@@ -52,9 +52,17 @@ def epochs_for_total_updates(dataset_size: int, batch_size: int, total_updates: 
     return max(1, math.ceil(int(total_updates) / steps_per_epoch))
 
 
-def checkpoint_epochs_for(dataset_size: int, batch_size: int) -> int:
+def checkpoint_epochs_for(
+    dataset_size: int,
+    batch_size: int,
+    *,
+    checkpoint_every_updates: int,
+    checkpoint_every_n_epochs: int | None,
+) -> int:
+    if checkpoint_every_n_epochs is not None:
+        return max(1, int(checkpoint_every_n_epochs))
     steps_per_epoch = base.steps_per_epoch(dataset_size, batch_size)
-    return max(1, round(CHECKPOINT_EVERY_UPDATES / steps_per_epoch))
+    return max(1, round(int(checkpoint_every_updates) / steps_per_epoch))
 
 
 def selected_pairs(args: argparse.Namespace) -> set[tuple[str, str]]:
@@ -93,8 +101,15 @@ def continue_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
                 "continue_actual_updates": int(continue_actual_updates),
                 "additional_nominal_updates": int(continue_actual_updates - int(row["actual_updates"])),
                 "epochs": int(continue_epochs),
-                "checkpoint_every_updates": CHECKPOINT_EVERY_UPDATES,
-                "checkpoint_every_n_epochs": int(checkpoint_epochs_for(dataset_size, batch_size)),
+                "checkpoint_every_updates": int(args.checkpoint_every_updates),
+                "checkpoint_every_n_epochs": int(
+                    checkpoint_epochs_for(
+                        dataset_size,
+                        batch_size,
+                        checkpoint_every_updates=args.checkpoint_every_updates,
+                        checkpoint_every_n_epochs=args.checkpoint_every_n_epochs,
+                    )
+                ),
                 "config": f"local/{CONTINUE_SWEEP_NAME}/configs/{row['run_name']}.yaml",
                 "checkpoint_dir": row["checkpoint_dir"],
                 "note": (
@@ -151,7 +166,22 @@ def parse_args() -> argparse.Namespace:
         "--total-updates",
         type=int,
         default=TOTAL_TARGET_UPDATES,
-        help="Total target optimizer updates after continuation.",
+        help=(
+            "Nominal optimizer updates represented by train.num_epochs in the "
+            "continuation config. With the current cosmodiff resume behavior, "
+            "this is the number of updates to run after the resume checkpoint."
+        ),
+    )
+    parser.add_argument(
+        "--checkpoint-every-updates",
+        type=int,
+        default=CHECKPOINT_EVERY_UPDATES,
+        help="Nominal update interval for checkpoints when --checkpoint-every-n-epochs is not set.",
+    )
+    parser.add_argument(
+        "--checkpoint-every-n-epochs",
+        type=int,
+        help="Override checkpoint interval in epochs. Use 1 for long walltime-limited continuations.",
     )
     parser.add_argument(
         "--include-u128-pending",

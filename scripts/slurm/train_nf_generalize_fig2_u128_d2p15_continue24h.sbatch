@@ -31,6 +31,7 @@ PYTHON_BIN=${PYTHON_BIN:-python}
 REQUIRED_COSMODIFF_BRANCH=${REQUIRED_COSMODIFF_BRANCH:-main}
 RUN_NAME=${RUN_NAME:-nf_fig2_u128_d2p15_noaug_200k}
 TOTAL_UPDATES=${TOTAL_UPDATES:-400000}
+CHECKPOINT_EVERY_N_EPOCHS=${CHECKPOINT_EVERY_N_EPOCHS:-1}
 
 cd "${PROJECT_DIR}"
 mkdir -p logs/nf_generalize_fig2_continue400k
@@ -93,18 +94,21 @@ PY
 "${PYTHON_BIN}" scripts/prepare_nf_generalize_fig2_continue400k_configs.py \
   --project-dir "${PROJECT_DIR}" \
   --include-u128-pending \
-  --total-updates "${TOTAL_UPDATES}"
+  --total-updates "${TOTAL_UPDATES}" \
+  --checkpoint-every-n-epochs "${CHECKPOINT_EVERY_N_EPOCHS}"
 
 "${PYTHON_BIN}" scripts/prepare_nf_generalize_fig2_continue400k_configs.py \
   --project-dir "${PROJECT_DIR}" \
   --check-only \
   --run-name "${RUN_NAME}" \
-  --total-updates "${TOTAL_UPDATES}"
+  --total-updates "${TOTAL_UPDATES}" \
+  --checkpoint-every-n-epochs "${CHECKPOINT_EVERY_N_EPOCHS}"
 
 echo "Continuing ${RUN_NAME}"
 echo "  config:        ${CONFIG_PATH}"
 echo "  checkpoints:   ${CHECKPOINT_DIR}"
 echo "  total target:  about ${TOTAL_UPDATES} optimizer updates"
+echo "  checkpointing: every ${CHECKPOINT_EVERY_N_EPOCHS} epoch(s)"
 echo "  walltime:      24:00:00"
 echo "  cosmodiff:     ${COSMODIFF_DIR}"
 echo "  python:        ${PYTHON_BIN}"
