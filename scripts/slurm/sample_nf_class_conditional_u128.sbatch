@@ -208,6 +208,7 @@ trap 'rmdir "${PATCH_LOCK}" 2>/dev/null || true' EXIT
 "${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_package_metadata.py" "${COSMODIFF_DIR}"
 "${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_direct_unet_checkpoint.py" "${COSMODIFF_DIR}"
 "${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_sampling_compat.py" "${COSMODIFF_DIR}"
+"${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_multinorm_labels.py" "${COSMODIFF_DIR}"
 rmdir "${PATCH_LOCK}" 2>/dev/null || true
 trap - EXIT
 
