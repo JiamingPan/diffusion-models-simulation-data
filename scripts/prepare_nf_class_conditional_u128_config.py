@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,8 @@ CHECKPOINT_EVERY_UPDATES = 20_000
 SAMPLE_N = 512
 BATCH_SIZE = 32
 RUN_VARIANT = "logfloor"
+PER_FIELD_RUN_VARIANT = "logfloor_perfieldnorm"
+NORMALIZATION_MODES = {"shared", "per-field", "per_field"}
 
 
 def parse_fields(value: str) -> list[str]:
@@ -53,9 +56,24 @@ def dataset_slug(fields: list[str], n_train_sims: int) -> str:
     return f"{field_slug}_lh_z0p0_n{n_train_sims}"
 
 
-def run_name(fields: list[str] | None = None, n_train_sims: int = N_TRAIN_SIMS) -> str:
+def normalize_mode(value: str | None) -> str:
+    mode = (value or os.environ.get("NF_CLASS_NORMALIZATION_MODE", "shared")).strip().lower()
+    if mode not in NORMALIZATION_MODES:
+        raise ValueError(f"Unknown normalization mode {value!r}; use shared or per-field.")
+    return "per-field" if mode == "per_field" else mode
+
+
+def run_variant(normalization_mode: str | None = None) -> str:
+    return PER_FIELD_RUN_VARIANT if normalize_mode(normalization_mode) == "per-field" else RUN_VARIANT
+
+
+def run_name(
+    fields: list[str] | None = None,
+    n_train_sims: int = N_TRAIN_SIMS,
+    normalization_mode: str | None = None,
+) -> str:
     fields = fields or FIELDS
-    return f"nf_class_u128_{dataset_slug(fields, n_train_sims)}_{RUN_VARIANT}_200k"
+    return f"nf_class_u128_{dataset_slug(fields, n_train_sims)}_{run_variant(normalization_mode)}_200k"
 
 
 def image_path(data_root: str | Path, field: str) -> Path:
@@ -88,8 +106,9 @@ def write_labels(
     fields: list[str],
     n_train_sims: int,
     sample_n: int,
+    normalization_mode: str,
 ) -> dict[str, Any]:
-    name = run_name(fields, n_train_sims)
+    name = run_name(fields, n_train_sims, normalization_mode)
     label_dir = project_dir / "local" / SWEEP_NAME / "labels"
     label_dir.mkdir(parents=True, exist_ok=True)
 
@@ -130,9 +149,30 @@ def build_config(
     n_train_sims: int,
     sample_n: int,
     label_paths: dict[str, Any],
+    normalization_mode: str,
 ) -> dict[str, Any]:
-    name = run_name(fields, n_train_sims)
+    name = run_name(fields, n_train_sims, normalization_mode)
     n_classes = len(fields)
+    base_norm_kwargs = {
+        "center": None,
+        "xmax": None,
+        "alpha": 0.8,
+        "beta": 10.0,
+        "delta": 1.0,
+        "gamma": 1.0,
+        "sigma": 1.5,
+    }
+    if normalize_mode(normalization_mode) == "per-field":
+        # cosmodiff MultiNormalization fits one normalization object per
+        # img_path/class. This keeps sparse Mstar from sharing Mcdm/HI/Mgas
+        # scaling statistics.
+        normalization: str | list[str] = ["tanh"] * n_classes
+        norm_kwargs: dict[str, Any] | list[dict[str, Any]] = [dict(base_norm_kwargs) for _ in fields]
+        transform: list[str] | list[list[str]] = [["log"] for _ in fields]
+    else:
+        normalization = "tanh"
+        norm_kwargs = base_norm_kwargs
+        transform = ["log"]
     return {
         "global": {
             "device": "cuda",
@@ -151,17 +191,9 @@ def build_config(
             "n_samples": [int(n_train_sims)] * n_classes,
             "seed": None,
             "keep_on_cpu": True,
-            "normalization": "tanh",
-            "norm_kwargs": {
-                "center": None,
-                "xmax": None,
-                "alpha": 0.8,
-                "beta": 10.0,
-                "delta": 1.0,
-                "gamma": 1.0,
-                "sigma": 1.5,
-            },
-            "transform": ["log"],
+            "normalization": normalization,
+            "norm_kwargs": norm_kwargs,
+            "transform": transform,
         },
         "model": {
             "class": "UNet2DModel",
@@ -262,8 +294,10 @@ def manifest_row(
     n_train_sims: int,
     sample_n: int,
     label_paths: dict[str, Any],
+    normalization_mode: str,
 ) -> dict[str, Any]:
-    name = run_name(fields, n_train_sims)
+    mode = normalize_mode(normalization_mode)
+    name = run_name(fields, n_train_sims, mode)
     n_classes = len(fields)
     spe = steps_per_epoch(n_train_sims, n_classes)
     epochs = epochs_for(n_train_sims, n_classes)
@@ -291,6 +325,8 @@ def manifest_row(
         "checkpoint_every_n_epochs": int(checkpoint_epochs_for(n_train_sims, n_classes)),
         "batch_size": BATCH_SIZE,
         "conditioning": "discrete",
+        "normalization_mode": mode,
+        "normalization_scope": "per field class" if mode == "per-field" else "shared across all field classes",
         "condition_dim": 1,
         "num_classes": n_classes,
         "num_class_embeds": n_classes + 1,
@@ -305,7 +341,8 @@ def manifest_row(
         "sample_path": f"results/{SWEEP_NAME}/samples/{name}_seed{{seed}}_raw_class_conditional.npz",
         "note": (
             "Discrete field-class conditional run requested by Nick; no cosmology-parameter conditioning. "
-            "Uses a safe log floor in cosmo_diffusion to avoid non-finite zero-valued field voxels."
+            "Uses a safe log floor in cosmo_diffusion to avoid non-finite zero-valued field voxels. "
+            f"Normalization mode: {mode}."
         ),
     }
 
@@ -326,6 +363,23 @@ def assert_config(config_path: Path, row: dict[str, Any]) -> None:
         "generate.labels": config["generate"].get("labels") == row["sample_label_path"],
         "data.label_path": config["data"].get("label_path") == row["train_label_paths"],
     }
+    if row.get("normalization_mode") == "per-field":
+        checks.update(
+            {
+                "data.normalization.per_field": config["data"].get("normalization") == ["tanh"] * row["num_classes"],
+                "data.norm_kwargs.per_field": isinstance(config["data"].get("norm_kwargs"), list)
+                and len(config["data"].get("norm_kwargs")) == row["num_classes"],
+                "data.transform.per_field": config["data"].get("transform") == [["log"]] * row["num_classes"],
+            }
+        )
+    else:
+        checks.update(
+            {
+                "data.normalization.shared": config["data"].get("normalization") == "tanh",
+                "data.norm_kwargs.shared": isinstance(config["data"].get("norm_kwargs"), dict),
+                "data.transform.shared": config["data"].get("transform") == ["log"],
+            }
+        )
     failed.extend(name for name, ok in checks.items() if not ok)
     for field, class_id, arr in zip(row["fields"], range(row["num_classes"]), labels):
         if not np.issubdtype(arr.dtype, np.integer):
@@ -354,6 +408,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fields", default=",".join(FIELDS), help="Comma-separated field classes.")
     parser.add_argument("--n-train-sims", type=int, default=N_TRAIN_SIMS)
     parser.add_argument("--sample-n", type=int, default=SAMPLE_N)
+    parser.add_argument(
+        "--normalization-mode",
+        default=os.environ.get("NF_CLASS_NORMALIZATION_MODE", "shared"),
+        choices=["shared", "per-field", "per_field"],
+        help="Use one shared normalization, or one fitted normalization per field class.",
+    )
     parser.add_argument("--check-only", action="store_true", help="Validate existing config/labels without writing.")
     parser.add_argument("--print-runs", action="store_true", help="Print run name and exit.")
     parser.add_argument("--print-table", action="store_true", help="Print one-line run table and exit.")
@@ -367,7 +427,8 @@ def main() -> None:
     data_root = Path(args.data_root)
     checkpoint_root = Path(args.checkpoint_root)
     fields = parse_fields(args.fields)
-    name = run_name(fields, args.n_train_sims)
+    normalization_mode = normalize_mode(args.normalization_mode)
+    name = run_name(fields, args.n_train_sims, normalization_mode)
 
     if args.print_runs:
         print(name)
@@ -379,9 +440,12 @@ def main() -> None:
     if args.check_only:
         with manifest_path.open() as f:
             rows = json.load(f)
-        if len(rows) != 1:
-            raise ValueError(f"Expected one manifest row, got {len(rows)}.")
-        assert_config(config_path, rows[0])
+        if isinstance(rows, dict):
+            rows = [rows]
+        matches = [row for row in rows if row.get("run_name") == name]
+        if len(matches) != 1:
+            raise ValueError(f"Expected one manifest row for {name}, got {len(matches)}.")
+        assert_config(config_path, matches[0])
         print(f"Validated {SWEEP_NAME} config.")
         return
 
@@ -395,6 +459,7 @@ def main() -> None:
         fields=fields,
         n_train_sims=args.n_train_sims,
         sample_n=args.sample_n,
+        normalization_mode=normalization_mode,
     )
     config = build_config(
         data_root=data_root,
@@ -403,6 +468,7 @@ def main() -> None:
         n_train_sims=args.n_train_sims,
         sample_n=args.sample_n,
         label_paths=label_paths,
+        normalization_mode=normalization_mode,
     )
     row = manifest_row(
         data_root=data_root,
@@ -411,12 +477,14 @@ def main() -> None:
         n_train_sims=args.n_train_sims,
         sample_n=args.sample_n,
         label_paths=label_paths,
+        normalization_mode=normalization_mode,
     )
 
     if args.print_table:
         cols = [
             "run_name",
             "fields",
+            "normalization_mode",
             "dataset_size",
             "steps_per_epoch",
             "epochs",
@@ -434,8 +502,15 @@ def main() -> None:
     print(f"Wrote {config_path}")
 
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    existing_rows: list[dict[str, Any]] = []
+    if manifest_path.exists():
+        with manifest_path.open() as f:
+            loaded = json.load(f)
+        existing_rows = [loaded] if isinstance(loaded, dict) else list(loaded)
+    rows = [existing for existing in existing_rows if existing.get("run_name") != row["run_name"]]
+    rows.append(row)
     with manifest_path.open("w") as f:
-        json.dump([row], f, indent=2)
+        json.dump(rows, f, indent=2)
         f.write("\n")
     print(f"Wrote {manifest_path}")
     print(f"Wrote labels under {project_dir / 'local' / SWEEP_NAME / 'labels'}")

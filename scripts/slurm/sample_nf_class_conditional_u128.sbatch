@@ -31,6 +31,11 @@ SEED=${SEED:-123}
 NUM_SAMPLES=${NUM_SAMPLES:-512}
 BATCH_SIZE=${BATCH_SIZE:-8}
 OVERWRITE=${OVERWRITE:-0}
+SAMPLE_LABEL=${SAMPLE_LABEL:-raw_class_conditional}
+LABELS_OVERRIDE=${LABELS_OVERRIDE:-}
+CLASS_LABEL=${CLASS_LABEL:-}
+SAMPLER_CLASS=${SAMPLER_CLASS:-}
+SAMPLER_STEPS=${SAMPLER_STEPS:-}
 REQUIRED_COSMODIFF_BRANCH=${REQUIRED_COSMODIFF_BRANCH:-main}
 
 cd "${PROJECT_DIR}"
@@ -49,7 +54,13 @@ set_nf_class_conditional_pythonpath "${PYTHON_BIN}" "${BASE_VENV_PATH}"
 RUN_NAME=$("${PYTHON_BIN}" scripts/prepare_nf_class_conditional_u128_config.py --project-dir "${PROJECT_DIR}" --print-runs)
 CONFIG_PATH="${PROJECT_DIR}/local/nf_class_conditional_u128/configs/${RUN_NAME}.yaml"
 CHECKPOINT_DIR="/scratch/huterer_root/huterer0/jiamingp/saved_runs/nf_class_conditional_u128/${RUN_NAME}_checkpoints"
-OUTPUT_PATH="${PROJECT_DIR}/results/nf_class_conditional_u128/samples/${RUN_NAME}_seed${SEED}_raw_class_conditional.npz"
+if [[ -n "${CLASS_LABEL}" ]]; then
+  LABELS_OVERRIDE="${CLASS_LABEL}"
+  if [[ "${SAMPLE_LABEL}" == "raw_class_conditional" ]]; then
+    SAMPLE_LABEL="raw_class${CLASS_LABEL}_same_seed"
+  fi
+fi
+OUTPUT_PATH="${PROJECT_DIR}/results/nf_class_conditional_u128/samples/${RUN_NAME}_seed${SEED}_${SAMPLE_LABEL}.npz"
 "${PYTHON_BIN}" scripts/prepare_nf_class_conditional_u128_config.py --project-dir "${PROJECT_DIR}"
 
 STUB_ROOT="${PROJECT_DIR}/results/cache/python_stubs"
@@ -220,8 +231,26 @@ echo "  config:          ${CONFIG_PATH}"
 echo "  output:          ${OUTPUT_PATH}"
 echo "  samples:         ${NUM_SAMPLES}"
 echo "  batch:           ${BATCH_SIZE}"
+echo "  sample label:    ${SAMPLE_LABEL}"
+if [[ -n "${LABELS_OVERRIDE}" ]]; then
+  echo "  labels override: ${LABELS_OVERRIDE}"
+fi
+if [[ -n "${SAMPLER_CLASS}" ]]; then
+  echo "  sampler:         ${SAMPLER_CLASS}, steps=${SAMPLER_STEPS:-default}"
+fi
 echo "  cosmodiff:       ${COSMODIFF_DIR}"
 echo "  venv:            ${VENV_PATH}"
+
+EXTRA_SAMPLE_ARGS=()
+if [[ -n "${LABELS_OVERRIDE}" ]]; then
+  EXTRA_SAMPLE_ARGS+=(--labels "${LABELS_OVERRIDE}")
+fi
+if [[ -n "${SAMPLER_CLASS}" ]]; then
+  EXTRA_SAMPLE_ARGS+=(--scheduler "${SAMPLER_CLASS}")
+fi
+if [[ -n "${SAMPLER_STEPS}" ]]; then
+  EXTRA_SAMPLE_ARGS+=(--num_steps "${SAMPLER_STEPS}")
+fi
 
 "${PYTHON_BIN}" "${COSMODIFF_DIR}/scripts/cosmodiff_sample.py" \
   --config "${CONFIG_PATH}" \
@@ -230,4 +259,5 @@ echo "  venv:            ${VENV_PATH}"
   --batch_size "${BATCH_SIZE}" \
   --seed "${SEED}" \
   --device cuda \
-  --verbose
+  --verbose \
+  "${EXTRA_SAMPLE_ARGS[@]}"
