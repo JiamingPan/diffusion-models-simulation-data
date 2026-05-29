@@ -714,6 +714,23 @@ def main() -> None:
     )
     pca_evr_sum = float(np.sum(encoder.explained_variance_ratio))
     print(f"PCA rank={len(encoder.explained_variance_ratio)} explained_variance_sum={pca_evr_sum:.4f}")
+    mode_strength = np.sqrt(np.maximum(encoder.explained_variance_ratio, 0.0))
+    mode_path = table_dir / f"{args.out_prefix}_mode_norms.csv"
+    pd.DataFrame(
+        {
+            "component": np.arange(1, len(encoder.explained_variance_ratio) + 1, dtype=np.int32),
+            "explained_variance_ratio": encoder.explained_variance_ratio.astype(np.float64),
+            "sqrt_explained_variance_ratio": mode_strength.astype(np.float64),
+            "cumulative_explained_variance": np.cumsum(encoder.explained_variance_ratio).astype(np.float64),
+            "pca_rank": int(len(encoder.explained_variance_ratio)),
+            "pca_explained_variance_sum": pca_evr_sum,
+            "pca_fit_run_name": fit_row["run_name"],
+            "pca_fit_dataset_size": int(fit_row["dataset_size"]),
+            "pca_fit_max_slices": int(args.pca_fit_max_slices),
+            "pca_target_variance": float(args.pca_target_variance),
+        }
+    ).to_csv(mode_path, index=False)
+    print("wrote", mode_path)
     if args.pca_fit_only:
         print("PCA fit-only requested; exiting before nearest-neighbor scoring.")
         return
