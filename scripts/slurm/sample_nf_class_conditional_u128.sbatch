@@ -37,6 +37,7 @@ CLASS_LABEL=${CLASS_LABEL:-}
 SAMPLER_CLASS=${SAMPLER_CLASS:-}
 SAMPLER_STEPS=${SAMPLER_STEPS:-}
 REQUIRED_COSMODIFF_BRANCH=${REQUIRED_COSMODIFF_BRANCH:-main}
+CLASS_LABEL_FROM_ARRAY=${CLASS_LABEL_FROM_ARRAY:-1}
 
 cd "${PROJECT_DIR}"
 source "${PROJECT_DIR}/scripts/nf_class_conditional_pythonpath.sh"
@@ -54,10 +55,15 @@ set_nf_class_conditional_pythonpath "${PYTHON_BIN}" "${BASE_VENV_PATH}"
 RUN_NAME=$("${PYTHON_BIN}" scripts/prepare_nf_class_conditional_u128_config.py --project-dir "${PROJECT_DIR}" --print-runs)
 CONFIG_PATH="${PROJECT_DIR}/local/nf_class_conditional_u128/configs/${RUN_NAME}.yaml"
 CHECKPOINT_DIR="/scratch/huterer_root/huterer0/jiamingp/saved_runs/nf_class_conditional_u128/${RUN_NAME}_checkpoints"
+if [[ -z "${CLASS_LABEL}" && "${CLASS_LABEL_FROM_ARRAY}" == "1" && -n "${SLURM_ARRAY_TASK_ID:-}" ]]; then
+  CLASS_LABEL="${SLURM_ARRAY_TASK_ID}"
+fi
 if [[ -n "${CLASS_LABEL}" ]]; then
   LABELS_OVERRIDE="${CLASS_LABEL}"
   if [[ "${SAMPLE_LABEL}" == "raw_class_conditional" ]]; then
     SAMPLE_LABEL="raw_class${CLASS_LABEL}_same_seed"
+  elif [[ "${SAMPLE_LABEL}" == "dpm50_class_conditional" ]]; then
+    SAMPLE_LABEL="dpm50_class${CLASS_LABEL}_same_seed"
   fi
 fi
 OUTPUT_PATH="${PROJECT_DIR}/results/nf_class_conditional_u128/samples/${RUN_NAME}_seed${SEED}_${SAMPLE_LABEL}.npz"
