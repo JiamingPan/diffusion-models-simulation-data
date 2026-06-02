@@ -17,6 +17,7 @@ import argparse
 import json
 import math
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +45,34 @@ PER_FIELD_RUN_VARIANT = "logfloor_perfieldnorm"
 NORMALIZATION_MODES = {"shared", "per-field", "per_field"}
 
 
+class ManifestLock:
+    def __init__(self, path: Path, timeout_s: int = 120):
+        self.path = path
+        self.timeout_s = timeout_s
+
+    def __enter__(self) -> None:
+        deadline = time.time() + self.timeout_s
+        while True:
+            try:
+                self.path.mkdir(parents=True)
+                return None
+            except FileExistsError:
+                if time.time() >= deadline:
+                    raise TimeoutError(f"Timed out waiting for manifest lock: {self.path}")
+                time.sleep(0.25)
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        try:
+            self.path.rmdir()
+        except FileNotFoundError:
+            pass
+
+
+def env_int(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    return int(value) if value not in (None, "") else int(default)
+
+
 def parse_fields(value: str) -> list[str]:
     fields = [x.strip() for x in value.split(",") if x.strip()]
     if not fields:
@@ -67,13 +96,26 @@ def run_variant(normalization_mode: str | None = None) -> str:
     return PER_FIELD_RUN_VARIANT if normalize_mode(normalization_mode) == "per-field" else RUN_VARIANT
 
 
+def updates_slug(target_updates: int) -> str:
+    target_updates = int(target_updates)
+    if target_updates % 1_000_000 == 0:
+        return f"{target_updates // 1_000_000}m"
+    if target_updates % 1000 == 0:
+        return f"{target_updates // 1000}k"
+    return str(target_updates)
+
+
 def run_name(
     fields: list[str] | None = None,
     n_train_sims: int = N_TRAIN_SIMS,
     normalization_mode: str | None = None,
+    target_updates: int = TARGET_UPDATES,
 ) -> str:
     fields = fields or FIELDS
-    return f"nf_class_u128_{dataset_slug(fields, n_train_sims)}_{run_variant(normalization_mode)}_200k"
+    return (
+        f"nf_class_u128_{dataset_slug(fields, n_train_sims)}_"
+        f"{run_variant(normalization_mode)}_{updates_slug(target_updates)}"
+    )
 
 
 def image_path(data_root: str | Path, field: str) -> Path:
@@ -96,8 +138,12 @@ def epochs_for(n_train_sims: int, n_fields: int, target_updates: int = TARGET_UP
     return max(1, math.ceil(int(target_updates) / steps_per_epoch(n_train_sims, n_fields)))
 
 
-def checkpoint_epochs_for(n_train_sims: int, n_fields: int) -> int:
-    return max(1, round(CHECKPOINT_EVERY_UPDATES / steps_per_epoch(n_train_sims, n_fields)))
+def checkpoint_epochs_for(
+    n_train_sims: int,
+    n_fields: int,
+    checkpoint_every_updates: int = CHECKPOINT_EVERY_UPDATES,
+) -> int:
+    return max(1, round(int(checkpoint_every_updates) / steps_per_epoch(n_train_sims, n_fields)))
 
 
 def write_labels(
@@ -107,8 +153,9 @@ def write_labels(
     n_train_sims: int,
     sample_n: int,
     normalization_mode: str,
+    target_updates: int,
 ) -> dict[str, Any]:
-    name = run_name(fields, n_train_sims, normalization_mode)
+    name = run_name(fields, n_train_sims, normalization_mode, target_updates)
     label_dir = project_dir / "local" / SWEEP_NAME / "labels"
     label_dir.mkdir(parents=True, exist_ok=True)
 
@@ -150,8 +197,10 @@ def build_config(
     sample_n: int,
     label_paths: dict[str, Any],
     normalization_mode: str,
+    target_updates: int,
+    checkpoint_every_updates: int,
 ) -> dict[str, Any]:
-    name = run_name(fields, n_train_sims, normalization_mode)
+    name = run_name(fields, n_train_sims, normalization_mode, target_updates)
     n_classes = len(fields)
     base_norm_kwargs = {
         "center": None,
@@ -246,10 +295,12 @@ def build_config(
             },
         },
         "train": {
-            "num_epochs": int(epochs_for(n_train_sims, n_classes)),
+            "num_epochs": int(epochs_for(n_train_sims, n_classes, target_updates)),
             "batch_size": BATCH_SIZE,
             "shuffle": True,
-            "checkpoint_every_n_epochs": int(checkpoint_epochs_for(n_train_sims, n_classes)),
+            "checkpoint_every_n_epochs": int(
+                checkpoint_epochs_for(n_train_sims, n_classes, checkpoint_every_updates)
+            ),
             "mixed_precision": "fp16",
             "gradient_accumulation_steps": 1,
             "dataloader_num_workers": 0,
@@ -295,12 +346,14 @@ def manifest_row(
     sample_n: int,
     label_paths: dict[str, Any],
     normalization_mode: str,
+    target_updates: int,
+    checkpoint_every_updates: int,
 ) -> dict[str, Any]:
     mode = normalize_mode(normalization_mode)
-    name = run_name(fields, n_train_sims, mode)
+    name = run_name(fields, n_train_sims, mode, target_updates)
     n_classes = len(fields)
     spe = steps_per_epoch(n_train_sims, n_classes)
-    epochs = epochs_for(n_train_sims, n_classes)
+    epochs = epochs_for(n_train_sims, n_classes, target_updates)
     return {
         "run_name": name,
         "arch": "u128",
@@ -319,10 +372,12 @@ def manifest_row(
         "dataset_size": dataset_size(n_train_sims, n_classes),
         "steps_per_epoch": int(spe),
         "epochs": int(epochs),
-        "target_updates": TARGET_UPDATES,
+        "target_updates": int(target_updates),
         "actual_updates": int(spe * epochs),
-        "checkpoint_every_updates": CHECKPOINT_EVERY_UPDATES,
-        "checkpoint_every_n_epochs": int(checkpoint_epochs_for(n_train_sims, n_classes)),
+        "checkpoint_every_updates": int(checkpoint_every_updates),
+        "checkpoint_every_n_epochs": int(
+            checkpoint_epochs_for(n_train_sims, n_classes, checkpoint_every_updates)
+        ),
         "batch_size": BATCH_SIZE,
         "conditioning": "discrete",
         "normalization_mode": mode,
@@ -405,9 +460,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--project-dir", default=".", help="Repository root.")
     parser.add_argument("--data-root", default=DATA_ROOT, help="CAMELS IllustrisTNG 3d_grids directory.")
     parser.add_argument("--checkpoint-root", default=CHECKPOINT_ROOT, help="Root for saved checkpoints.")
-    parser.add_argument("--fields", default=",".join(FIELDS), help="Comma-separated field classes.")
-    parser.add_argument("--n-train-sims", type=int, default=N_TRAIN_SIMS)
-    parser.add_argument("--sample-n", type=int, default=SAMPLE_N)
+    parser.add_argument(
+        "--fields",
+        default=os.environ.get("NF_CLASS_FIELDS", ",".join(FIELDS)),
+        help="Comma-separated field classes.",
+    )
+    parser.add_argument("--n-train-sims", type=int, default=env_int("NF_CLASS_N_TRAIN_SIMS", N_TRAIN_SIMS))
+    parser.add_argument("--sample-n", type=int, default=env_int("NF_CLASS_SAMPLE_N", SAMPLE_N))
+    parser.add_argument("--target-updates", type=int, default=env_int("NF_CLASS_TARGET_UPDATES", TARGET_UPDATES))
+    parser.add_argument(
+        "--checkpoint-every-updates",
+        type=int,
+        default=env_int("NF_CLASS_CHECKPOINT_EVERY_UPDATES", CHECKPOINT_EVERY_UPDATES),
+    )
     parser.add_argument(
         "--normalization-mode",
         default=os.environ.get("NF_CLASS_NORMALIZATION_MODE", "shared"),
@@ -428,7 +493,7 @@ def main() -> None:
     checkpoint_root = Path(args.checkpoint_root)
     fields = parse_fields(args.fields)
     normalization_mode = normalize_mode(args.normalization_mode)
-    name = run_name(fields, args.n_train_sims, normalization_mode)
+    name = run_name(fields, args.n_train_sims, normalization_mode, args.target_updates)
 
     if args.print_runs:
         print(name)
@@ -460,6 +525,7 @@ def main() -> None:
         n_train_sims=args.n_train_sims,
         sample_n=args.sample_n,
         normalization_mode=normalization_mode,
+        target_updates=args.target_updates,
     )
     config = build_config(
         data_root=data_root,
@@ -469,6 +535,8 @@ def main() -> None:
         sample_n=args.sample_n,
         label_paths=label_paths,
         normalization_mode=normalization_mode,
+        target_updates=args.target_updates,
+        checkpoint_every_updates=args.checkpoint_every_updates,
     )
     row = manifest_row(
         data_root=data_root,
@@ -478,6 +546,8 @@ def main() -> None:
         sample_n=args.sample_n,
         label_paths=label_paths,
         normalization_mode=normalization_mode,
+        target_updates=args.target_updates,
+        checkpoint_every_updates=args.checkpoint_every_updates,
     )
 
     if args.print_table:
@@ -502,16 +572,22 @@ def main() -> None:
     print(f"Wrote {config_path}")
 
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    existing_rows: list[dict[str, Any]] = []
-    if manifest_path.exists():
-        with manifest_path.open() as f:
-            loaded = json.load(f)
-        existing_rows = [loaded] if isinstance(loaded, dict) else list(loaded)
-    rows = [existing for existing in existing_rows if existing.get("run_name") != row["run_name"]]
-    rows.append(row)
-    with manifest_path.open("w") as f:
-        json.dump(rows, f, indent=2)
-        f.write("\n")
+    with ManifestLock(manifest_path.with_suffix(".lock")):
+        existing_rows: list[dict[str, Any]] = []
+        if manifest_path.exists() and manifest_path.stat().st_size > 0:
+            try:
+                with manifest_path.open() as f:
+                    loaded = json.load(f)
+                existing_rows = [loaded] if isinstance(loaded, dict) else list(loaded)
+            except json.JSONDecodeError:
+                existing_rows = []
+        rows = [existing for existing in existing_rows if existing.get("run_name") != row["run_name"]]
+        rows.append(row)
+        tmp_path = manifest_path.with_suffix(f".{os.getpid()}.tmp")
+        with tmp_path.open("w") as f:
+            json.dump(rows, f, indent=2)
+            f.write("\n")
+        tmp_path.replace(manifest_path)
     print(f"Wrote {manifest_path}")
     print(f"Wrote labels under {project_dir / 'local' / SWEEP_NAME / 'labels'}")
 
