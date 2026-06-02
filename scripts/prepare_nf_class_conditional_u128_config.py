@@ -40,6 +40,7 @@ TARGET_UPDATES = 200_000
 CHECKPOINT_EVERY_UPDATES = 20_000
 SAMPLE_N = 512
 BATCH_SIZE = 32
+CFG_DROPOUT = 0.0
 RUN_VARIANT = "logfloor"
 PER_FIELD_RUN_VARIANT = "logfloor_perfieldnorm"
 NORMALIZATION_MODES = {"shared", "per-field", "per_field"}
@@ -73,6 +74,18 @@ def env_int(name: str, default: int) -> int:
     return int(value) if value not in (None, "") else int(default)
 
 
+def env_float(name: str, default: float) -> float:
+    value = os.environ.get(name)
+    return float(value) if value not in (None, "") else float(default)
+
+
+def env_optional_float(name: str) -> float | None:
+    value = os.environ.get(name)
+    if value in (None, "", "none", "None", "null", "NULL"):
+        return None
+    return float(value)
+
+
 def parse_fields(value: str) -> list[str]:
     fields = [x.strip() for x in value.split(",") if x.strip()]
     if not fields:
@@ -92,8 +105,16 @@ def normalize_mode(value: str | None) -> str:
     return "per-field" if mode == "per_field" else mode
 
 
-def run_variant(normalization_mode: str | None = None) -> str:
-    return PER_FIELD_RUN_VARIANT if normalize_mode(normalization_mode) == "per-field" else RUN_VARIANT
+def float_slug(value: float) -> str:
+    text = f"{float(value):g}".replace("-", "m").replace(".", "p")
+    return text
+
+
+def run_variant(normalization_mode: str | None = None, cfg_dropout: float = CFG_DROPOUT) -> str:
+    variant = PER_FIELD_RUN_VARIANT if normalize_mode(normalization_mode) == "per-field" else RUN_VARIANT
+    if float(cfg_dropout) > 0:
+        variant = f"{variant}_cfg{float_slug(cfg_dropout)}"
+    return variant
 
 
 def updates_slug(target_updates: int) -> str:
@@ -110,11 +131,12 @@ def run_name(
     n_train_sims: int = N_TRAIN_SIMS,
     normalization_mode: str | None = None,
     target_updates: int = TARGET_UPDATES,
+    cfg_dropout: float = CFG_DROPOUT,
 ) -> str:
     fields = fields or FIELDS
     return (
         f"nf_class_u128_{dataset_slug(fields, n_train_sims)}_"
-        f"{run_variant(normalization_mode)}_{updates_slug(target_updates)}"
+        f"{run_variant(normalization_mode, cfg_dropout)}_{updates_slug(target_updates)}"
     )
 
 
@@ -154,8 +176,9 @@ def write_labels(
     sample_n: int,
     normalization_mode: str,
     target_updates: int,
+    cfg_dropout: float,
 ) -> dict[str, Any]:
-    name = run_name(fields, n_train_sims, normalization_mode, target_updates)
+    name = run_name(fields, n_train_sims, normalization_mode, target_updates, cfg_dropout)
     label_dir = project_dir / "local" / SWEEP_NAME / "labels"
     label_dir.mkdir(parents=True, exist_ok=True)
 
@@ -199,8 +222,10 @@ def build_config(
     normalization_mode: str,
     target_updates: int,
     checkpoint_every_updates: int,
+    cfg_dropout: float,
+    guidance_scale: float | None,
 ) -> dict[str, Any]:
-    name = run_name(fields, n_train_sims, normalization_mode, target_updates)
+    name = run_name(fields, n_train_sims, normalization_mode, target_updates, cfg_dropout)
     n_classes = len(fields)
     base_norm_kwargs = {
         "center": None,
@@ -306,7 +331,7 @@ def build_config(
             "dataloader_num_workers": 0,
             "max_grad_norm": 1.0,
             "conditioning": "discrete",
-            "cfg_dropout": 0.0,
+            "cfg_dropout": float(cfg_dropout),
             "ema_sigma_rels": EMA_SIGMA_RELS,
             "ema_update_every": 1,
             "ema_burn_in": 1000,
@@ -329,7 +354,7 @@ def build_config(
             "conditioning": "discrete",
             "labels": str(label_paths["sample_label_path"]),
             "continuous_labels": None,
-            "guidance_scale": None,
+            "guidance_scale": None if guidance_scale is None else float(guidance_scale),
             "ema_sigma_rel": None,
             "seed": None,
             "device": None,
@@ -348,9 +373,11 @@ def manifest_row(
     normalization_mode: str,
     target_updates: int,
     checkpoint_every_updates: int,
+    cfg_dropout: float,
+    guidance_scale: float | None,
 ) -> dict[str, Any]:
     mode = normalize_mode(normalization_mode)
-    name = run_name(fields, n_train_sims, mode, target_updates)
+    name = run_name(fields, n_train_sims, mode, target_updates, cfg_dropout)
     n_classes = len(fields)
     spe = steps_per_epoch(n_train_sims, n_classes)
     epochs = epochs_for(n_train_sims, n_classes, target_updates)
@@ -380,11 +407,14 @@ def manifest_row(
         ),
         "batch_size": BATCH_SIZE,
         "conditioning": "discrete",
+        "cfg_dropout": float(cfg_dropout),
+        "guidance_scale": None if guidance_scale is None else float(guidance_scale),
         "normalization_mode": mode,
         "normalization_scope": "per field class" if mode == "per-field" else "shared across all field classes",
         "condition_dim": 1,
         "num_classes": n_classes,
         "num_class_embeds": n_classes + 1,
+        "null_class_id": n_classes,
         "sample_n": int(sample_n),
         "data_paths": [str(image_path(data_root, field)) for field in fields],
         "train_label_paths": [str(path) for path in label_paths["train_label_paths"]],
@@ -414,7 +444,9 @@ def assert_config(config_path: Path, row: dict[str, Any]) -> None:
         "model.class": config["model"]["class"] == "UNet2DModel",
         "model.num_class_embeds": config["model"]["kwargs"].get("num_class_embeds") == row["num_class_embeds"],
         "train.conditioning": config["train"].get("conditioning") == "discrete",
+        "train.cfg_dropout": float(config["train"].get("cfg_dropout", 0.0)) == float(row.get("cfg_dropout", 0.0)),
         "generate.conditioning": config["generate"].get("conditioning") == "discrete",
+        "generate.guidance_scale": config["generate"].get("guidance_scale") == row.get("guidance_scale"),
         "generate.labels": config["generate"].get("labels") == row["sample_label_path"],
         "data.label_path": config["data"].get("label_path") == row["train_label_paths"],
     }
@@ -469,6 +501,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sample-n", type=int, default=env_int("NF_CLASS_SAMPLE_N", SAMPLE_N))
     parser.add_argument("--target-updates", type=int, default=env_int("NF_CLASS_TARGET_UPDATES", TARGET_UPDATES))
     parser.add_argument(
+        "--cfg-dropout",
+        type=float,
+        default=env_float("NF_CLASS_CFG_DROPOUT", CFG_DROPOUT),
+        help="Classifier-free guidance dropout probability during training. Nonzero values add cfg<value> to the run name.",
+    )
+    parser.add_argument(
+        "--guidance-scale",
+        type=float,
+        default=env_optional_float("NF_CLASS_GUIDANCE_SCALE"),
+        help="Optional classifier-free guidance scale written into generate.guidance_scale.",
+    )
+    parser.add_argument(
         "--checkpoint-every-updates",
         type=int,
         default=env_int("NF_CLASS_CHECKPOINT_EVERY_UPDATES", CHECKPOINT_EVERY_UPDATES),
@@ -493,7 +537,7 @@ def main() -> None:
     checkpoint_root = Path(args.checkpoint_root)
     fields = parse_fields(args.fields)
     normalization_mode = normalize_mode(args.normalization_mode)
-    name = run_name(fields, args.n_train_sims, normalization_mode, args.target_updates)
+    name = run_name(fields, args.n_train_sims, normalization_mode, args.target_updates, args.cfg_dropout)
 
     if args.print_runs:
         print(name)
@@ -526,6 +570,7 @@ def main() -> None:
         sample_n=args.sample_n,
         normalization_mode=normalization_mode,
         target_updates=args.target_updates,
+        cfg_dropout=args.cfg_dropout,
     )
     config = build_config(
         data_root=data_root,
@@ -537,6 +582,8 @@ def main() -> None:
         normalization_mode=normalization_mode,
         target_updates=args.target_updates,
         checkpoint_every_updates=args.checkpoint_every_updates,
+        cfg_dropout=args.cfg_dropout,
+        guidance_scale=args.guidance_scale,
     )
     row = manifest_row(
         data_root=data_root,
@@ -548,6 +595,8 @@ def main() -> None:
         normalization_mode=normalization_mode,
         target_updates=args.target_updates,
         checkpoint_every_updates=args.checkpoint_every_updates,
+        cfg_dropout=args.cfg_dropout,
+        guidance_scale=args.guidance_scale,
     )
 
     if args.print_table:
@@ -560,6 +609,8 @@ def main() -> None:
             "epochs",
             "actual_updates",
             "conditioning",
+            "cfg_dropout",
+            "guidance_scale",
             "num_classes",
         ]
         print("\t".join(cols))
