@@ -20,6 +20,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cosmodiff-dir", required=True, help="Expected cosmo_diffusion checkout.")
     parser.add_argument("--skip-forward", action="store_true", help="Skip the tiny CPU model forward check.")
     parser.add_argument("--require-cuda", action="store_true", help="Fail if CUDA is not available.")
+    parser.add_argument(
+        "--allow-cfg",
+        action="store_true",
+        help="Allow nonzero CFG settings for explicit CFG/guidance ablation configs.",
+    )
     return parser.parse_args()
 
 
@@ -131,10 +136,11 @@ def main() -> None:
         raise ValueError(f"Expected UNet2DConditionModel, got {cfg['model']['class']}")
     if cfg["train"].get("conditioning") != "continuous":
         raise ValueError(f"Expected train.conditioning=continuous, got {cfg['train'].get('conditioning')}")
-    if cfg["train"].get("cfg_dropout") != 0.0:
-        raise ValueError(f"Expected CFG off for v1, got cfg_dropout={cfg['train'].get('cfg_dropout')}")
-    if cfg["generate"].get("guidance_scale") is not None:
-        raise ValueError(f"Expected guidance_scale=None for v1, got {cfg['generate'].get('guidance_scale')}")
+    if not args.allow_cfg:
+        if cfg["train"].get("cfg_dropout") != 0.0:
+            raise ValueError(f"Expected CFG off for v1, got cfg_dropout={cfg['train'].get('cfg_dropout')}")
+        if cfg["generate"].get("guidance_scale") is not None:
+            raise ValueError(f"Expected guidance_scale=None for v1, got {cfg['generate'].get('guidance_scale')}")
 
     image_path = require_file(cfg["data"]["img_path"], "training image array")
     label_path = require_file(cfg["data"]["label_path"], "training label array")

@@ -25,6 +25,21 @@ SWEEP_NAME = "nf_conditional_bias_probe"
 DEFAULT_ENCODER_PATH = "results/nf_conditional_bias_probe/encoder/frozen_pca_ridge_encoder.npz"
 
 
+def parse_guidance_scale(value: str | None) -> float | None:
+    if value is None:
+        return None
+    cleaned = str(value).strip().lower()
+    if cleaned in {"", "none", "null", "noguidance", "no_guidance"}:
+        return None
+    return float(cleaned)
+
+
+def guidance_label(guidance_scale: float | None) -> str:
+    if guidance_scale is None:
+        return "noguidance"
+    return f"g{float(guidance_scale):.3f}".rstrip("0").rstrip(".").replace(".", "p")
+
+
 @dataclass
 class Encoder:
     pca: FrozenPCA
@@ -56,8 +71,17 @@ def selected_rows(rows: list[dict[str, Any]], run_names: list[str] | None) -> li
     return sorted(rows, key=lambda row: int(row["dataset_size"]))
 
 
-def output_path_for(project_dir: Path, row: dict[str, Any], seed: int, k: int) -> Path:
-    return project_dir / str(row["sample_path"]).format(seed=seed, sample_label="dpm50", k=k)
+def output_path_for(project_dir: Path, row: dict[str, Any], seed: int, k: int, guidance_scale: float | None) -> Path:
+    raw = str(row["sample_path"])
+    label = guidance_label(guidance_scale)
+    try:
+        rel = raw.format(seed=seed, sample_label="dpm50", k=k, guidance=label)
+    except KeyError:
+        rel = raw.format(seed=seed, sample_label="dpm50", k=k)
+    path = project_dir / rel
+    if guidance_scale is not None and "{guidance}" not in raw:
+        path = path.with_name(f"{path.stem}_{label}{path.suffix}")
+    return path
 
 
 def load_encoder(project_dir: Path, encoder_path: Path) -> Encoder:
@@ -109,8 +133,9 @@ def evaluate_run(
     seed: int,
     k: int,
     embedding_batch_size: int,
+    guidance_scale: float | None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    sample_path = output_path_for(project_dir, row, seed, k)
+    sample_path = output_path_for(project_dir, row, seed, k, guidance_scale)
     if not sample_path.exists():
         raise FileNotFoundError(sample_path)
     with np.load(sample_path, allow_pickle=True) as data:
@@ -137,6 +162,9 @@ def evaluate_run(
                         "run_name": row["run_name"],
                         "regime": row["regime"],
                         "dataset_size": int(row["dataset_size"]),
+                        "cfg_dropout": float(row.get("cfg_dropout", 0.0)),
+                        "guidance_scale": np.nan if guidance_scale is None else float(guidance_scale),
+                        "guidance_label": guidance_label(guidance_scale),
                         "heldout_sim": int(sim_idx),
                         "seed_index": int(s),
                         "parameter": name,
@@ -153,6 +181,9 @@ def evaluate_run(
                     "run_name": row["run_name"],
                     "regime": row["regime"],
                     "dataset_size": int(row["dataset_size"]),
+                    "cfg_dropout": float(row.get("cfg_dropout", 0.0)),
+                    "guidance_scale": np.nan if guidance_scale is None else float(guidance_scale),
+                    "guidance_label": guidance_label(guidance_scale),
                     "heldout_sim": int(sim_idx),
                     "parameter": name,
                     "theta_in": float(theta_raw[h, p]),
@@ -168,8 +199,8 @@ def evaluate_run(
 
 def slope_table(points: pd.DataFrame, n_boot: int, seed: int) -> pd.DataFrame:
     rows = []
-    for (regime, run_name, dataset_size, parameter), sub in points.groupby(
-        ["regime", "run_name", "dataset_size", "parameter"], sort=False
+    for (guidance, cfg_dropout, regime, run_name, dataset_size, parameter), sub in points.groupby(
+        ["guidance_label", "cfg_dropout", "regime", "run_name", "dataset_size", "parameter"], sort=False
     ):
         x = sub["theta_in"].to_numpy(float)
         y = sub["theta_rec_median"].to_numpy(float)
@@ -180,6 +211,8 @@ def slope_table(points: pd.DataFrame, n_boot: int, seed: int) -> pd.DataFrame:
                 "regime": regime,
                 "run_name": run_name,
                 "dataset_size": int(dataset_size),
+                "cfg_dropout": float(cfg_dropout),
+                "guidance_label": guidance,
                 "parameter": parameter,
                 "slope": slope,
                 "slope_ci16": lo,
@@ -207,7 +240,7 @@ def plot_calibration(points: pd.DataFrame, slopes: pd.DataFrame, out: Path) -> N
         lo -= pad
         hi += pad
         ax.plot([lo, hi], [lo, hi], color="black", lw=1.6, ls="--", alpha=0.75, label="ideal")
-        for regime, sub in sub_param.groupby("regime", sort=False):
+        for (regime, run_name, cfg_dropout), sub in sub_param.groupby(["regime", "run_name", "cfg_dropout"], sort=False):
             color = colors.get(regime, "#333333")
             y = sub["theta_rec_median"].to_numpy(float)
             yerr = np.vstack([
@@ -224,9 +257,13 @@ def plot_calibration(points: pd.DataFrame, slopes: pd.DataFrame, out: Path) -> N
                 capsize=2.5,
                 color=color,
                 alpha=0.86,
-                label=regime,
+                label=f"{regime} cfg={float(cfg_dropout):g}",
             )
-            slope_row = slopes[(slopes["parameter"] == param) & (slopes["regime"] == regime)]
+            slope_row = slopes[
+                (slopes["parameter"] == param)
+                & (slopes["regime"] == regime)
+                & (slopes["run_name"] == run_name)
+            ]
             if not slope_row.empty:
                 slope = float(slope_row["slope"].iloc[0])
                 intercept = float(slope_row["intercept"].iloc[0])
@@ -257,6 +294,11 @@ def main() -> None:
     parser.add_argument("--embedding-batch-size", type=int, default=512)
     parser.add_argument("--bootstrap", type=int, default=1000)
     parser.add_argument("--output-dir", type=Path)
+    parser.add_argument(
+        "--guidance-scale",
+        action="append",
+        help="Optional CFG guidance scale to evaluate. May be repeated; use 'none' for no guidance.",
+    )
     args = parser.parse_args()
 
     project_dir = Path(args.project_dir).resolve()
@@ -267,21 +309,24 @@ def main() -> None:
     encoder = load_encoder(project_dir, encoder_path)
     output_dir = args.output_dir or project_dir / "results" / SWEEP_NAME / "calibration"
     output_dir.mkdir(parents=True, exist_ok=True)
+    guidance_scales = [parse_guidance_scale(x) for x in args.guidance_scale] if args.guidance_scale else [None]
 
     sample_tables = []
     point_tables = []
     for row in rows:
         k = int(args.samples_per_cosmology or row.get("heldout_samples_per_cosmology", 64))
-        sample_df, point_df = evaluate_run(
-            project_dir=project_dir,
-            row=row,
-            encoder=encoder,
-            seed=args.seed,
-            k=k,
-            embedding_batch_size=args.embedding_batch_size,
-        )
-        sample_tables.append(sample_df)
-        point_tables.append(point_df)
+        for guidance_scale in guidance_scales:
+            sample_df, point_df = evaluate_run(
+                project_dir=project_dir,
+                row=row,
+                encoder=encoder,
+                seed=args.seed,
+                k=k,
+                embedding_batch_size=args.embedding_batch_size,
+                guidance_scale=guidance_scale,
+            )
+            sample_tables.append(sample_df)
+            point_tables.append(point_df)
 
     samples = pd.concat(sample_tables, ignore_index=True)
     points = pd.concat(point_tables, ignore_index=True)
@@ -293,7 +338,16 @@ def main() -> None:
     samples.to_csv(samples_path, index=False)
     points.to_csv(points_path, index=False)
     slopes.to_csv(slopes_path, index=False)
-    plot_calibration(points, slopes, output_dir / "bias_probe_calibration_recovered_vs_input.png")
+    if points["guidance_label"].nunique() == 1:
+        plot_calibration(points, slopes, output_dir / "bias_probe_calibration_recovered_vs_input.png")
+    else:
+        for label, sub_points in points.groupby("guidance_label", sort=False):
+            sub_slopes = slopes[slopes["guidance_label"] == label]
+            plot_calibration(
+                sub_points,
+                sub_slopes,
+                output_dir / f"bias_probe_calibration_recovered_vs_input_{label}.png",
+            )
 
     metadata = {
         "encoder_path": str(encoder_path),
@@ -302,6 +356,7 @@ def main() -> None:
         "pca_rank": encoder.pca.rank,
         "pca_explained_variance_sum": encoder.pca.explained_variance_sum,
         "param_names": PARAM_NAMES,
+        "guidance_labels": sorted(points["guidance_label"].unique().tolist()),
     }
     (output_dir / "bias_probe_eval_metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
 
