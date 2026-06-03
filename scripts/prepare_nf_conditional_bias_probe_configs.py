@@ -31,6 +31,7 @@ from prepare_nf_conditional_u128_config import (
     DATASET,
     FIELD,
     PARAM_NAMES,
+    format_parameter_column_summary,
     REDSHIFT,
     RESOLUTION,
     SIM,
@@ -470,6 +471,7 @@ def main() -> None:
     print(f"Wrote {manifest_path}")
     print("heldout simulations:", ",".join(str(int(x)) for x in heldout))
     print("parameter order:", ",".join(PARAM_NAMES))
+    print(format_parameter_column_summary(raw_params_all))
 
     if args.print_table:
         cols = ["run_name", "regime", "dataset_size", "steps_per_epoch", "epochs", "actual_updates", "checkpoint_every_n_epochs"]

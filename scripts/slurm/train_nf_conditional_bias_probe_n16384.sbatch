@@ -23,12 +23,18 @@ BIAS_PREPARE_IN_TRAIN=${BIAS_PREPARE_IN_TRAIN:-1}
 PREPARED_DATA_ROOT=${PREPARED_DATA_ROOT:-/scratch/huterer_root/huterer0/jiamingp/saved_runs/nf_conditional_bias_probe/prepared_data}
 
 cd "${PROJECT_DIR}"
-mkdir -p logs/nf_conditional_bias_probe
+mkdir -p logs/nf_conditional_bias_probe results/cache/python_stubs
 if [[ -f "${VENV_PATH}/bin/activate" ]]; then
   source "${VENV_PATH}/bin/activate"
 fi
 
-export PYTHONPATH="${COSMODIFF_DIR}:${PROJECT_DIR}:${PYTHONPATH:-}"
+STUB_ROOT="${PROJECT_DIR}/results/cache/python_stubs"
+mkdir -p "${STUB_ROOT}/sklearn/metrics"
+printf 'from . import metrics\n' > "${STUB_ROOT}/sklearn/__init__.py"
+printf "def roc_curve(*args, **kwargs):\n    raise RuntimeError('sklearn.metrics.roc_curve is stubbed for cosmodiff training')\n" > "${STUB_ROOT}/sklearn/metrics/__init__.py"
+"${PYTHON_BIN}" scripts/write_diffusers_runtime_sitecustomize.py "${STUB_ROOT}/sitecustomize.py"
+
+export PYTHONPATH="${STUB_ROOT}:${COSMODIFF_DIR}:${PROJECT_DIR}:${PYTHONPATH:-}"
 export COSMODIFF_DIR
 export TORCHDYNAMO_DISABLE=1
 

@@ -39,6 +39,69 @@ TARGET_UPDATES = 200_000
 CHECKPOINT_EVERY_UPDATES = 20_000
 SAMPLE_N = 512
 PARAM_NAMES = ["Omega_m", "sigma_8", "A_SN1", "A_AGN1", "A_SN2", "A_AGN2"]
+PARAM_EXPECTED_RANGES = {
+    "Omega_m": (0.1, 0.5),
+    "sigma_8": (0.6, 1.0),
+    "A_SN1": (0.25, 4.0),
+    "A_AGN1": (0.25, 4.0),
+    "A_SN2": (0.5, 2.0),
+    "A_AGN2": (0.5, 2.0),
+}
+
+
+def parameter_column_summary(params: np.ndarray) -> list[dict[str, Any]]:
+    summary: list[dict[str, Any]] = []
+    for col, name in enumerate(PARAM_NAMES):
+        values = params[:, col].astype(np.float64, copy=False)
+        expected_min, expected_max = PARAM_EXPECTED_RANGES[name]
+        observed_min = float(np.min(values))
+        observed_max = float(np.max(values))
+        summary.append(
+            {
+                "column": int(col),
+                "name": name,
+                "min": observed_min,
+                "max": observed_max,
+                "mean": float(np.mean(values)),
+                "expected_min": float(expected_min),
+                "expected_max": float(expected_max),
+                "within_expected_range": bool(
+                    observed_min >= expected_min - 5.0e-4 and observed_max <= expected_max + 5.0e-4
+                ),
+            }
+        )
+    return summary
+
+
+def format_parameter_column_summary(params: np.ndarray) -> str:
+    lines = [
+        "CAMELS parameter column check:",
+        "  assumed order: " + ", ".join(PARAM_NAMES),
+        "  col  name       observed_min  observed_max  expected_range",
+    ]
+    for row in parameter_column_summary(params):
+        lines.append(
+            "  {column:>3d}  {name:<9s}  {min:>12.5g}  {max:>12.5g}  [{expected_min:g}, {expected_max:g}]".format(
+                **row
+            )
+        )
+    return "\n".join(lines)
+
+
+def validate_parameter_column_ranges(params: np.ndarray, path: Path) -> None:
+    bad = [row for row in parameter_column_summary(params) if not row["within_expected_range"]]
+    if bad:
+        detail = "\n".join(
+            "  column {column} as {name}: observed [{min:.6g}, {max:.6g}], expected [{expected_min:g}, {expected_max:g}]".format(
+                **row
+            )
+            for row in bad
+        )
+        raise ValueError(
+            "CAMELS parameter file failed the expected column-range check. "
+            f"This usually means the parameter order is wrong for {path}.\n{detail}\n"
+            + format_parameter_column_summary(params)
+        )
 
 
 def run_name(n_train_sims: int = N_TRAIN_SIMS) -> str:
@@ -76,7 +139,9 @@ def load_params(path: Path, n_train_sims: int) -> np.ndarray:
         )
     if len(params) < n_train_sims:
         raise ValueError(f"Requested {n_train_sims} simulations but only found {len(params)} rows in {path}.")
-    return params[:n_train_sims, :len(PARAM_NAMES)].astype(np.float32, copy=False)
+    out = params[:n_train_sims, :len(PARAM_NAMES)].astype(np.float32, copy=False)
+    validate_parameter_column_ranges(out, path)
+    return out
 
 
 def normalize_params(params: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
@@ -88,6 +153,7 @@ def normalize_params(params: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
         "param_names": PARAM_NAMES,
         "mean": mean.astype(float).tolist(),
         "std": std.astype(float).tolist(),
+        "value_ranges": parameter_column_summary(params),
         "normalization": "(raw - mean) / std",
     }
     return normed, stats
@@ -388,6 +454,7 @@ def main() -> None:
         sample_n=args.sample_n,
         check_files=args.check_files,
     )
+    raw_params = np.load(label_paths["train_raw_path"])
     config = build_config(
         project_dir=project_dir,
         data_root=data_root,
@@ -418,6 +485,7 @@ def main() -> None:
         ]
         print("\t".join(cols))
         print("\t".join(str(row[col]) for col in cols))
+        print(format_parameter_column_summary(raw_params))
         return
 
     config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -431,6 +499,7 @@ def main() -> None:
         f.write("\n")
     print(f"Wrote {manifest_path}")
     print(f"Wrote labels under {project_dir / 'local' / SWEEP_NAME / 'labels'}")
+    print(format_parameter_column_summary(raw_params))
 
 
 if __name__ == "__main__":
