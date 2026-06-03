@@ -38,6 +38,7 @@ class FrozenPCA:
     scale: np.ndarray
     components: np.ndarray
     explained_variance_ratio: np.ndarray
+    metadata: dict[str, Any] | None = None
 
     @property
     def rank(self) -> int:
@@ -157,6 +158,7 @@ def fit_pca(images: np.ndarray, n_components: int, target_variance: float) -> Fr
         scale=scale.squeeze(0).astype(np.float32, copy=False),
         components=components.astype(np.float32, copy=False),
         explained_variance_ratio=evr.astype(np.float32, copy=False),
+        metadata=None,
     )
 
 
@@ -174,12 +176,26 @@ def save_pca(path: Path, pca: FrozenPCA, metadata: dict[str, Any]) -> None:
 
 def load_pca(path: Path) -> FrozenPCA:
     with np.load(path, allow_pickle=True) as data:
+        metadata = {}
+        if "metadata" in data.files:
+            metadata_obj = data["metadata"].item()
+            if isinstance(metadata_obj, dict):
+                metadata = metadata_obj
         return FrozenPCA(
             mean=data["mean"].astype(np.float32),
             scale=data["scale"].astype(np.float32),
             components=data["components"].astype(np.float32),
             explained_variance_ratio=data["explained_variance_ratio"].astype(np.float32),
+            metadata=metadata,
         )
+
+
+def metadata_matches(pca: FrozenPCA, expected: dict[str, Any]) -> tuple[bool, str]:
+    metadata = pca.metadata or {}
+    for key in ("source", "param_names", "heldout_indices", "pca_train_sims", "normalization"):
+        if metadata.get(key) != expected.get(key):
+            return False, f"{key} mismatch"
+    return True, "ok"
 
 
 def fit_ridge(x: np.ndarray, y: np.ndarray, alpha: float) -> tuple[np.ndarray, np.ndarray]:
@@ -243,7 +259,12 @@ def main() -> None:
     parser.add_argument("--data-root", default=DATA_ROOT)
     parser.add_argument("--pca-basis", default=DEFAULT_BASIS_PATH)
     parser.add_argument("--encoder-out", default=DEFAULT_ENCODER_PATH)
-    parser.add_argument("--fit-pca-if-missing", action="store_true")
+    parser.add_argument("--fit-pca-if-missing", action="store_true", help="Deprecated; PCA is fit by default unless --reuse-existing-pca is set.")
+    parser.add_argument(
+        "--reuse-existing-pca",
+        action="store_true",
+        help="Reuse an existing PCA file only if its metadata proves it excludes the current held-out cosmologies.",
+    )
     parser.add_argument("--pca-components", type=int, default=8192)
     parser.add_argument("--pca-target-variance", type=float, default=0.98)
     parser.add_argument("--pca-fit-slices", type=int, default=16384)
@@ -281,26 +302,35 @@ def main() -> None:
 
     grid_path = image_path(args.data_root)
 
-    if basis_path.exists():
+    pca_metadata = {
+        "source": "real non-heldout HI fields",
+        "target_variance": args.pca_target_variance,
+        "pca_components_requested": int(args.pca_components),
+        "pca_fit_slices_requested": int(args.pca_fit_slices),
+        "param_names": PARAM_NAMES,
+        "heldout_indices": heldout.astype(int).tolist(),
+        "pca_train_sims": train_sims.astype(int).tolist(),
+        "pca_val_sims_excluded_from_fit": val_sims.astype(int).tolist(),
+        "normalization": norm,
+    }
+
+    if args.reuse_existing_pca and basis_path.exists():
         pca = load_pca(basis_path)
+        ok, reason = metadata_matches(pca, pca_metadata)
+        if not ok:
+            raise RuntimeError(
+                f"Refusing to reuse PCA basis {basis_path}: {reason}. "
+                "Run without --reuse-existing-pca to refit a leakage-safe basis."
+            )
         print(f"Loaded PCA basis: {basis_path}")
     else:
-        if not args.fit_pca_if_missing:
-            raise FileNotFoundError(f"{basis_path}; pass --fit-pca-if-missing to create it from real non-heldout data.")
+        if basis_path.exists() and not args.reuse_existing_pca:
+            print(f"Refitting PCA and overwriting existing basis to avoid stale-basis leakage: {basis_path}")
         pca_pairs = select_slice_pairs(train_sims, args.pca_fit_slices)
         pca_images = preprocess_real_slices(load_raw_slices(grid_path, pca_pairs), norm)
         pca = fit_pca(pca_images, args.pca_components, args.pca_target_variance)
-        save_pca(
-            basis_path,
-            pca,
-            {
-                "source": "real non-heldout HI fields",
-                "target_variance": args.pca_target_variance,
-                "param_names": PARAM_NAMES,
-                "heldout_indices": heldout.astype(int).tolist(),
-                "normalization": norm,
-            },
-        )
+        pca.metadata = pca_metadata
+        save_pca(basis_path, pca, pca_metadata)
         print(f"Wrote PCA basis: {basis_path}")
 
     train_pairs = select_slice_pairs(train_sims, args.head_train_slices)

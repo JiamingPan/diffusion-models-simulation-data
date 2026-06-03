@@ -21,6 +21,7 @@ PCA_FIT_SLICES=${PCA_FIT_SLICES:-16384}
 HEAD_TRAIN_SLICES=${HEAD_TRAIN_SLICES:-16384}
 HEAD_VAL_SLICES=${HEAD_VAL_SLICES:-4096}
 RIDGE_ALPHA=${RIDGE_ALPHA:-10.0}
+REUSE_EXISTING_PCA=${REUSE_EXISTING_PCA:-0}
 
 cd "${PROJECT_DIR}"
 mkdir -p logs/nf_conditional_bias_probe results/cache/matplotlib
@@ -33,12 +34,17 @@ export MPLCONFIGDIR="${PROJECT_DIR}/results/cache/matplotlib"
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 
+reuse_args=()
+if [[ "${REUSE_EXISTING_PCA}" == "1" ]]; then
+  reuse_args+=(--reuse-existing-pca)
+fi
+
 "${PYTHON_BIN}" scripts/train_nf_conditional_bias_encoder.py \
   --project-dir "${PROJECT_DIR}" \
-  --fit-pca-if-missing \
   --pca-components "${PCA_COMPONENTS}" \
   --pca-target-variance "${PCA_TARGET_VARIANCE}" \
   --pca-fit-slices "${PCA_FIT_SLICES}" \
   --head-train-slices "${HEAD_TRAIN_SLICES}" \
   --head-val-slices "${HEAD_VAL_SLICES}" \
-  --ridge-alpha "${RIDGE_ALPHA}"
+  --ridge-alpha "${RIDGE_ALPHA}" \
+  "${reuse_args[@]}"
