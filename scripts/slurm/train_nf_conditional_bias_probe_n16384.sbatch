@@ -12,6 +12,7 @@
 #SBATCH -A huterer2
 
 set -euo pipefail
+trap 'rc=$?; echo "[error] ${SLURM_JOB_NAME:-nf_bias_n16k} failed at line ${LINENO}: ${BASH_COMMAND} (exit ${rc})" >&2' ERR
 
 PROJECT_DIR=${PROJECT_DIR:-/home/jiamingp/diffusion_models_repo}
 COSMODIFF_DIR=${COSMODIFF_DIR_OVERRIDE:-/home/jiamingp/Diffusion_model/cosmo_diffusion_main}
@@ -20,6 +21,8 @@ PYTHON_BIN=${PYTHON_BIN:-python}
 BIAS_DATASET_SIZE=16384
 BIAS_DATASET_SIZES=${BIAS_DATASET_SIZES:-128,16384}
 BIAS_PREPARE_IN_TRAIN=${BIAS_PREPARE_IN_TRAIN:-1}
+BIAS_RUN_PREFLIGHT=${BIAS_RUN_PREFLIGHT:-1}
+BIAS_PREFLIGHT_ONLY=${BIAS_PREFLIGHT_ONLY:-0}
 PREPARED_DATA_ROOT=${PREPARED_DATA_ROOT:-/scratch/huterer_root/huterer0/jiamingp/saved_runs/nf_conditional_bias_probe/prepared_data}
 
 cd "${PROJECT_DIR}"
@@ -28,13 +31,14 @@ if [[ -f "${VENV_PATH}/bin/activate" ]]; then
   source "${VENV_PATH}/bin/activate"
 fi
 
-STUB_ROOT="${PROJECT_DIR}/results/cache/python_stubs"
+STUB_ROOT="${PROJECT_DIR}/results/cache/python_stubs/${SLURM_JOB_ID:-manual_bias_n16k}"
 mkdir -p "${STUB_ROOT}/sklearn/metrics"
 printf 'from . import metrics\n' > "${STUB_ROOT}/sklearn/__init__.py"
 printf "def roc_curve(*args, **kwargs):\n    raise RuntimeError('sklearn.metrics.roc_curve is stubbed for cosmodiff training')\n" > "${STUB_ROOT}/sklearn/metrics/__init__.py"
 "${PYTHON_BIN}" scripts/write_diffusers_runtime_sitecustomize.py "${STUB_ROOT}/sitecustomize.py"
 
 export PYTHONPATH="${STUB_ROOT}:${COSMODIFF_DIR}:${PROJECT_DIR}:${PYTHONPATH:-}"
+export COSMODIFF_STUB_SKLEARN=1
 export COSMODIFF_DIR
 export TORCHDYNAMO_DISABLE=1
 
@@ -63,6 +67,16 @@ RUN_NAME=$("${PYTHON_BIN}" scripts/prepare_nf_conditional_bias_probe_configs.py 
   --print-runs)
 CONFIG_PATH="${PROJECT_DIR}/local/nf_conditional_bias_probe/configs/${RUN_NAME}.yaml"
 
+if [[ ! -f "${CONFIG_PATH}" ]]; then
+  echo "Missing config: ${CONFIG_PATH}" >&2
+  echo "Run prepare first: sbatch -A huterer2 scripts/slurm/prepare_nf_conditional_bias_probe.sbatch" >&2
+  exit 1
+fi
+if [[ ! -f "${COSMODIFF_DIR}/scripts/cosmodiff_train.py" ]]; then
+  echo "Missing cosmodiff_train.py under ${COSMODIFF_DIR}" >&2
+  exit 1
+fi
+
 PATCH_LOCK="${COSMODIFF_DIR}/.codex_conditional_labels_patch.lock"
 while ! mkdir "${PATCH_LOCK}" 2>/dev/null; do
   sleep 1
@@ -72,6 +86,17 @@ trap 'rmdir "${PATCH_LOCK}" 2>/dev/null || true' EXIT
 "${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_direct_unet_checkpoint.py" "${COSMODIFF_DIR}"
 rmdir "${PATCH_LOCK}" 2>/dev/null || true
 trap - EXIT
+trap 'rc=$?; echo "[error] ${SLURM_JOB_NAME:-nf_bias_n16k} failed at line ${LINENO}: ${BASH_COMMAND} (exit ${rc})" >&2' ERR
+
+if [[ "${BIAS_RUN_PREFLIGHT}" == "1" ]]; then
+  "${PYTHON_BIN}" scripts/check_nf_conditional_bias_probe_runtime.py \
+    --config "${CONFIG_PATH}" \
+    --cosmodiff-dir "${COSMODIFF_DIR}"
+fi
+if [[ "${BIAS_PREFLIGHT_ONLY}" == "1" ]]; then
+  echo "BIAS_PREFLIGHT_ONLY=1; exiting before training."
+  exit 0
+fi
 
 echo "Training ${RUN_NAME}"
 echo "config: ${CONFIG_PATH}"
