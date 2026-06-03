@@ -23,6 +23,14 @@ from train_nf_conditional_bias_encoder import FrozenPCA, as_nchw, load_pca, pred
 
 SWEEP_NAME = "nf_conditional_bias_probe"
 DEFAULT_ENCODER_PATH = "results/nf_conditional_bias_probe/encoder/frozen_pca_ridge_encoder.npz"
+PARAM_DISPLAY_LABELS = {
+    "Omega_m": r"$\Omega_\mathrm{m}$",
+    "sigma_8": r"$\sigma_8$",
+    "A_SN1": r"$A_{\mathrm{SN1}}$",
+    "A_AGN1": r"$A_{\mathrm{AGN1}}$",
+    "A_SN2": r"$A_{\mathrm{SN2}}$",
+    "A_AGN2": r"$A_{\mathrm{AGN2}}$",
+}
 
 
 def parse_guidance_scale(value: str | None) -> float | None:
@@ -278,9 +286,9 @@ def plot_calibration(points: pd.DataFrame, slopes: pd.DataFrame, out: Path) -> N
                 ax.plot([lo, hi], [slope * lo + intercept, slope * hi + intercept], color=color, lw=2.8)
         ax.set_xlim(lo, hi)
         ax.set_ylim(lo, hi)
-        ax.set_title(param, fontsize=15)
-        ax.set_xlabel(r"input $\theta$")
-        ax.set_ylabel(r"recovered $\theta$")
+        ax.set_title(PARAM_DISPLAY_LABELS.get(param, param), fontsize=15)
+        ax.set_xlabel("Input value")
+        ax.set_ylabel("Recovered value")
         ax.tick_params(labelsize=12)
         for spine in ("top", "right"):
             ax.spines[spine].set_visible(False)
