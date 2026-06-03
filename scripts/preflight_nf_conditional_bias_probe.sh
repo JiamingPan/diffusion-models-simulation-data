@@ -6,14 +6,21 @@ trap 'rc=$?; echo "[error] bias preflight failed at line ${LINENO}: ${BASH_COMMA
 
 PROJECT_DIR=${PROJECT_DIR:-/home/jiamingp/diffusion_models_repo}
 COSMODIFF_DIR=${COSMODIFF_DIR_OVERRIDE:-/home/jiamingp/Diffusion_model/cosmo_diffusion_main}
-VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
+VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf_class}
+BASE_VENV_PATH=${BASE_VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
 PYTHON_BIN=${PYTHON_BIN:-python}
 
 cd "${PROJECT_DIR}"
+source "${PROJECT_DIR}/scripts/nf_class_conditional_pythonpath.sh"
 mkdir -p logs/nf_conditional_bias_probe results/cache/python_stubs
 if [[ -f "${VENV_PATH}/bin/activate" ]]; then
   source "${VENV_PATH}/bin/activate"
+else
+  echo "Missing CUDA-capable class env: ${VENV_PATH}" >&2
+  echo "Run first: bash scripts/setup_nf_class_conditional_env.sh" >&2
+  exit 1
 fi
+set_nf_class_conditional_pythonpath "${PYTHON_BIN}" "${BASE_VENV_PATH}"
 
 STUB_ROOT="${PROJECT_DIR}/results/cache/python_stubs/manual_bias_preflight_${USER:-user}_$$"
 mkdir -p "${STUB_ROOT}/sklearn/metrics"

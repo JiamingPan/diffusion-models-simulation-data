@@ -19,6 +19,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", required=True, help="Bias-probe YAML config.")
     parser.add_argument("--cosmodiff-dir", required=True, help="Expected cosmo_diffusion checkout.")
     parser.add_argument("--skip-forward", action="store_true", help="Skip the tiny CPU model forward check.")
+    parser.add_argument("--require-cuda", action="store_true", help="Fail if CUDA is not available.")
     return parser.parse_args()
 
 
@@ -99,7 +100,13 @@ def main() -> None:
     import torch
 
     print(f"[preflight] torch={torch.__version__} cuda_available={torch.cuda.is_available()}", flush=True)
+    print(f"[preflight] torch_file={Path(inspect.getsourcefile(torch)).resolve()}", flush=True)
     print(f"[preflight] torch_cuda_build={getattr(torch.version, 'cuda', None)}", flush=True)
+    if args.require_cuda and not torch.cuda.is_available():
+        raise RuntimeError(
+            "CUDA is required for this training job but torch.cuda.is_available() is false. "
+            "Use the CUDA-enabled cosmodiff_nf_class environment on a GPU node."
+        )
     print(f"[preflight] torch.xpu.exists={hasattr(torch, 'xpu')}", flush=True)
     if hasattr(torch, "xpu"):
         print(f"[preflight] torch.xpu.is_available={torch.xpu.is_available()}", flush=True)

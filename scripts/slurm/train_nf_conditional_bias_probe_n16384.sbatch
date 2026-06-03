@@ -16,7 +16,8 @@ trap 'rc=$?; echo "[error] ${SLURM_JOB_NAME:-nf_bias_n16k} failed at line ${LINE
 
 PROJECT_DIR=${PROJECT_DIR:-/home/jiamingp/diffusion_models_repo}
 COSMODIFF_DIR=${COSMODIFF_DIR_OVERRIDE:-/home/jiamingp/Diffusion_model/cosmo_diffusion_main}
-VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
+VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf_class}
+BASE_VENV_PATH=${BASE_VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
 PYTHON_BIN=${PYTHON_BIN:-python}
 BIAS_DATASET_SIZE=16384
 BIAS_DATASET_SIZES=${BIAS_DATASET_SIZES:-128,16384}
@@ -26,10 +27,16 @@ BIAS_PREFLIGHT_ONLY=${BIAS_PREFLIGHT_ONLY:-0}
 PREPARED_DATA_ROOT=${PREPARED_DATA_ROOT:-/scratch/huterer_root/huterer0/jiamingp/saved_runs/nf_conditional_bias_probe/prepared_data}
 
 cd "${PROJECT_DIR}"
+source "${PROJECT_DIR}/scripts/nf_class_conditional_pythonpath.sh"
 mkdir -p logs/nf_conditional_bias_probe results/cache/python_stubs
 if [[ -f "${VENV_PATH}/bin/activate" ]]; then
   source "${VENV_PATH}/bin/activate"
+else
+  echo "Missing CUDA training env: ${VENV_PATH}" >&2
+  echo "Run first: bash scripts/setup_nf_class_conditional_env.sh" >&2
+  exit 1
 fi
+set_nf_class_conditional_pythonpath "${PYTHON_BIN}" "${BASE_VENV_PATH}"
 
 STUB_ROOT="${PROJECT_DIR}/results/cache/python_stubs/${SLURM_JOB_ID:-manual_bias_n16k}"
 mkdir -p "${STUB_ROOT}/sklearn/metrics"
@@ -92,7 +99,8 @@ trap 'rc=$?; echo "[error] ${SLURM_JOB_NAME:-nf_bias_n16k} failed at line ${LINE
 if [[ "${BIAS_RUN_PREFLIGHT}" == "1" ]]; then
   "${PYTHON_BIN}" scripts/check_nf_conditional_bias_probe_runtime.py \
     --config "${CONFIG_PATH}" \
-    --cosmodiff-dir "${COSMODIFF_DIR}"
+    --cosmodiff-dir "${COSMODIFF_DIR}" \
+    --require-cuda
 fi
 if [[ "${BIAS_PREFLIGHT_ONLY}" == "1" ]]; then
   echo "BIAS_PREFLIGHT_ONLY=1; exiting before training."
