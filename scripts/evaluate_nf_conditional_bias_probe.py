@@ -228,7 +228,10 @@ def plot_calibration(points: pd.DataFrame, slopes: pd.DataFrame, out: Path) -> N
     out.parent.mkdir(parents=True, exist_ok=True)
     colors = {"memorization": "#d62728", "generalization": "#1f77b4"}
     markers = {"memorization": "o", "generalization": "s"}
-    fig, axes = plt.subplots(2, 3, figsize=(17, 9.5), constrained_layout=True)
+    regime_names = {"memorization": "memorization", "generalization": "generalization"}
+    show_cfg = bool(points["cfg_dropout"].nunique() > 1 or float(points["cfg_dropout"].iloc[0]) != 0.0)
+    show_guidance = bool(points["guidance_label"].nunique() > 1 or points["guidance_label"].iloc[0] != "noguidance")
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10), constrained_layout=True)
     for ax, param in zip(axes.ravel(), PARAM_NAMES):
         sub_param = points[points["parameter"] == param]
         if sub_param.empty:
@@ -242,6 +245,11 @@ def plot_calibration(points: pd.DataFrame, slopes: pd.DataFrame, out: Path) -> N
         ax.plot([lo, hi], [lo, hi], color="black", lw=1.6, ls="--", alpha=0.75, label="ideal")
         for (regime, run_name, cfg_dropout), sub in sub_param.groupby(["regime", "run_name", "cfg_dropout"], sort=False):
             color = colors.get(regime, "#333333")
+            label = regime_names.get(regime, regime)
+            if show_cfg:
+                label += f" cfg={float(cfg_dropout):g}"
+            if show_guidance:
+                label += f" {sub['guidance_label'].iloc[0]}"
             y = sub["theta_rec_median"].to_numpy(float)
             yerr = np.vstack([
                 y - sub["theta_rec_q16"].to_numpy(float),
@@ -252,12 +260,12 @@ def plot_calibration(points: pd.DataFrame, slopes: pd.DataFrame, out: Path) -> N
                 y,
                 yerr=yerr,
                 fmt=markers.get(regime, "o"),
-                ms=5.5,
-                lw=1.4,
-                capsize=2.5,
+                ms=7.0,
+                lw=1.8,
+                capsize=3.0,
                 color=color,
                 alpha=0.86,
-                label=f"{regime} cfg={float(cfg_dropout):g}",
+                label=label,
             )
             slope_row = slopes[
                 (slopes["parameter"] == param)
@@ -267,18 +275,18 @@ def plot_calibration(points: pd.DataFrame, slopes: pd.DataFrame, out: Path) -> N
             if not slope_row.empty:
                 slope = float(slope_row["slope"].iloc[0])
                 intercept = float(slope_row["intercept"].iloc[0])
-                ax.plot([lo, hi], [slope * lo + intercept, slope * hi + intercept], color=color, lw=2.2)
+                ax.plot([lo, hi], [slope * lo + intercept, slope * hi + intercept], color=color, lw=2.8)
         ax.set_xlim(lo, hi)
         ax.set_ylim(lo, hi)
-        ax.set_title(param)
+        ax.set_title(param, fontsize=15)
         ax.set_xlabel(r"input $\theta$")
         ax.set_ylabel(r"recovered $\theta$")
-        ax.tick_params(labelsize=11)
+        ax.tick_params(labelsize=12)
         for spine in ("top", "right"):
             ax.spines[spine].set_visible(False)
     handles, labels = axes[0, 0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper center", ncol=3, frameon=False, bbox_to_anchor=(0.5, 1.03))
-    fig.suptitle("Continuous HI cosmology calibration: recovered vs input parameters", y=1.08, fontsize=18)
+    fig.legend(handles, labels, loc="upper center", ncol=3, frameon=False, bbox_to_anchor=(0.5, 1.03), fontsize=13)
+    fig.suptitle("Continuous HI cosmology calibration: recovered vs input parameters", y=1.08, fontsize=22)
     fig.savefig(out, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
