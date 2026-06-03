@@ -84,6 +84,7 @@ done
 trap 'rmdir "${PATCH_LOCK}" 2>/dev/null || true' EXIT
 "${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_continuous_labels.py" "${COSMODIFF_DIR}"
 "${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_direct_unet_checkpoint.py" "${COSMODIFF_DIR}"
+"${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_numpy_compat.py" "${COSMODIFF_DIR}"
 rmdir "${PATCH_LOCK}" 2>/dev/null || true
 trap - EXIT
 trap 'rc=$?; echo "[error] ${SLURM_JOB_NAME:-nf_bias_n128} failed at line ${LINENO}: ${BASH_COMMAND} (exit ${rc})" >&2' ERR

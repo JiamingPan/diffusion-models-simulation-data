@@ -30,6 +30,18 @@ echo "[preflight-shell] python=$("${PYTHON_BIN}" -c 'import sys; print(sys.execu
 echo "[preflight-shell] project=${PROJECT_DIR}"
 echo "[preflight-shell] cosmodiff=${COSMODIFF_DIR}"
 
+PATCH_LOCK="${COSMODIFF_DIR}/.codex_bias_preflight_patch.lock"
+while ! mkdir "${PATCH_LOCK}" 2>/dev/null; do
+  sleep 1
+done
+trap 'rmdir "${PATCH_LOCK}" 2>/dev/null || true' EXIT
+"${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_continuous_labels.py" "${COSMODIFF_DIR}"
+"${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_direct_unet_checkpoint.py" "${COSMODIFF_DIR}"
+"${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_numpy_compat.py" "${COSMODIFF_DIR}"
+rmdir "${PATCH_LOCK}" 2>/dev/null || true
+trap - EXIT
+trap 'rc=$?; echo "[error] bias preflight failed at line ${LINENO}: ${BASH_COMMAND} (exit ${rc})" >&2' ERR
+
 for dataset_size in 128 16384; do
   run_name=$("${PYTHON_BIN}" scripts/prepare_nf_conditional_bias_probe_configs.py \
     --project-dir "${PROJECT_DIR}" \

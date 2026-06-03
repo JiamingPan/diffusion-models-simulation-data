@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import inspect
 import os
 import sys
@@ -26,6 +27,59 @@ def require_file(path: str | Path, label: str) -> Path:
     if not p.exists():
         raise FileNotFoundError(f"Missing {label}: {p}")
     return p
+
+
+def check_cosmodiff_data_loader(cfg: dict, utils: object, project_dir: Path) -> None:
+    """Run the real cosmodiff data loader on a tiny memmap-backed config."""
+
+    image_path = Path(cfg["data"]["img_path"])
+    label_path = Path(cfg["data"]["label_path"])
+    images = np.load(image_path, mmap_mode="r")
+    labels = np.load(label_path, mmap_mode="r")
+    n = min(2, int(images.shape[0]), int(labels.shape[0]))
+    if n <= 0:
+        raise ValueError("Cannot build tiny data-loader preflight from empty arrays.")
+
+    cache_dir = project_dir / "results" / "cache" / "nf_conditional_bias_probe_preflight"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    tag = image_path.stem
+    tiny_images_path = cache_dir / f"{tag}_tiny_images.npy"
+    tiny_labels_path = cache_dir / f"{tag}_tiny_labels.npy"
+    np.save(tiny_images_path, np.asarray(images[:n], dtype=np.float32))
+    np.save(tiny_labels_path, np.asarray(labels[:n], dtype=np.float32))
+
+    tiny_cfg = copy.deepcopy(cfg)
+    tiny_cfg["global"] = dict(tiny_cfg.get("global", {}))
+    tiny_cfg["global"]["device"] = "cpu"
+    tiny_cfg["data"] = dict(tiny_cfg["data"])
+    tiny_cfg["data"].update(
+        {
+            "img_path": str(tiny_images_path),
+            "label_path": str(tiny_labels_path),
+            "reshape": None,
+            "zthin": 1,
+            "n_samples": None,
+            "seed": None,
+            "keep_on_cpu": True,
+        }
+    )
+    data_out = utils.parse_config_data(tiny_cfg)
+    dataset = data_out["data"] if isinstance(data_out, dict) else data_out
+    sample = dataset[0]
+    sample_labels = sample.get("labels")
+    if sample_labels is None:
+        raise ValueError("cosmodiff data loader returned no labels for continuous config.")
+    import torch
+
+    if not torch.is_floating_point(sample_labels):
+        raise ValueError(f"Continuous labels must be floating point after patch, got {sample_labels.dtype}.")
+    if sample_labels.numel() != 6:
+        raise ValueError(f"Expected 6 conditioning parameters, got shape {tuple(sample_labels.shape)}.")
+    print(
+        "[preflight] cosmodiff_parse_config_data_ok="
+        f"len={len(dataset)} image_shape={tuple(sample['images'].shape)} label_dtype={sample_labels.dtype}",
+        flush=True,
+    )
 
 
 def main() -> None:
@@ -89,6 +143,9 @@ def main() -> None:
     output_dir = Path(cfg["io"]["output_dir"])
     output_dir.parent.mkdir(parents=True, exist_ok=True)
     print(f"[preflight] output_dir_parent_ok={output_dir.parent}", flush=True)
+
+    project_dir = Path(os.environ.get("PROJECT_DIR", ".")).resolve()
+    check_cosmodiff_data_loader(cfg, utils, project_dir)
 
     if not args.skip_forward:
         kwargs = dict(cfg["model"]["kwargs"])
