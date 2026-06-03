@@ -19,6 +19,7 @@ VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
 PYTHON_BIN=${PYTHON_BIN:-python}
 BIAS_DATASET_SIZE=16384
 BIAS_DATASET_SIZES=${BIAS_DATASET_SIZES:-128,16384}
+BIAS_PREPARE_IN_TRAIN=${BIAS_PREPARE_IN_TRAIN:-1}
 PREPARED_DATA_ROOT=${PREPARED_DATA_ROOT:-/scratch/huterer_root/huterer0/jiamingp/saved_runs/nf_conditional_bias_probe/prepared_data}
 
 cd "${PROJECT_DIR}"
@@ -31,20 +32,24 @@ export PYTHONPATH="${COSMODIFF_DIR}:${PROJECT_DIR}:${PYTHONPATH:-}"
 export COSMODIFF_DIR
 export TORCHDYNAMO_DISABLE=1
 
-PREP_LOCK="/scratch/huterer_root/huterer0/jiamingp/saved_runs/nf_conditional_bias_probe/.prepare.lock"
-mkdir -p "$(dirname "${PREP_LOCK}")"
-while ! mkdir "${PREP_LOCK}" 2>/dev/null; do
-  sleep 5
-done
-trap 'rmdir "${PREP_LOCK}" 2>/dev/null || true' EXIT
-"${PYTHON_BIN}" scripts/prepare_nf_conditional_bias_probe_configs.py \
-  --project-dir "${PROJECT_DIR}" \
-  --prepared-data-root "${PREPARED_DATA_ROOT}" \
-  --dataset-sizes "${BIAS_DATASET_SIZES}" \
-  --write-arrays \
-  --print-table
-rmdir "${PREP_LOCK}" 2>/dev/null || true
-trap - EXIT
+if [[ "${BIAS_PREPARE_IN_TRAIN}" == "1" ]]; then
+  PREP_LOCK="/scratch/huterer_root/huterer0/jiamingp/saved_runs/nf_conditional_bias_probe/.prepare.lock"
+  mkdir -p "$(dirname "${PREP_LOCK}")"
+  while ! mkdir "${PREP_LOCK}" 2>/dev/null; do
+    sleep 5
+  done
+  trap 'rmdir "${PREP_LOCK}" 2>/dev/null || true' EXIT
+  "${PYTHON_BIN}" scripts/prepare_nf_conditional_bias_probe_configs.py \
+    --project-dir "${PROJECT_DIR}" \
+    --prepared-data-root "${PREPARED_DATA_ROOT}" \
+    --dataset-sizes "${BIAS_DATASET_SIZES}" \
+    --write-arrays \
+    --print-table
+  rmdir "${PREP_LOCK}" 2>/dev/null || true
+  trap - EXIT
+else
+  echo "Skipping prepare inside train job; expecting dependency-prepared configs/data."
+fi
 
 RUN_NAME=$("${PYTHON_BIN}" scripts/prepare_nf_conditional_bias_probe_configs.py \
   --project-dir "${PROJECT_DIR}" \
