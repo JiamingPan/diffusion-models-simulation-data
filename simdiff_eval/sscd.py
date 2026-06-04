@@ -13,13 +13,22 @@ import torch.nn.functional as F
 RenderMode = Literal["fixed", "per_image"]
 
 
+def _resolve_device(device: str | torch.device | None = None) -> torch.device:
+    if device is None or str(device).lower() == "auto":
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    resolved = torch.device(device)
+    if resolved.type == "cuda" and not torch.cuda.is_available():
+        return torch.device("cpu")
+    return resolved
+
+
 def load_sscd_torchscript(path: str | Path, device: str | torch.device | None = None) -> torch.nn.Module:
     """Load a TorchScript SSCD model.
 
     The expected model is usually ``sscd_disc_mixup.torchscript.pt`` from
     facebookresearch/sscd-copy-detection.
     """
-    device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+    device = _resolve_device(device)
     model = torch.jit.load(str(path), map_location=device)
     model.to(device)
     model.eval()
@@ -95,7 +104,7 @@ def sscd_embeddings(
     value_range: tuple[float, float] = (-1.0, 1.0),
 ) -> torch.Tensor:
     """Embed scalar fields with SSCD and return L2-normalized CPU features."""
-    device = torch.device(device or next(model.parameters()).device)
+    device = _resolve_device(device or next(model.parameters()).device)
     features: list[torch.Tensor] = []
 
     n = len(images)

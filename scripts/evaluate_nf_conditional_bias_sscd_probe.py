@@ -74,7 +74,7 @@ def load_sscd_encoder(project_dir: Path, encoder_path: Path, device: str | None)
         sscd_path = Path(str(data["sscd_path"].item())).expanduser()
         if not sscd_path.is_absolute():
             sscd_path = project_dir / sscd_path
-        run_device = device or "cuda"
+        run_device = device or "auto"
         model = load_sscd_torchscript(sscd_path, device=run_device)
         return SSCDEncoder(
             model=model,

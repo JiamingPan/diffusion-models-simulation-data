@@ -94,7 +94,7 @@ def main() -> None:
     parser.add_argument("--data-root", default=DATA_ROOT)
     parser.add_argument("--sscd-path", default=DEFAULT_SSCD_PATH)
     parser.add_argument("--encoder-out", default=DEFAULT_ENCODER_PATH)
-    parser.add_argument("--device", default="cuda")
+    parser.add_argument("--device", default="auto")
     parser.add_argument("--image-size", type=int, default=320)
     parser.add_argument("--render-mode", choices=("fixed", "per_image"), default="fixed")
     parser.add_argument("--value-min", type=float, default=-1.0)
