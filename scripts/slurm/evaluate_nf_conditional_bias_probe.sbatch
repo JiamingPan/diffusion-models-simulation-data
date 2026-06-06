@@ -13,8 +13,8 @@
 set -euo pipefail
 
 PROJECT_DIR=${PROJECT_DIR:-/home/jiamingp/diffusion_models_repo}
-VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
-PYTHON_BIN=${PYTHON_BIN:-python}
+VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf_class}
+PYTHON_BIN=${PYTHON_BIN:-${VENV_PATH}/bin/python}
 SEED=${SEED:-123}
 SAMPLES_PER_COSMOLOGY=${SAMPLES_PER_COSMOLOGY:-64}
 BOOTSTRAP=${BOOTSTRAP:-1000}
@@ -27,7 +27,8 @@ if [[ -f "${VENV_PATH}/bin/activate" ]]; then
   source "${VENV_PATH}/bin/activate"
 fi
 
-export PYTHONPATH="${PROJECT_DIR}:${PYTHONPATH:-}"
+export PYTHONNOUSERSITE=1
+export PYTHONPATH="${PROJECT_DIR}:${PROJECT_DIR}/scripts"
 export MPLCONFIGDIR="${PROJECT_DIR}/results/cache/matplotlib"
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
 export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"

@@ -14,8 +14,8 @@
 set -euo pipefail
 
 PROJECT_DIR=${PROJECT_DIR:-/home/jiamingp/diffusion_models_repo}
-VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
-PYTHON_BIN=${PYTHON_BIN:-python}
+VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf_class}
+PYTHON_BIN=${PYTHON_BIN:-${VENV_PATH}/bin/python}
 VGG_DEVICE=${VGG_DEVICE:-auto}
 VGG_WEIGHTS=${VGG_WEIGHTS:-IMAGENET1K_V1}
 VGG_IMAGE_SIZE=${VGG_IMAGE_SIZE:-224}
@@ -39,7 +39,8 @@ if [[ -f "${VENV_PATH}/bin/activate" ]]; then
   source "${VENV_PATH}/bin/activate"
 fi
 
-export PYTHONPATH="${PROJECT_DIR}:${PROJECT_DIR}/scripts:${PYTHONPATH:-}"
+export PYTHONNOUSERSITE=1
+export PYTHONPATH="${PROJECT_DIR}:${PROJECT_DIR}/scripts"
 export MPLCONFIGDIR="${PROJECT_DIR}/results/cache/matplotlib"
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
 export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
