@@ -385,6 +385,71 @@ print(pd.read_csv(root / "encoder_val_metrics.csv").round(4).to_string(index=Fal
 PY
 ```
 
+## Real-Only PCA + MLP Encoder Test
+
+Nick requested a direct sanity check of the PCA encoder on real held-out data, without using the diffusion model. The test is:
+
+```text
+real held-out HI slice -> frozen PCA features -> MLP regression head -> recovered cosmology
+```
+
+This is a regression test, not a classifier test, because the six CAMELS targets are continuous parameters.
+
+Important details:
+
+| Item | Value |
+|---|---:|
+| Diffusion samples used? | No |
+| PCA basis | same leakage-safe 98% real-only basis |
+| PCA rank in current run | `4451` |
+| MLP default hidden layers | `(256, 128)` |
+| MLP default L2 penalty | `1e-4` |
+| MLP default learning rate | `1e-3` |
+| MLP max iterations | `700` |
+| Training slices | `32,768` non-held-out real slices |
+| Validation slices | `4,096` non-held-out real slices |
+| Test simulations | `32` held-out simulations, indices `900-931` |
+| Test slices per held-out simulation | `128` |
+
+The main plotted point is one point per held-out simulation. For each held-out simulation, the MLP predicts cosmology from each of its 128 real HI slices; the plotted value is the median predicted cosmology over those slices. The vertical bar is the 16th-to-84th percentile spread over slices.
+
+Run on Great Lakes:
+
+```bash
+cd /home/jiamingp/diffusion_models_repo
+sbatch -A huterer2 scripts/slurm/test_nf_conditional_bias_pca_mlp_encoder.sbatch
+```
+
+Expected outputs:
+
+```text
+results/nf_conditional_bias_probe/encoder/pca_mlp_encoder.pkl
+results/nf_conditional_bias_probe/encoder/pca_mlp_encoder.npz
+results/nf_conditional_bias_probe/encoder/pca_mlp_real_test_1to1.png
+results/nf_conditional_bias_probe/encoder/pca_mlp_real_test_metrics.csv
+results/nf_conditional_bias_probe/encoder/pca_mlp_real_test_per_cosmology_predictions.csv
+results/nf_conditional_bias_probe/encoder/pca_mlp_real_test_per_slice_predictions.csv
+results/nf_conditional_bias_probe/encoder/pca_mlp_real_test_metadata.json
+```
+
+After this MLP encoder exists, rerun the generated-sample cosmology calibration with the MLP head:
+
+```bash
+cd /home/jiamingp/diffusion_models_repo
+ENCODER_TYPE=mlp sbatch -A huterer2 scripts/slurm/evaluate_nf_conditional_bias_probe.sbatch
+```
+
+This writes separate MLP-based calibration outputs so they do not overwrite the old PCA+Ridge baseline:
+
+```text
+results/nf_conditional_bias_probe/calibration_mlp/bias_probe_calibration_recovered_vs_input.png
+results/nf_conditional_bias_probe/calibration_mlp/bias_probe_regime_slopes.csv
+results/nf_conditional_bias_probe/calibration_mlp/bias_probe_per_cosmology_points.csv
+results/nf_conditional_bias_probe/calibration_mlp/bias_probe_per_sample_predictions.csv
+```
+
+The old `results/nf_conditional_bias_probe/calibration/` outputs are PCA + Ridge. The corrected nonlinear recovery version should be read from `calibration_mlp/`.
+
 ## Calibration Evaluation
 
 Main evaluation files:

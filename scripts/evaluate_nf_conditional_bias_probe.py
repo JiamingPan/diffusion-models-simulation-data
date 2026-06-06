@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import pickle
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ from train_nf_conditional_bias_encoder import FrozenPCA, as_nchw, load_pca, pred
 
 SWEEP_NAME = "nf_conditional_bias_probe"
 DEFAULT_ENCODER_PATH = "results/nf_conditional_bias_probe/encoder/frozen_pca_ridge_encoder.npz"
+DEFAULT_MLP_ENCODER_PATH = "results/nf_conditional_bias_probe/encoder/pca_mlp_encoder.npz"
 PARAM_DISPLAY_LABELS = {
     "Omega_m": r"$\Omega_\mathrm{m}$",
     "sigma_8": r"$\sigma_8$",
@@ -61,6 +63,24 @@ class Encoder:
     def predict_norm(self, images: np.ndarray, batch_size: int = 512) -> np.ndarray:
         z = self.pca.transform(as_nchw(images), batch_size=batch_size)
         return predict_ridge(z, self.coef, self.intercept)
+
+    def norm_to_raw(self, theta_norm: np.ndarray) -> np.ndarray:
+        return theta_norm * self.param_std + self.param_mean
+
+
+@dataclass
+class MLPEncoder:
+    pca: FrozenPCA
+    model: Any
+    param_mean: np.ndarray
+    param_std: np.ndarray
+    pca_basis_path: Path
+    pca_basis_sha256: str
+    model_path: Path
+
+    def predict_norm(self, images: np.ndarray, batch_size: int = 512) -> np.ndarray:
+        z = self.pca.transform(as_nchw(images), batch_size=batch_size)
+        return np.asarray(self.model.predict(z), dtype=np.float32)
 
     def norm_to_raw(self, theta_norm: np.ndarray) -> np.ndarray:
         return theta_norm * self.param_std + self.param_mean
@@ -106,6 +126,28 @@ def load_encoder(project_dir: Path, encoder_path: Path) -> Encoder:
             param_std=data["param_std"].astype(np.float32),
             pca_basis_path=basis_path,
             pca_basis_sha256=str(data["pca_basis_sha256"].item()),
+        )
+
+
+def load_mlp_encoder(project_dir: Path, encoder_path: Path) -> MLPEncoder:
+    with np.load(encoder_path, allow_pickle=True) as data:
+        basis_path = Path(str(data["pca_basis_path"].item()))
+        if not basis_path.is_absolute():
+            basis_path = project_dir / basis_path
+        model_path = Path(str(data["model_path"].item()))
+        if not model_path.is_absolute():
+            model_path = project_dir / model_path
+        pca = load_pca(basis_path)
+        with model_path.open("rb") as f:
+            model = pickle.load(f)
+        return MLPEncoder(
+            pca=pca,
+            model=model,
+            param_mean=data["param_mean"].astype(np.float32),
+            param_std=data["param_std"].astype(np.float32),
+            pca_basis_path=basis_path,
+            pca_basis_sha256=str(data["pca_basis_sha256"].item()),
+            model_path=model_path,
         )
 
 
@@ -304,7 +346,9 @@ def main() -> None:
     parser.add_argument("--project-dir", default=".")
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--run-name", action="append")
+    parser.add_argument("--encoder-type", choices=("ridge", "mlp"), default="ridge")
     parser.add_argument("--encoder", default=DEFAULT_ENCODER_PATH)
+    parser.add_argument("--mlp-encoder", default=DEFAULT_MLP_ENCODER_PATH)
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--samples-per-cosmology", type=int, default=None)
     parser.add_argument("--embedding-batch-size", type=int, default=512)
@@ -321,9 +365,15 @@ def main() -> None:
     rows = selected_rows(load_manifest(project_dir, args.manifest), args.run_name)
     if not rows:
         raise SystemExit("No runs selected.")
-    encoder_path = project_dir / args.encoder
-    encoder = load_encoder(project_dir, encoder_path)
-    output_dir = args.output_dir or project_dir / "results" / SWEEP_NAME / "calibration"
+    if args.encoder_type == "mlp":
+        encoder_path = project_dir / args.mlp_encoder
+        encoder = load_mlp_encoder(project_dir, encoder_path)
+        default_output_dir = project_dir / "results" / SWEEP_NAME / "calibration_mlp"
+    else:
+        encoder_path = project_dir / args.encoder
+        encoder = load_encoder(project_dir, encoder_path)
+        default_output_dir = project_dir / "results" / SWEEP_NAME / "calibration"
+    output_dir = args.output_dir or default_output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     guidance_scales = [parse_guidance_scale(x) for x in args.guidance_scale] if args.guidance_scale else [None]
 
@@ -367,6 +417,7 @@ def main() -> None:
 
     metadata = {
         "encoder_path": str(encoder_path),
+        "encoder_type": args.encoder_type,
         "pca_basis_path": str(encoder.pca_basis_path),
         "pca_basis_sha256": encoder.pca_basis_sha256,
         "pca_rank": encoder.pca.rank,
@@ -374,6 +425,8 @@ def main() -> None:
         "param_names": PARAM_NAMES,
         "guidance_labels": sorted(points["guidance_label"].unique().tolist()),
     }
+    if args.encoder_type == "mlp":
+        metadata["mlp_model_path"] = str(encoder.model_path)
     (output_dir / "bias_probe_eval_metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
 
     print(f"Wrote {samples_path}")

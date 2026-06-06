@@ -18,6 +18,7 @@ PYTHON_BIN=${PYTHON_BIN:-python}
 SEED=${SEED:-123}
 SAMPLES_PER_COSMOLOGY=${SAMPLES_PER_COSMOLOGY:-64}
 BOOTSTRAP=${BOOTSTRAP:-1000}
+ENCODER_TYPE=${ENCODER_TYPE:-ridge}
 
 cd "${PROJECT_DIR}"
 mkdir -p logs/nf_conditional_bias_probe results/cache/matplotlib
@@ -32,6 +33,7 @@ export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
 
 "${PYTHON_BIN}" scripts/evaluate_nf_conditional_bias_probe.py \
   --project-dir "${PROJECT_DIR}" \
+  --encoder-type "${ENCODER_TYPE}" \
   --seed "${SEED}" \
   --samples-per-cosmology "${SAMPLES_PER_COSMOLOGY}" \
   --bootstrap "${BOOTSTRAP}"
