@@ -450,6 +450,55 @@ results/nf_conditional_bias_probe/calibration_mlp/bias_probe_per_sample_predicti
 
 The old `results/nf_conditional_bias_probe/calibration/` outputs are PCA + Ridge. The corrected nonlinear recovery version should be read from `calibration_mlp/`.
 
+## Real-Only VGG Feature Encoder Test
+
+A second nonlinear encoder path uses frozen ImageNet-pretrained VGG16 convolutional features instead of PCA:
+
+```text
+real HI slice -> repeat to 3 channels -> resize to 224 -> frozen VGG16 features -> MLP regression head -> recovered cosmology
+```
+
+The VGG feature extractor is frozen. Only the small regression head is trained on real non-held-out CAMELS HI slices.
+
+Run a tiny smoke test first:
+
+```bash
+cd /home/jiamingp/diffusion_models_repo
+vgg_smoke=$(HEAD_TRAIN_SLICES=512 \
+  HEAD_VAL_SLICES=128 \
+  TEST_SLICES_PER_SIM=4 \
+  MLP_HIDDEN_LAYERS=64 \
+  MLP_MAX_ITER=30 \
+  ENCODER_OUT=results/nf_conditional_bias_probe/encoder_vgg_smoketest/vgg_smoketest.npz \
+  MODEL_OUT=results/nf_conditional_bias_probe/encoder_vgg_smoketest/vgg_smoketest.pkl \
+  sbatch -A huterer2 --parsable \
+  scripts/slurm/train_nf_conditional_bias_vgg_encoder.sbatch)
+echo "vgg_smoke=$vgg_smoke"
+```
+
+Then run the full VGG encoder if the smoke test passes:
+
+```bash
+cd /home/jiamingp/diffusion_models_repo
+vgg_enc=$(sbatch -A huterer2 --parsable \
+  scripts/slurm/train_nf_conditional_bias_vgg_encoder.sbatch)
+echo "vgg_enc=$vgg_enc"
+```
+
+If the real held-out VGG encoder has acceptable `R^2`, run the generated-sample calibration:
+
+```bash
+cd /home/jiamingp/diffusion_models_repo
+VGG_DEVICE=auto ENCODER_TYPE=vgg sbatch -A huterer2 \
+  scripts/slurm/evaluate_nf_conditional_bias_probe.sbatch
+```
+
+VGG calibration outputs go to:
+
+```text
+results/nf_conditional_bias_probe/calibration_vgg/
+```
+
 ## Calibration Evaluation
 
 Main evaluation files:

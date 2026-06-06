@@ -25,6 +25,7 @@ from train_nf_conditional_bias_encoder import FrozenPCA, as_nchw, load_pca, pred
 SWEEP_NAME = "nf_conditional_bias_probe"
 DEFAULT_ENCODER_PATH = "results/nf_conditional_bias_probe/encoder/frozen_pca_ridge_encoder.npz"
 DEFAULT_MLP_ENCODER_PATH = "results/nf_conditional_bias_probe/encoder/pca_mlp_encoder.npz"
+DEFAULT_VGG_ENCODER_PATH = "results/nf_conditional_bias_probe/encoder/vgg_mlp_encoder.npz"
 PARAM_DISPLAY_LABELS = {
     "Omega_m": r"$\Omega_\mathrm{m}$",
     "sigma_8": r"$\sigma_8$",
@@ -81,6 +82,58 @@ class MLPEncoder:
     def predict_norm(self, images: np.ndarray, batch_size: int = 512) -> np.ndarray:
         z = self.pca.transform(as_nchw(images), batch_size=batch_size)
         return np.asarray(self.model.predict(z), dtype=np.float32)
+
+    def norm_to_raw(self, theta_norm: np.ndarray) -> np.ndarray:
+        return theta_norm * self.param_std + self.param_mean
+
+
+@dataclass
+class VGGEncoder:
+    vgg: Any
+    head: Any
+    param_mean: np.ndarray
+    param_std: np.ndarray
+    model_path: Path
+    weights: str
+    image_size: int
+    value_min: float
+    value_max: float
+    pool: str
+    feature_dim: int
+    device: str
+
+    @property
+    def pca_basis_path(self) -> Path:
+        return Path("none-vgg")
+
+    @property
+    def pca_basis_sha256(self) -> str:
+        return "none-vgg"
+
+    @property
+    def pca(self) -> Any:
+        class _NoPCA:
+            rank = 0
+            explained_variance_sum = 0.0
+
+        return _NoPCA()
+
+    def predict_norm(self, images: np.ndarray, batch_size: int = 512) -> np.ndarray:
+        from train_nf_conditional_bias_vgg_encoder import vgg_embed
+
+        z = vgg_embed(
+            as_nchw(images),
+            self.vgg,
+            device=self.device,
+            batch_size=batch_size,
+            image_size=self.image_size,
+            value_min=self.value_min,
+            value_max=self.value_max,
+            pool=self.pool,
+        )
+        if isinstance(self.head, dict) and self.head.get("head_type") == "ridge":
+            return predict_ridge(z, self.head["coef"], self.head["intercept"])
+        return np.asarray(self.head.predict(z), dtype=np.float32)
 
     def norm_to_raw(self, theta_norm: np.ndarray) -> np.ndarray:
         return theta_norm * self.param_std + self.param_mean
@@ -148,6 +201,34 @@ def load_mlp_encoder(project_dir: Path, encoder_path: Path) -> MLPEncoder:
             pca_basis_path=basis_path,
             pca_basis_sha256=str(data["pca_basis_sha256"].item()),
             model_path=model_path,
+        )
+
+
+def load_vgg_encoder(project_dir: Path, encoder_path: Path, device: str) -> VGGEncoder:
+    from train_nf_conditional_bias_vgg_encoder import load_vgg_features, torch_device
+
+    device_resolved = torch_device(device)
+    with np.load(encoder_path, allow_pickle=True) as data:
+        model_path = Path(str(data["model_path"].item()))
+        if not model_path.is_absolute():
+            model_path = project_dir / model_path
+        with model_path.open("rb") as f:
+            head = pickle.load(f)
+        weights = str(data["vgg_weights"].item())
+        vgg, _ = load_vgg_features(weights, device_resolved)
+        return VGGEncoder(
+            vgg=vgg,
+            head=head,
+            param_mean=data["param_mean"].astype(np.float32),
+            param_std=data["param_std"].astype(np.float32),
+            model_path=model_path,
+            weights=weights,
+            image_size=int(data["vgg_image_size"]),
+            value_min=float(data["vgg_value_min"]),
+            value_max=float(data["vgg_value_max"]),
+            pool=str(data["vgg_pool"].item()),
+            feature_dim=int(data["feature_dim"]),
+            device=device_resolved,
         )
 
 
@@ -346,9 +427,11 @@ def main() -> None:
     parser.add_argument("--project-dir", default=".")
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--run-name", action="append")
-    parser.add_argument("--encoder-type", choices=("ridge", "mlp"), default="ridge")
+    parser.add_argument("--encoder-type", choices=("ridge", "mlp", "vgg"), default="ridge")
     parser.add_argument("--encoder", default=DEFAULT_ENCODER_PATH)
     parser.add_argument("--mlp-encoder", default=DEFAULT_MLP_ENCODER_PATH)
+    parser.add_argument("--vgg-encoder", default=DEFAULT_VGG_ENCODER_PATH)
+    parser.add_argument("--vgg-device", default="auto")
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--samples-per-cosmology", type=int, default=None)
     parser.add_argument("--embedding-batch-size", type=int, default=512)
@@ -369,6 +452,10 @@ def main() -> None:
         encoder_path = project_dir / args.mlp_encoder
         encoder = load_mlp_encoder(project_dir, encoder_path)
         default_output_dir = project_dir / "results" / SWEEP_NAME / "calibration_mlp"
+    elif args.encoder_type == "vgg":
+        encoder_path = project_dir / args.vgg_encoder
+        encoder = load_vgg_encoder(project_dir, encoder_path, args.vgg_device)
+        default_output_dir = project_dir / "results" / SWEEP_NAME / "calibration_vgg"
     else:
         encoder_path = project_dir / args.encoder
         encoder = load_encoder(project_dir, encoder_path)
@@ -427,6 +514,16 @@ def main() -> None:
     }
     if args.encoder_type == "mlp":
         metadata["mlp_model_path"] = str(encoder.model_path)
+    if args.encoder_type == "vgg":
+        metadata.update(
+            {
+                "vgg_model_path": str(encoder.model_path),
+                "vgg_weights": encoder.weights,
+                "vgg_image_size": encoder.image_size,
+                "vgg_pool": encoder.pool,
+                "vgg_feature_dim": encoder.feature_dim,
+            }
+        )
     (output_dir / "bias_probe_eval_metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
 
     print(f"Wrote {samples_path}")
