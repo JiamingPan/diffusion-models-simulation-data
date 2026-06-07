@@ -458,7 +458,18 @@ A second nonlinear encoder path uses frozen ImageNet-pretrained VGG16 convolutio
 real HI slice -> repeat to 3 channels -> resize to 224 -> frozen VGG16 features -> MLP regression head -> recovered cosmology
 ```
 
-The VGG feature extractor is frozen. Only the small regression head is trained on real non-held-out CAMELS HI slices.
+Equivalently:
+
+```text
+HI slice
+-> repeat to 3 channels
+-> resize to 224 x 224
+-> frozen pretrained VGG16 feature extractor
+-> trainable MLP/Ridge regression head
+-> cosmology parameters
+```
+
+The VGG feature extractor is frozen and is not fine-tuned. The VGG weights are not updated. Only the regression head after VGG is trained on real non-held-out CAMELS HI slices.
 
 Precise tensor conversion:
 
