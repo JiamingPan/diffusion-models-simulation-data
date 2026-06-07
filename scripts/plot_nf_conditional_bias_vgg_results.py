@@ -33,11 +33,14 @@ PARAM_LABELS = {
 }
 
 DEFAULT_ENCODER_LOGS = {
-    "smoke: avg+max + MLP(64), 512 train slices [51475729]": "logs/nf_conditional_bias_probe/vgg_encoder_51475729.out",
-    "default: avg+max + MLP(512,256), 32k train slices [51475731]": "logs/nf_conditional_bias_probe/vgg_encoder_51475731.out",
-    "best: avg+max + MLP(1024,512,256), 65k train slices [51475738]": "logs/nf_conditional_bias_probe/vgg_encoder_51475738.out",
-    "ablation: avg + MLP(1024,512,256), 65k train slices [51475739]": "logs/nf_conditional_bias_probe/vgg_encoder_51475739.out",
-    "linear check: avg+max + Ridge(alpha=1), 65k train slices [51475740]": "logs/nf_conditional_bias_probe/vgg_encoder_51475740.out",
+    "default: avg+max, MLP 512-256, 32k slices": "logs/nf_conditional_bias_probe/vgg_encoder_51475731.out",
+    "best: avg+max, MLP 1024-512-256, 65k slices": "logs/nf_conditional_bias_probe/vgg_encoder_51475738.out",
+    "pooling ablation: avg only, MLP 1024-512-256": "logs/nf_conditional_bias_probe/vgg_encoder_51475739.out",
+    "linear head: avg+max, Ridge": "logs/nf_conditional_bias_probe/vgg_encoder_51475740.out",
+}
+
+SMOKE_ENCODER_LOGS = {
+    "smoke: avg+max, MLP 64, 512 slices": "logs/nf_conditional_bias_probe/vgg_encoder_51475729.out",
 }
 
 
@@ -74,7 +77,7 @@ def parse_metric_lines(path: Path, label: str) -> list[dict[str, object]]:
     return rows
 
 
-def collect_encoder_metrics(project_dir: Path, log_specs: list[str]) -> pd.DataFrame:
+def collect_encoder_metrics(project_dir: Path, log_specs: list[str], *, include_smoke: bool = False) -> pd.DataFrame:
     specs: dict[str, str] = {}
     if log_specs:
         for spec in log_specs:
@@ -83,7 +86,9 @@ def collect_encoder_metrics(project_dir: Path, log_specs: list[str]) -> pd.DataF
             label, path = spec.split("=", 1)
             specs[label] = path
     else:
-        specs = DEFAULT_ENCODER_LOGS
+        specs = dict(DEFAULT_ENCODER_LOGS)
+        if include_smoke:
+            specs.update(SMOKE_ENCODER_LOGS)
 
     rows: list[dict[str, object]] = []
     for label, rel_path in specs.items():
@@ -99,10 +104,10 @@ def plot_r2(df: pd.DataFrame, out: Path) -> None:
     encoders = list(dict.fromkeys(df["encoder"].astype(str)))
     params = PARAM_ORDER
     x = np.arange(len(params), dtype=float)
-    width = min(0.18, 0.72 / max(len(encoders), 1))
+    width = min(0.20, 0.76 / max(len(encoders), 1))
     colors = ["#4C78A8", "#E45756", "#72B7B2", "#F58518", "#54A24B"]
 
-    fig, ax = plt.subplots(figsize=(14.8, 6.2), constrained_layout=False)
+    fig, ax = plt.subplots(figsize=(14.6, 6.4), constrained_layout=False)
     for i, encoder in enumerate(encoders):
         sub = df[df["encoder"] == encoder].set_index("parameter")
         vals = np.array([float(sub.loc[p, "r2"]) if p in sub.index else np.nan for p in params])
@@ -111,7 +116,7 @@ def plot_r2(df: pd.DataFrame, out: Path) -> None:
         for bar, val in zip(bars, vals):
             if not np.isfinite(val):
                 continue
-            y = val + (0.025 if val >= 0 else -0.045)
+            y = val + (0.022 if val >= 0 else -0.035)
             va = "bottom" if val >= 0 else "top"
             ax.text(
                 bar.get_x() + bar.get_width() / 2,
@@ -128,33 +133,29 @@ def plot_r2(df: pd.DataFrame, out: Path) -> None:
     ax.set_xticks(x)
     ax.set_xticklabels([PARAM_LABELS[p] for p in params], fontsize=13)
     ax.set_ylabel(r"Real held-out $R^2$", fontsize=14)
-    ax.set_title(
-        "Frozen VGG16 encoder comparison on real held-out HI fields",
-        fontsize=18,
-        pad=14,
+    ax.set_title("Frozen VGG16 encoder comparison on real held-out HI fields", fontsize=18, pad=22)
+    ax.text(
+        0.5,
+        1.015,
+        "Only the regression head is trained; VGG16 weights are frozen",
+        transform=ax.transAxes,
+        ha="center",
+        va="bottom",
+        fontsize=11,
+        color="0.25",
     )
     ax.set_ylim(-0.12, 1.02)
     ax.grid(axis="y", alpha=0.22)
-    ax.text(
-        0.01,
-        0.98,
-        "Each bar uses frozen VGG16 features; only the regression head is trained.",
-        transform=ax.transAxes,
-        ha="left",
-        va="top",
-        fontsize=10.5,
-        color="0.25",
-    )
     ax.legend(
         title="Encoder variant",
         frameon=False,
-        fontsize=10,
+        fontsize=10.5,
         title_fontsize=11,
         loc="center left",
         bbox_to_anchor=(1.01, 0.5),
         borderaxespad=0.0,
     )
-    fig.subplots_adjust(left=0.07, right=0.60, bottom=0.13, top=0.88)
+    fig.subplots_adjust(left=0.07, right=0.66, bottom=0.13, top=0.84)
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, dpi=220, bbox_inches="tight")
     plt.close(fig)
@@ -211,6 +212,11 @@ def main() -> None:
         help="Optional LABEL=PATH relative to project dir. May be repeated.",
     )
     parser.add_argument(
+        "--include-smoke",
+        action="store_true",
+        help="Include the small smoke-test encoder in the R2 comparison plot.",
+    )
+    parser.add_argument(
         "--slopes",
         default="results/nf_conditional_bias_probe/calibration_vgg/bias_probe_regime_slopes.csv",
     )
@@ -223,7 +229,7 @@ def main() -> None:
     project_dir = Path(args.project_dir).resolve()
     output_dir = project_dir / args.output_dir
 
-    metrics = collect_encoder_metrics(project_dir, args.encoder_log)
+    metrics = collect_encoder_metrics(project_dir, args.encoder_log, include_smoke=args.include_smoke)
     metrics_path = output_dir / "vgg_encoder_r2_comparison.csv"
     metrics_path.parent.mkdir(parents=True, exist_ok=True)
     metrics.to_csv(metrics_path, index=False)

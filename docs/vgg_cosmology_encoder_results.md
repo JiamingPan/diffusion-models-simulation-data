@@ -177,7 +177,9 @@ cd /home/jiamingp/diffusion_models_repo
 python scripts/plot_nf_conditional_bias_vgg_results.py --project-dir "$PWD"
 ```
 
-The plot legend is intentionally verbose: each entry records pooling type, regression head, hidden-layer size when relevant, number of real training slices, and the SLURM job ID.
+The default comparison plot excludes the tiny smoke test because it was only a runtime check and makes the presentation figure harder to read. To include it for debugging, add `--include-smoke`.
+
+The plot legend records pooling type, regression head, hidden-layer size when relevant, and real training-slice count.
 
 Expected outputs:
 
