@@ -33,10 +33,11 @@ PARAM_LABELS = {
 }
 
 DEFAULT_ENCODER_LOGS = {
-    "default MLP avg+max": "logs/nf_conditional_bias_probe/vgg_encoder_51475731.out",
-    "big MLP avg+max": "logs/nf_conditional_bias_probe/vgg_encoder_51475738.out",
-    "big MLP avg": "logs/nf_conditional_bias_probe/vgg_encoder_51475739.out",
-    "ridge avg+max": "logs/nf_conditional_bias_probe/vgg_encoder_51475740.out",
+    "smoke: avg+max + MLP(64), 512 train slices [51475729]": "logs/nf_conditional_bias_probe/vgg_encoder_51475729.out",
+    "default: avg+max + MLP(512,256), 32k train slices [51475731]": "logs/nf_conditional_bias_probe/vgg_encoder_51475731.out",
+    "best: avg+max + MLP(1024,512,256), 65k train slices [51475738]": "logs/nf_conditional_bias_probe/vgg_encoder_51475738.out",
+    "ablation: avg + MLP(1024,512,256), 65k train slices [51475739]": "logs/nf_conditional_bias_probe/vgg_encoder_51475739.out",
+    "linear check: avg+max + Ridge(alpha=1), 65k train slices [51475740]": "logs/nf_conditional_bias_probe/vgg_encoder_51475740.out",
 }
 
 
@@ -101,7 +102,7 @@ def plot_r2(df: pd.DataFrame, out: Path) -> None:
     width = min(0.18, 0.72 / max(len(encoders), 1))
     colors = ["#4C78A8", "#E45756", "#72B7B2", "#F58518", "#54A24B"]
 
-    fig, ax = plt.subplots(figsize=(12.8, 5.6), constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(14.8, 6.2), constrained_layout=False)
     for i, encoder in enumerate(encoders):
         sub = df[df["encoder"] == encoder].set_index("parameter")
         vals = np.array([float(sub.loc[p, "r2"]) if p in sub.index else np.nan for p in params])
@@ -127,10 +128,33 @@ def plot_r2(df: pd.DataFrame, out: Path) -> None:
     ax.set_xticks(x)
     ax.set_xticklabels([PARAM_LABELS[p] for p in params], fontsize=13)
     ax.set_ylabel(r"Real held-out $R^2$", fontsize=14)
-    ax.set_title("Frozen VGG16 feature encoder: real held-out cosmology recovery", fontsize=18)
+    ax.set_title(
+        "Frozen VGG16 encoder comparison on real held-out HI fields",
+        fontsize=18,
+        pad=14,
+    )
     ax.set_ylim(-0.12, 1.02)
     ax.grid(axis="y", alpha=0.22)
-    ax.legend(frameon=False, ncol=2, fontsize=11, loc="upper right")
+    ax.text(
+        0.01,
+        0.98,
+        "Each bar uses frozen VGG16 features; only the regression head is trained.",
+        transform=ax.transAxes,
+        ha="left",
+        va="top",
+        fontsize=10.5,
+        color="0.25",
+    )
+    ax.legend(
+        title="Encoder variant",
+        frameon=False,
+        fontsize=10,
+        title_fontsize=11,
+        loc="center left",
+        bbox_to_anchor=(1.01, 0.5),
+        borderaxespad=0.0,
+    )
+    fig.subplots_adjust(left=0.07, right=0.60, bottom=0.13, top=0.88)
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, dpi=220, bbox_inches="tight")
     plt.close(fig)

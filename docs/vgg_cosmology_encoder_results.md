@@ -177,6 +177,8 @@ cd /home/jiamingp/diffusion_models_repo
 python scripts/plot_nf_conditional_bias_vgg_results.py --project-dir "$PWD"
 ```
 
+The plot legend is intentionally verbose: each entry records pooling type, regression head, hidden-layer size when relevant, number of real training slices, and the SLURM job ID.
+
 Expected outputs:
 
 ```text
