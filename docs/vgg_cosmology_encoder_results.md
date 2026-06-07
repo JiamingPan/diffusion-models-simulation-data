@@ -200,3 +200,9 @@ vgg_eval_big=$(ENCODER_TYPE=vgg \
   scripts/slurm/evaluate_nf_conditional_bias_probe.sbatch)
 echo "vgg_eval_big=$vgg_eval_big"
 ```
+
+This regenerates the presentation-styled calibration figure:
+
+```text
+results/nf_conditional_bias_probe/calibration_vgg/bias_probe_calibration_recovered_vs_input.png
+```

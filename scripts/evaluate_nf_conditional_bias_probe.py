@@ -359,10 +359,10 @@ def plot_calibration(points: pd.DataFrame, slopes: pd.DataFrame, out: Path) -> N
     out.parent.mkdir(parents=True, exist_ok=True)
     colors = {"memorization": "#d62728", "generalization": "#1f77b4"}
     markers = {"memorization": "o", "generalization": "s"}
-    regime_names = {"memorization": "memorization", "generalization": "generalization"}
+    regime_names = {"memorization": "Memorization (N=128)", "generalization": "Generalization (N=16,384)"}
     show_cfg = bool(points["cfg_dropout"].nunique() > 1 or float(points["cfg_dropout"].iloc[0]) != 0.0)
     show_guidance = bool(points["guidance_label"].nunique() > 1 or points["guidance_label"].iloc[0] != "noguidance")
-    fig, axes = plt.subplots(2, 3, figsize=(18, 10), constrained_layout=True)
+    fig, axes = plt.subplots(2, 3, figsize=(19.2, 10.8), constrained_layout=False)
     for ax, param in zip(axes.ravel(), PARAM_NAMES):
         sub_param = points[points["parameter"] == param]
         if sub_param.empty:
@@ -373,7 +373,8 @@ def plot_calibration(points: pd.DataFrame, slopes: pd.DataFrame, out: Path) -> N
         pad = 0.06 * max(hi - lo, 1.0e-6)
         lo -= pad
         hi += pad
-        ax.plot([lo, hi], [lo, hi], color="black", lw=1.6, ls="--", alpha=0.75, label="ideal")
+        ax.plot([lo, hi], [lo, hi], color="0.2", lw=2.0, ls="--", alpha=0.80, label="Ideal recovery")
+        slope_notes = []
         for (regime, run_name, cfg_dropout), sub in sub_param.groupby(["regime", "run_name", "cfg_dropout"], sort=False):
             color = colors.get(regime, "#333333")
             label = regime_names.get(regime, regime)
@@ -391,10 +392,12 @@ def plot_calibration(points: pd.DataFrame, slopes: pd.DataFrame, out: Path) -> N
                 y,
                 yerr=yerr,
                 fmt=markers.get(regime, "o"),
-                ms=7.0,
-                lw=1.8,
-                capsize=3.0,
+                ms=7.5,
+                lw=1.9,
+                capsize=3.3,
+                capthick=1.4,
                 color=color,
+                ecolor=color,
                 alpha=0.86,
                 label=label,
             )
@@ -406,19 +409,55 @@ def plot_calibration(points: pd.DataFrame, slopes: pd.DataFrame, out: Path) -> N
             if not slope_row.empty:
                 slope = float(slope_row["slope"].iloc[0])
                 intercept = float(slope_row["intercept"].iloc[0])
-                ax.plot([lo, hi], [slope * lo + intercept, slope * hi + intercept], color=color, lw=2.8)
+                ax.plot([lo, hi], [slope * lo + intercept, slope * hi + intercept], color=color, lw=3.2)
+                slope_notes.append((regime, slope, color))
         ax.set_xlim(lo, hi)
         ax.set_ylim(lo, hi)
-        ax.set_title(PARAM_DISPLAY_LABELS.get(param, param), fontsize=15)
-        ax.set_xlabel("Input value")
-        ax.set_ylabel("Recovered value")
-        ax.tick_params(labelsize=12)
+        ax.set_title(PARAM_DISPLAY_LABELS.get(param, param), fontsize=18, pad=9)
+        ax.set_xlabel("Requested input value", fontsize=14)
+        ax.set_ylabel("Recovered value", fontsize=14)
+        ax.tick_params(labelsize=12.5)
+        ax.grid(alpha=0.20)
+        for j, (regime, slope, color) in enumerate(slope_notes):
+            short = "mem." if regime == "memorization" else "gen."
+            ax.text(
+                0.035,
+                0.945 - 0.075 * j,
+                f"{short} slope = {slope:.2f}",
+                transform=ax.transAxes,
+                ha="left",
+                va="top",
+                color=color,
+                fontsize=11.5,
+                fontweight="bold",
+            )
         for spine in ("top", "right"):
             ax.spines[spine].set_visible(False)
     handles, labels = axes[0, 0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper center", ncol=3, frameon=False, bbox_to_anchor=(0.5, 1.03), fontsize=13)
-    fig.suptitle("Continuous HI cosmology calibration: recovered vs input parameters", y=1.08, fontsize=22)
-    fig.savefig(out, dpi=200, bbox_inches="tight")
+    by_label = dict(zip(labels, handles))
+    encoder_label = "VGG encoder" if "calibration_vgg" in str(out) else "cosmology encoder"
+    fig.legend(
+        by_label.values(),
+        by_label.keys(),
+        loc="upper center",
+        ncol=3,
+        frameon=False,
+        bbox_to_anchor=(0.5, 0.935),
+        fontsize=15,
+        handlelength=2.5,
+    )
+    fig.suptitle("Continuous HI cosmology calibration", y=0.985, fontsize=26)
+    fig.text(
+        0.5,
+        0.948,
+        f"Generated HI fields encoded back to cosmology with the {encoder_label}",
+        ha="center",
+        va="center",
+        fontsize=14.5,
+        color="0.25",
+    )
+    fig.subplots_adjust(left=0.055, right=0.99, bottom=0.075, top=0.84, wspace=0.23, hspace=0.34)
+    fig.savefig(out, dpi=240, bbox_inches="tight")
     plt.close(fig)
 
 
