@@ -139,13 +139,13 @@ def inverse_param_norm(theta_norm: np.ndarray, mean: np.ndarray, std: np.ndarray
     return theta_norm.astype(np.float32, copy=False) * std + mean
 
 
-def save_one_to_one(summary: pd.DataFrame, metrics: pd.DataFrame, out: Path) -> None:
+def save_one_to_one(summary: pd.DataFrame, metrics: pd.DataFrame, out: Path, *, head_type: str, pool: str) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     metric_lookup = {
         row["parameter"]: row
         for row in metrics[(metrics["split"] == "test") & (metrics["grain"] == "per_cosmology")].to_dict("records")
     }
-    fig, axes = plt.subplots(2, 3, figsize=(15.5, 9.0), constrained_layout=True)
+    fig, axes = plt.subplots(2, 3, figsize=(16.2, 9.4), constrained_layout=False)
     for ax, name in zip(axes.ravel(), PARAM_NAMES):
         x = summary[f"{name}_true"].to_numpy(float)
         y = summary[f"{name}_pred_median"].to_numpy(float)
@@ -160,16 +160,23 @@ def save_one_to_one(summary: pd.DataFrame, metrics: pd.DataFrame, out: Path) -> 
         ax.plot([lo, hi], [lo, hi], color="0.25", lw=1.8, ls="--", label="ideal")
         ax.errorbar(x, y, yerr=yerr, fmt="o", ms=5.5, capsize=2.5, color="#6f4aa8", ecolor="#b8a5d6")
         row = metric_lookup[name]
-        ax.set_title(f"{PARAM_DISPLAY_LABELS.get(name, name)}   $R^2$={float(row['r2']):.2f}", fontsize=16)
-        ax.set_xlabel("true parameter", fontsize=13)
-        ax.set_ylabel("VGG prediction", fontsize=13)
+        ax.set_title(f"{PARAM_DISPLAY_LABELS.get(name, name)}    $R^2$={float(row['r2']):.2f}", fontsize=15, pad=10)
+        ax.set_xlabel("True parameter", fontsize=13)
+        ax.set_ylabel("Predicted parameter", fontsize=13)
         ax.set_xlim(lo, hi)
         ax.set_ylim(lo, hi)
         ax.grid(alpha=0.22)
         ax.tick_params(labelsize=11)
     handles, labels = axes.ravel()[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper center", ncol=2, frameon=False, fontsize=13)
-    fig.suptitle("Real held-out HI fields: VGG features + MLP cosmology recovery", fontsize=22, y=1.03)
+    title_head = "MLP" if head_type == "mlp" else "Ridge"
+    title_pool = "avg+max" if pool == "avgmax" else "average"
+    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.925), ncol=2, frameon=False, fontsize=13)
+    fig.suptitle(
+        f"Real held-out HI fields: frozen VGG16 ({title_pool} pooling) + {title_head} cosmology recovery",
+        fontsize=20,
+        y=0.985,
+    )
+    fig.subplots_adjust(left=0.06, right=0.985, bottom=0.075, top=0.86, wspace=0.28, hspace=0.36)
     fig.savefig(out, dpi=220, bbox_inches="tight")
     plt.close(fig)
 
@@ -305,7 +312,7 @@ def main() -> None:
     metrics.to_csv(metrics_path, index=False)
 
     plot_path = output_dir / "vgg_real_test_1to1.png"
-    save_one_to_one(summary, metrics, plot_path)
+    save_one_to_one(summary, metrics, plot_path, head_type=args.head_type, pool=args.pool)
 
     np.savez(
         encoder_path,
