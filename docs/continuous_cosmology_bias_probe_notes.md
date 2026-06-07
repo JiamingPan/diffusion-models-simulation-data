@@ -610,6 +610,17 @@ VGG ablations submitted after the full encoder:
 | `51475739` | Larger MLP, average pooling | same as above but `VGG_POOL=avg` |
 | `51475740` | Linear Ridge head sanity check | `HEAD_TYPE=ridge`, `RIDGE_ALPHA=1.0`, `VGG_POOL=avgmax` |
 
+VGG ablation real-heldout results:
+
+| Encoder | `Omega_m` R2 | `sigma_8` R2 | `A_SN1` R2 | `A_AGN1` R2 | `A_SN2` R2 | `A_AGN2` R2 |
+|---|---:|---:|---:|---:|---:|---:|
+| default MLP avg+max (`51475731`) | `0.8992` | `0.6830` | `0.4189` | `0.0144` | `0.2953` | `0.0946` |
+| big MLP avg+max (`51475738`) | `0.9115` | `0.7374` | `0.4544` | `-0.0063` | `0.3251` | `0.1005` |
+| big MLP avg (`51475739`) | `0.9027` | `0.7349` | `0.4535` | `-0.0313` | `0.2561` | `0.0868` |
+| Ridge avg+max (`51475740`) | `0.8977` | `0.7143` | `0.4145` | `-0.0217` | `0.2862` | `0.1418` |
+
+Best current encoder for presentation: `big MLP avg+max` (`51475738`). It gives the best `Omega_m`, `sigma_8`, `A_SN1`, and `A_SN2` recovery. `A_AGN1` remains basically unrecovered, and `A_AGN2` is weak.
+
 If the real held-out VGG encoder has acceptable `R^2`, run the generated-sample calibration:
 
 ```bash
@@ -631,6 +642,28 @@ Generated-sample VGG evaluation job:
 | `51475741` | Evaluate generated samples using the current default VGG encoder at `results/nf_conditional_bias_probe/encoder/vgg_mlp_encoder.npz`. |
 
 This job is independent of the ablations above. It uses the already-finished default full VGG encoder unless a different `--vgg-encoder` path is passed.
+
+VGG generated-sample calibration result from job `51475741`:
+
+| Regime | Dataset size | `Omega_m` slope | `sigma_8` slope | Interpretation |
+|---|---:|---:|---:|---|
+| Memorization | `128` | `0.2568` | `0.3285` | weak dependence on requested cosmology |
+| Generalization | `16,384` | `0.7866` | `0.3814` | `Omega_m` tracks input much better; `sigma_8` still weak |
+
+Useful plotting helper:
+
+```bash
+cd /home/jiamingp/diffusion_models_repo
+python scripts/plot_nf_conditional_bias_vgg_results.py --project-dir "$PWD"
+```
+
+This writes:
+
+```text
+results/nf_conditional_bias_probe/encoder/vgg_encoder_r2_comparison.csv
+results/nf_conditional_bias_probe/encoder/vgg_encoder_r2_comparison.png
+results/nf_conditional_bias_probe/calibration_vgg/bias_probe_vgg_main_slopes.png
+```
 
 ## Calibration Evaluation
 
