@@ -4,7 +4,7 @@ This note records the exact setup used for the recent continuous-cosmology HI bi
 
 ## One-Sentence Summary
 
-We trained two continuous-conditioning HI diffusion models, one with `N=128` 2D training fields and one with `N=16,384` 2D training fields, then tested whether generated HI fields at held-out cosmologies encode back to the requested input cosmology using a real-only frozen PCA + Ridge encoder.
+We trained two continuous-conditioning HI diffusion models, one with `N=128` 2D training fields and one with `N=16,384` 2D training fields, then tested whether generated HI fields at held-out cosmologies encode back to the requested input cosmology. The first calibration used a real-only frozen PCA + Ridge encoder; later checks added PCA + MLP and VGG16-feature + MLP encoders, with VGG16 features giving the strongest real-heldout recovery so far.
 
 ## Main Question
 
@@ -14,7 +14,7 @@ Operational test:
 
 1. Pick a held-out cosmology `theta_in`.
 2. Generate `K=64` HI fields using the same `theta_in` but different diffusion noise seeds.
-3. Encode each generated field back to cosmology parameters using the frozen PCA + Ridge encoder.
+3. Encode each generated field back to cosmology parameters using a real-only frozen feature encoder plus a regression head.
 4. Plot median recovered parameter vs input parameter.
 5. Fit a line; slope near 1 means the generated fields track the input cosmology, while slope near 0 means poor conditional calibration / regression toward a typical training value.
 
@@ -460,6 +460,69 @@ real HI slice -> repeat to 3 channels -> resize to 224 -> frozen VGG16 features 
 
 The VGG feature extractor is frozen. Only the small regression head is trained on real non-held-out CAMELS HI slices.
 
+Precise tensor conversion:
+
+```text
+normalized HI slice:  (128, 128) or (1, 128, 128)
+add channel if needed: (1, 128, 128)
+batch form:            (B, 1, 128, 128)
+repeat channel:        (B, 3, 128, 128)
+bilinear resize:       (B, 3, 224, 224)
+ImageNet normalize:    channelwise mean/std normalization
+frozen VGG16:          feature map
+pool:                  average pooling or average+max pooling
+regression head:       MLP or Ridge -> six cosmology parameters
+```
+
+The channel repeat is a shape adaptation for VGG. It does not add new information:
+
+```text
+R channel = HI
+G channel = HI
+B channel = HI
+```
+
+The resize is bilinear interpolation to `224 x 224`. This differs slightly from standard ImageNet preprocessing, which commonly resizes and center-crops natural images. For the HI maps we do not crop because cropping would discard cosmological structure; the goal is to feed the whole 2D field into the frozen feature extractor.
+
+Terminology:
+
+| Term | Meaning |
+|---|---|
+| Frozen VGG16 feature extractor | ImageNet-pretrained VGG16 convolutional layers. Parameters are not updated. |
+| VGG features | The vector produced by pooling frozen VGG feature maps. |
+| MLP head | Trainable nonlinear regression model after VGG features. |
+| Ridge head | Trainable linear regression model with L2 regularization after VGG features. |
+| Larger MLP head | More hidden layers/units in the trainable regression part, not a deeper VGG. |
+
+Example MLP heads:
+
+```text
+default: VGG features -> Linear(512) -> activation -> Linear(256) -> activation -> Linear(6)
+large:   VGG features -> Linear(1024) -> activation -> Linear(512) -> activation -> Linear(256) -> activation -> Linear(6)
+```
+
+Slice-count meaning:
+
+| Setting | Meaning |
+|---|---|
+| `HEAD_TRAIN_SLICES=65536` | 65,536 real 2D HI slices for training the VGG regression head. |
+| `HEAD_VAL_SLICES=8192` | 8,192 real 2D HI slices for validation. |
+| `TEST_SLICES_PER_SIM=128` | All 128 z-slices from each held-out simulation for real-heldout testing. |
+| Test set size | `32 held-out sims x 128 slices = 4096` real held-out slices. |
+
+These are counts of 2D images/slices, not counts of CAMELS simulations.
+
+Environment note:
+
+- VGG uses `torchvision`, so the working Great Lakes environment is `/home/jiamingp/venvs/cosmodiff_nf_class`.
+- `torch==2.1.2+cu118` and `torchvision==0.16.2+cu118` were verified to import after disabling the stale path-injection file:
+
+```text
+/home/jiamingp/venvs/cosmodiff_nf_class/lib/python3.10/site-packages/00-cosmodiff-base-venv.pth
+```
+
+That file injected `/home/jiamingp/venvs/cosmodiff_nf/lib/python3.10/site-packages` and caused incompatible package mixing.
+
 Run a tiny smoke test first:
 
 ```bash
@@ -476,6 +539,19 @@ vgg_smoke=$(HEAD_TRAIN_SLICES=512 \
 echo "vgg_smoke=$vgg_smoke"
 ```
 
+Smoke-test result from job `51475729`:
+
+| Parameter | R2 | MAE | RMSE | Note |
+|---|---:|---:|---:|---|
+| `Omega_m` | `0.5189` | `0.0579` | `0.0749` | already much better than PCA+MLP smoke |
+| `sigma_8` | `0.0111` | `0.0947` | `0.1211` | weak |
+| `A_SN1` | `0.3708` | `0.4481` | `0.5914` | useful signal |
+| `A_AGN1` | `0.0678` | `0.7544` | `0.9459` | weak |
+| `A_SN2` | `0.2601` | `0.3205` | `0.3788` | useful signal |
+| `A_AGN2` | `-0.4311` | `0.4118` | `0.5287` | bad |
+
+The smoke test used only `512` train slices and `30` MLP iterations, so it is only a package/runtime and rough-signal check.
+
 Then run the full VGG encoder if the smoke test passes:
 
 ```bash
@@ -484,6 +560,44 @@ vgg_enc=$(sbatch -A huterer2 --parsable \
   scripts/slurm/train_nf_conditional_bias_vgg_encoder.sbatch)
 echo "vgg_enc=$vgg_enc"
 ```
+
+Full VGG encoder result from job `51475731`:
+
+| Parameter | R2 | MAE | RMSE | Bias |
+|---|---:|---:|---:|---:|
+| `Omega_m` | `0.8992` | `0.0253` | `0.0343` | `-0.0033` |
+| `sigma_8` | `0.6830` | `0.0598` | `0.0686` | `0.0110` |
+| `A_SN1` | `0.4189` | `0.4848` | `0.5684` | `0.1053` |
+| `A_AGN1` | `0.0144` | `0.7851` | `0.9726` | `-0.1170` |
+| `A_SN2` | `0.2953` | `0.3149` | `0.3697` | `0.0073` |
+| `A_AGN2` | `0.0946` | `0.3459` | `0.4205` | `-0.0010` |
+
+Interpretation:
+
+- VGG16 features + MLP are now credible for `Omega_m` and `sigma_8`.
+- `A_SN1` and `A_SN2` have partial signal.
+- `A_AGN1` and `A_AGN2` remain weak from HI with this simple encoder.
+- For presentation, lead with `Omega_m` and `sigma_8`; treat feedback parameters as harder / weakly constrained.
+
+Current VGG outputs:
+
+```text
+results/nf_conditional_bias_probe/encoder/vgg_mlp_encoder.npz
+results/nf_conditional_bias_probe/encoder/vgg_mlp_encoder.pkl
+results/nf_conditional_bias_probe/encoder/vgg_real_test_1to1.png
+results/nf_conditional_bias_probe/encoder/vgg_real_test_metrics.csv
+results/nf_conditional_bias_probe/encoder/vgg_real_test_per_cosmology_predictions.csv
+results/nf_conditional_bias_probe/encoder/vgg_real_test_per_slice_predictions.csv
+results/nf_conditional_bias_probe/encoder/vgg_real_test_metadata.json
+```
+
+VGG ablations submitted after the full encoder:
+
+| Job | Purpose | Key settings |
+|---:|---|---|
+| `51475738` | Larger MLP, avg+max pooling | `HEAD_TRAIN_SLICES=65536`, `HEAD_VAL_SLICES=8192`, `MLP_HIDDEN_LAYERS=1024,512,256`, `MLP_MAX_ITER=1200`, `VGG_POOL=avgmax` |
+| `51475739` | Larger MLP, average pooling | same as above but `VGG_POOL=avg` |
+| `51475740` | Linear Ridge head sanity check | `HEAD_TYPE=ridge`, `RIDGE_ALPHA=1.0`, `VGG_POOL=avgmax` |
 
 If the real held-out VGG encoder has acceptable `R^2`, run the generated-sample calibration:
 
@@ -498,6 +612,14 @@ VGG calibration outputs go to:
 ```text
 results/nf_conditional_bias_probe/calibration_vgg/
 ```
+
+Generated-sample VGG evaluation job:
+
+| Job | Purpose |
+|---:|---|
+| `51475741` | Evaluate generated samples using the current default VGG encoder at `results/nf_conditional_bias_probe/encoder/vgg_mlp_encoder.npz`. |
+
+This job is independent of the ablations above. It uses the already-finished default full VGG encoder unless a different `--vgg-encoder` path is passed.
 
 ## Calibration Evaluation
 
@@ -639,6 +761,6 @@ results/nf_conditional_bias_probe/calibration/bias_probe_errorbar_spread_summary
 
 ## Slide-Friendly Explanation Of Error Bars
 
-For each held-out cosmology, the input `theta` is fixed. We sample 64 generated HI fields by changing only the diffusion noise seed. Each generated field is passed through the same frozen PCA + Ridge encoder. The marker is the median recovered parameter, and the vertical error bar is the 16th-to-84th percentile spread of the 64 recovered values.
+For each held-out cosmology, the input `theta` is fixed. We sample 64 generated HI fields by changing only the diffusion noise seed. Each generated field is passed through the same chosen encoder: PCA + Ridge, PCA + MLP, or VGG16 features + MLP. The marker is the median recovered parameter, and the vertical error bar is the 16th-to-84th percentile spread of the 64 recovered values.
 
 Therefore, the bar measures stochastic generated-sample variation at fixed input cosmology. It is not the model bias itself. Bias is read mainly from the median location and fitted slope relative to the diagonal.
