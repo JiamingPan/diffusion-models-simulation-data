@@ -1,225 +1,80 @@
 # Diffusion Models for CAMELS Simulation Fields
 
-This repo evaluates diffusion models on CAMELS cosmological fields using physics-aware metrics and reproducibility/generalization diagnostics. It builds on [`nkern/cosmo_diffusion`](https://github.com/nkern/cosmo_diffusion) for base diffusion-model training and adds CAMELS-specific metrics, evaluation scripts, templates, notebooks, and project notes.
+This repository studies diffusion models for CAMELS cosmological simulation fields. The main question is whether a diffusion model learns the underlying distribution of physical fields, or whether it memorizes the finite training set.
 
-This is not a reimplementation of `cosmo_diffusion`, and it does not claim the base training code as original work. The training entry point is still `cosmodiff_train.py` from `nkern/cosmo_diffusion`; this repo organizes experiments around it.
+The project builds on [`nkern/cosmo_diffusion`](https://github.com/nkern/cosmo_diffusion) for the base diffusion training code. This repository adds CAMELS-specific experiment organization, evaluation scripts, diagnostics, notebooks, and project notes. It is an active research repo, so results and interfaces are still evolving.
+
+## Project Goals
+
+- Train diffusion models on CAMELS 2D field slices derived from 3D simulation volumes.
+- Measure when generated samples are near-copies of training fields versus genuinely new samples.
+- Check whether generated fields remain physically meaningful using one-point statistics and power spectra.
+- Test conditional generation: ask for a cosmology, generate an HI field, then recover the cosmology from the generated field with an independent encoder.
 
 ## Repository Layout
 
-Reusable layer:
-
 ```text
-simdiff_eval/       local evaluation package for metrics and plotting
-scripts/*.py        lightweight train/sample/eval wrappers
-configs/templates/  portable CAMELS LH config templates
-scripts/slurm/      sanitized Slurm template
-notebooks/          analysis notebooks for run sweeps
-docs/               project notes and methodology explanations
+simdiff_eval/       reusable evaluation and plotting utilities
+scripts/            lightweight training, sampling, preparation, and analysis wrappers
+scripts/slurm/      sanitized Slurm templates used for cluster runs
+configs/templates/  portable example configs
+notebooks/          analysis and figure-making notebooks
+docs/               project notes, experiment summaries, and methodology notes
+results/            generated tables and figures; mostly ignored or symlinked locally
 ```
 
-Output layer:
+Large CAMELS data files, generated samples, checkpoints, personal paths, logs, and account-specific Slurm files are intentionally excluded from git.
 
-```text
-results/figures/    generated figures, ignored by git except .gitkeep
-results/tables/     generated metric tables, ignored by git except .gitkeep
-```
+## Minimal Setup
 
-Large CAMELS data files, generated samples, checkpoints, model weights, logs, personal cluster paths, and account-specific Slurm files are intentionally excluded from git. For new runs, start from `configs/templates/` and `scripts/slurm/train_template.sbatch`, then edit paths locally.
-
-## Installation
-
-Clone this repo:
+Clone this repository and install the Python dependencies:
 
 ```bash
 git clone git@github.com:JiamingPan/diffusion-models-simulation-data.git
 cd diffusion-models-simulation-data
-```
-
-Install Python dependencies:
-
-```bash
 python -m pip install -r requirements.txt
 ```
 
-Make `nkern/cosmo_diffusion` available. One simple local layout is:
+The base training code comes from `nkern/cosmo_diffusion`, which should be available on `PYTHONPATH` or installed in the active environment. Most real experiments were run on a GPU cluster, but this README intentionally avoids account-specific commands.
 
-```bash
-git clone git@github.com:nkern/cosmo_diffusion.git cosmo_diffusion
-export PYTHONPATH=$PWD/cosmo_diffusion:$PYTHONPATH
-```
+## Typical Workflow
 
-On a cluster, use a Python/PyTorch environment compatible with `cosmo_diffusion`, then set:
+At a high level, the workflow is:
 
-```bash
-export PYTHONPATH=/path/to/cosmo_diffusion:$PYTHONPATH
-```
+1. Prepare a CAMELS field config and choose training-set size.
+2. Train a diffusion model using `cosmo_diffusion`.
+3. Sample generated fields from checkpoints, often with DPM-Solver for faster inference.
+4. Evaluate generated fields with physical statistics and memorization/generalization diagnostics.
+5. Inspect and polish results in notebooks.
 
-## Example Training
+The main notebooks currently used for figures and checks are:
 
-Run locally or inside a Slurm job using a template or edited config:
+- `notebooks/nf_generalize_fig2_partial_quickcheck.ipynb`: memorization/generalization curves, one-point checks, power spectra, and poster figures.
+- `notebooks/nf_conditional_bias_probe_check.ipynb`: continuous-cosmology calibration checks.
+- `notebooks/nf_poster_ablation_appendix.ipynb`: guidance/CFG ablation plots for appendix-style checks.
 
-```bash
-python scripts/train_cosmodiff.py --config configs/templates/u64_lh_template.yaml
-```
+## Current Results
 
-For Slurm, copy and edit the sanitized template:
+These are current working results, not final paper claims.
 
-```bash
-cp scripts/slurm/train_template.sbatch local/my_train.sbatch
-# edit local/my_train.sbatch
-sbatch local/my_train.sbatch
-```
+- **Memorization-to-generalization transition:** generated fields are training-set-like at small dataset sizes and become less training-set-like as training data increases. This is measured with nearest-neighbor diagnostics in PCA and SSCD feature spaces.
+- **Architecture dependence:** wider U-Net models generally require more data and/or training to reach the same generalization behavior.
+- **Physical fidelity checks:** generated fields are compared to real fields using one-point pixel-value distributions and radial power spectra, so the evaluation is not based only on visual similarity.
+- **Faster sampling:** DPM-Solver multistep sampling with 50 steps gives much faster generation than the original 500-step DDPM baseline while preserving the key diagnostics used here.
+- **Conditional cosmology calibration:** for HI-only continuous conditioning, generated fields are encoded back to cosmology parameters. The best current probe uses frozen VGG16 features with average+max pooling and an MLP regression head. The large-data model tracks the requested `Omega_m` much better than the small-data model; `sigma_8` is weaker, and feedback parameters remain harder to recover from HI alone.
 
-The template calls:
+## Key Evaluation Ideas
 
-```bash
-python /path/to/cosmo_diffusion/scripts/cosmodiff_train.py --config <config.yaml>
-```
+- **One-point PDF:** checks whether generated field values follow the same marginal distribution as real fields.
+- **Power spectrum `P(k)`:** checks whether generated fields reproduce spatial structure across scales.
+- **Nearest-neighbor similarity:** checks whether generated samples are too close to training samples.
+- **Reproducibility:** compares generated sets from independently trained models.
+- **Conditional calibration:** compares requested cosmology parameters with parameters recovered from generated fields.
 
-## Example Sampling
+## Status
 
-Generate samples from a checkpoint or checkpoint directory:
-
-```bash
-python scripts/sample_cosmodiff.py \
-  --checkpoint /path/to/checkpoints \
-  --output results/tables/generated_samples.npy \
-  --num-samples 128 \
-  --batch-size 16
-```
-
-The output `.npy` is ignored by git by default.
-
-## Example Evaluation
-
-Evaluate generated samples against real data loaded through a training config:
-
-```bash
-python scripts/evaluate_samples.py \
-  --real-config configs/templates/u64_lh_template.yaml \
-  --generated results/tables/generated_samples.npy \
-  --output-json results/tables/eval.json \
-  --fig-dir results/figures/example
-```
-
-Compare multiple generated sample sets for reproducibility:
-
-```bash
-python scripts/reproducibility_eval.py \
-  --generated seed1:results/tables/run16_seed1.npy \
-  --generated seed2:results/tables/run16_seed2.npy \
-  --output-json results/tables/run16_reproducibility.json
-```
-
-Make a Figure-1-style pairwise reproducibility plot across model widths:
-
-```bash
-python scripts/plot_reproducibility_figure.py \
-  --manifest local/reproducibility_manifest.json \
-  --sample-root results/tables/samples \
-  --output-csv results/tables/reproducibility_scores.csv \
-  --output-figure results/figures/reproducibility_scores.png
-```
-
-For real experiments, copy `configs/templates/reproducibility_manifest_template.json`
-to an ignored local path and edit the run names, dataset sizes, and generated
-sample paths.
-
-## Metrics
-
-The evaluation scripts include:
-
-- 2D radial power spectrum ratio, `generated P(k) / real P(k)`.
-- Field one-point histogram and quantiles.
-- Nearest-neighbor distance from generated images to real images in pixel space, as a simple memorization diagnostic.
-- Reproducibility diagnostics across generated sample sets, including power-spectrum consistency and one-point-statistic consistency.
-- Full-reference PCA nearest-neighbor diagnostics for Fig. 2 style reproducibility/generalizability checks.
-- Full-reference SSCD nearest-neighbor diagnostics for paper-style near-copy detection.
-
-The notebooks add richer diagnostics such as PCA feature-space comparisons, PCA-FID/KID, image grids, and run-by-run training curves.
-
-The reproducibility-figure script uses a transparent project score:
-
-```text
-error = P(k) log10 MAE between generated sets
-      + absolute difference in field mean
-      + absolute difference in field standard deviation
-
-score = 1 / (1 + error)
-```
-
-This gives a compact score in `(0, 1]`, where larger means the two generated
-sample sets are more statistically similar under these diagnostics. It is a
-Figure-1-style diagnostic, not a claim to exactly match another paper's score
-unless that score is implemented separately.
-
-Compute a paper-style SSCD generalizability curve for one model width:
-
-```bash
-python scripts/plot_generalizability_sscd.py \
-  --arch u64 \
-  --config-dir local/fig1_lh/configs \
-  --sample-root results/tables/samples \
-  --sscd-path /path/to/sscd_disc_mixup.torchscript.pt \
-  --output-csv results/tables/generalizability_sscd_u64.csv \
-  --output-figure results/figures/generalizability_sscd_u64.png
-```
-
-This score follows the near-copy logic used in SSCD-based generalizability
-plots: a generated image is counted as memorized if its maximum SSCD cosine
-similarity to any real training image exceeds the threshold. Keep this separate
-from P(k): SSCD is a copy/generalization diagnostic, while P(k) is a
-physics-fidelity diagnostic. See `docs/sscd_generalizability_note.md` for the
-equations and the reason P(k)-nearest-neighbor scores are not equivalent to
-SSCD copy detection.
-
-Compute the current Fig. 2 style CAMELS diagnostics for the `nf_generalize_fig2`
-sweep:
-
-```bash
-python scripts/prepare_nf_generalize_fig2_configs.py --project-dir "$PWD" --check-only
-
-sbatch -A huterer0 scripts/slurm/analyze_nf_generalize_fig2_pca.sbatch
-sbatch -A huterer0 scripts/slurm/analyze_nf_generalize_fig2_sscd.sbatch
-```
-
-The PCA analyzer writes:
-
-```text
-results/nf_generalize_fig2/tables/nf_generalize_fig2_pca_full_nn_metrics.csv
-results/nf_generalize_fig2/tables/nf_generalize_fig2_pca_full_nn_reproducibility.csv
-```
-
-The SSCD analyzer writes:
-
-```text
-results/nf_generalize_fig2/tables/nf_generalize_fig2_sscd_full_nn_metrics.csv
-results/nf_generalize_fig2/tables/nf_generalize_fig2_sscd_full_nn_reproducibility.csv
-```
-
-Open `notebooks/nf_generalize_fig2_partial_quickcheck.ipynb` to inspect the
-available checkpoints/samples, training losses, image panels, one-point
-statistics, P(k), PCA Fig. 2 curves, and SSCD Fig. 2 curves. See
-`docs/encoder_roadmap.md` for the rationale behind PCA, SSCD, and possible
-CAMELS-native encoders.
-
-## Current Experiment Notes
-
-The templates include U64, U128, and U256-width starting points with centered max-abs normalization and CAMELS slice-thinning via `zthin`.
-
-Important naming distinction:
-
-- `z=0.0` in CAMELS filenames means cosmological redshift.
-- `zthin` in configs means thinning the spatial depth axis of a 3D cube before converting cubes into 2D slices.
+This repository is work in progress for an ongoing research project and poster/workshop-paper preparation. The code is useful for reproducing the current analysis workflow, but paths, notebooks, and experiment names may still change as the project is cleaned up.
 
 ## Acknowledgements
 
-This project builds on Nicholas Kern's `nkern/cosmo_diffusion` package for base diffusion training, checkpoint loading, data parsing, and sampling utilities. The additions here are CAMELS-focused experiment configs, wrappers, metrics, diagnostics, and analysis notebooks.
-
-## TODO
-
-- Add sanitized example configs for the reproducibility/data-size experiment after the final run plan is fixed.
-- Add a documented sampling workflow that saves generated arrays for every major run.
-- Add tests for `simdiff_eval.metrics`.
-- Add a small CI job for linting/import checks.
-- Decide whether to track `cosmo_diffusion` as a git submodule or require it as an external dependency.
+This project builds on Nicholas Kern's `nkern/cosmo_diffusion` package for base diffusion training, checkpoint loading, data parsing, and sampling utilities. The additions here are CAMELS-focused experiment configs, wrappers, diagnostics, and analysis notebooks.
