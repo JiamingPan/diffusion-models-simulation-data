@@ -32,7 +32,11 @@ CONFIG_DIR=${CONFIG_DIR:-${PROJECT_DIR}/local/nf_generalize_fig2/configs}
 SNAPSHOT_ROOT=${SNAPSHOT_ROOT:-${PROJECT_DIR}/results/nf_generalize_fig2/epoch_snapshots}
 PLOT_OUTPUT=${PLOT_OUTPUT:-${PROJECT_DIR}/results/nf_generalize_fig2/quickcheck/learning_process_epoch_samples.png}
 POSTER_OUTPUT=${POSTER_OUTPUT:-${PROJECT_DIR}/poster/figs/learning_process_epoch_samples.png}
-PYTHON_BIN=${PYTHON_BIN:-python}
+if [[ -z "${PYTHON_BIN:-}" && -x "${VENV_PATH}/bin/python" ]]; then
+  PYTHON_BIN="${VENV_PATH}/bin/python"
+else
+  PYTHON_BIN=${PYTHON_BIN:-python}
+fi
 
 RUN_NAME=${RUN_NAME:-nf_fig2_u128_d2p15_noaug_200k}
 EPOCHS=${EPOCHS:-auto}
@@ -52,6 +56,13 @@ mkdir -p logs/nf_generalize_fig2 "${SNAPSHOT_ROOT}" "$(dirname "${PLOT_OUTPUT}")
 if [[ -f "${VENV_PATH}/bin/activate" ]]; then
   source "${VENV_PATH}/bin/activate"
 fi
+if [[ -d "${VENV_PATH}/lib" ]]; then
+  export LD_LIBRARY_PATH="${VENV_PATH}/lib:${LD_LIBRARY_PATH:-}"
+fi
+if [[ -d "${BASE_VENV_PATH}/lib" ]]; then
+  export LD_LIBRARY_PATH="${BASE_VENV_PATH}/lib:${LD_LIBRARY_PATH:-}"
+fi
+export PYTHONNOUSERSITE=${PYTHONNOUSERSITE:-1}
 source "${PROJECT_DIR}/scripts/nf_class_conditional_pythonpath.sh"
 set_nf_class_conditional_pythonpath "${VENV_PATH}/bin/python" "${BASE_VENV_PATH}"
 
@@ -159,10 +170,13 @@ for ckpt in "${SELECTED_CKPTS[@]}"; do
     --device cuda
 done
 
-"${PYTHON_BIN}" "${PROJECT_DIR}/scripts/plot_nf_generalize_epoch_samples.py" \
+if ! "${PYTHON_BIN}" "${PROJECT_DIR}/scripts/plot_nf_generalize_epoch_samples.py" \
   --sample-dir "${SNAPSHOT_ROOT}" \
   --run-name "${RUN_NAME}" \
   --sample-label "${SAMPLE_LABEL}" \
   --max-samples "${MAX_PLOT_SAMPLES}" \
   --output "${PLOT_OUTPUT}" \
-  --poster-output "${POSTER_OUTPUT}"
+  --poster-output "${POSTER_OUTPUT}"; then
+  echo "WARNING: epoch samples were written, but the summary plot failed." >&2
+  echo "         This is non-fatal; rerun the notebook plotting cell or this script after fixing matplotlib." >&2
+fi
