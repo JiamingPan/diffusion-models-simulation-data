@@ -181,28 +181,8 @@ Probe safeguards: VGG16 frozen (ImageNet); regression head trained on
 used exclusively for testing and calibration.
 \end{tcolorbox}
 
-\begin{tcolorbox}[secbox={vggOrange}{Calibration results}]
-\begin{center}
-\figslot{27.8cm}{19.6cm}{vgg_plot.png}
-  {VGG notebook $\to$ recovered vs requested $\Omega_m$ bias probe}
-\end{center}
-
-\vspace{1mm}
-\SmallFont
-\hl{vggOrange}{Main result:} $\Omega_m$ recovery is much flatter under
-memorization (\textbf{slope 0.26}, $N_{2D}=2^7$) than in the high-data regime
-(\textbf{slope 0.79}, $N_{2D}=2^{14}$). Error bars are the 16--84 percentile
-spread over generated seeds at fixed $\bm{\theta}_{\rm ask}$. We lead with
-$\Omega_m$ because the real-held-out VGG probe is strongest there
-($R^2=0.91$; $\sigma_8=0.74$, feedback parameters weaker).
-\end{tcolorbox}
-
-\end{minipage}\hfill
-\begin{minipage}[t]{\colw}\vspace{0pt}
-% ----------------------------------------------------------- COL 3
-
 \begin{tcolorbox}[secbox={diffPurple}{Memorization $\to$ generalization transition}]
-\figslot{29.4cm}{13.5cm}{nf_generalize_fig2_poster_pca_generalization_q95_serif_clean.png}
+\figslot{29.0cm}{13.2cm}{nf_generalize_fig2_poster_pca_generalization_q95_serif_clean.png}
   {quickcheck notebook $\to$ PCA generalization curves with q95 threshold}
 
 \vspace{2mm}
@@ -214,6 +194,26 @@ $\Omega_m$ because the real-held-out VGG probe is strongest there
 \item \textbf{Larger $N_{2D}$}: UNet-64\,/\,128\,/\,256 move toward novel
       samples; the wider UNet-256 transition is shifted to larger data.
 \end{itemize}
+\end{tcolorbox}
+
+\end{minipage}\hfill
+\begin{minipage}[t]{\colw}\vspace{0pt}
+% ----------------------------------------------------------- COL 3
+
+\begin{tcolorbox}[secbox={vggOrange}{Calibration results}]
+\begin{center}
+\figslot{28.0cm}{18.6cm}{vgg_plot.png}
+  {VGG notebook $\to$ recovered vs requested $\Omega_m$ bias probe}
+\end{center}
+
+\vspace{1mm}
+\SmallFont
+\hl{vggOrange}{Main result:} $\Omega_m$ recovery is much flatter under
+memorization (\textbf{slope 0.26}, $N_{2D}=2^7$) than in the high-data regime
+(\textbf{slope 0.79}, $N_{2D}=2^{14}$). Error bars are the 16--84 percentile
+spread over generated seeds at fixed $\bm{\theta}_{\rm ask}$. We lead with
+$\Omega_m$ because the real-held-out VGG probe is strongest there
+($R^2=0.91$; $\sigma_8=0.74$, feedback parameters weaker).
 \end{tcolorbox}
 
 \begin{tcolorbox}[secbox={fieldTeal}{Physical fidelity}]
