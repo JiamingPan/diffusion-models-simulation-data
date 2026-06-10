@@ -75,8 +75,8 @@
         minimum width=99.1cm, minimum height=10.6cm] (hdr) at (0,0) {};
   \node[anchor=west, text=white, text width=70.5cm, align=left]
     at ($(hdr.west)+(1.8cm,0.9cm)$)
-    {\TitleFont Evaluating Diffusion Models for Cosmological Simulation Data:\\[2mm]
-     \TitleFont\color{white!75!ink} Memorization, Generalization, and Scientific Fidelity};
+    {\TitleFont Understanding the Transition from Memorization\\[2mm]
+     \TitleFont\color{white!75!ink} to Generalization in Diffusion Models for Cosmology};
   \node[anchor=west, text=white!88!ink, text width=70.5cm, align=left]
     at ($(hdr.south west)+(1.8cm,1.55cm)$)
     {\AuthorFont Jiaming Pan\,$^{1}$\quad Nicholas Kern\,$^{1}$\quad Dragan Huterer\,$^{1}$
@@ -100,7 +100,7 @@
 \begin{tcolorbox}[secbox={paramBlue}{The question}]
 Generative emulators promise \hl{paramBlue}{cheap surrogates} for expensive
 cosmological simulations --- but an emulator that \hl{loopRed}{memorizes} its
-training set produces confident nonsense when used for inference.
+training set can give a biased prior over fields.
 We train diffusion models on CAMELS HI maps and ask:
 
 \begin{enumerate}[leftmargin=14mm, itemsep=2mm, label=\textcolor{paramBlue}{\textbf{\arabic*.}}]
@@ -111,6 +111,15 @@ We train diffusion models on CAMELS HI maps and ask:
 \item Are generated fields \hl{fieldTeal}{statistically faithful}
       (one-point PDF, power spectrum)?
 \end{enumerate}
+
+\vspace{2mm}
+\begin{center}
+\figslot{27.0cm}{7.9cm}{inference_manifold_implication.pdf}
+  {conceptual manifold schematic: learned prior, data constraint, posterior}
+\end{center}
+\SmallFont
+If the learned prior collapses onto training islands, a downstream posterior
+can become biased even when the likelihood calculation is sharp.
 \end{tcolorbox}
 
 \begin{tcolorbox}[secbox={diffPurple}{Data \& models}]
@@ -132,10 +141,13 @@ We train diffusion models on CAMELS HI maps and ask:
 \SmallFont
 For each generated sample $x_j$, find its nearest training field in pixel,
 PCA, and SSCD embedding space:
-\begin{center}
-$s_j = \max_i\, \mathrm{sim}(x_j, y_i), \qquad
-\mathrm{GL}(\tau) = 1 - \Pr[\,s_j > \tau\,]$
-\end{center}
+\begingroup
+\fontsize{31}{38}\selectfont
+\[
+s_j = \max_i\, \mathrm{sim}(x_j, y_i), \qquad
+\mathrm{GL}(\tau) = 1 - \Pr[\,s_j > \tau\,]
+\]
+\endgroup
 with $\tau$ calibrated from leave-one-out train--train similarities.
 Independent models should reproduce the same distribution, not the same
 training images.
@@ -145,30 +157,16 @@ training images.
   {generated / nearest-train visual}
 \end{tcolorbox}
 
-\begin{tcolorbox}[secbox={fieldTeal}{Why this matters for inference}]
-\SmallFont
-Orange is the true field distribution, blue is the data constraint $y$, and
-black points are training-like islands learned under memorization. A likelihood
-using that collapsed generator can return a sharp but biased posterior, so we
-test the failure mode directly:
-\[
-  \bm{\theta}_{\rm ask}\ \to\ x_{\rm gen}\ \to\ \bm{\theta}_{\rm rec}.
-\]
-\begin{center}
-\figslot{27.5cm}{8.6cm}{inference_manifold_implication.pdf}
-  {conceptual manifold schematic: data prior, noisy observable, posterior}
-\end{center}
-\end{tcolorbox}
-
 \end{minipage}\hfill
 \begin{minipage}[t]{\colw}\vspace{0pt}
 % ----------------------------------------------------------- COL 2
 
 \begin{tcolorbox}[secbox={loopRed}{Calibration: does the generator obey $\bm{\theta}$?}]
-Ask the conditional model for \textbf{held-out cosmologies}, then read the
-cosmology back from its generated maps with a \textbf{frozen probe}.
-A memorized model returns the training distribution no matter what you ask for;
-a generalizing model tracks the request.
+Ask the conditional model for \textbf{held-out samples}, then read the
+cosmology back from its generated maps with a \textbf{frozen encoder}.
+If the conditioning is used, changing $\bm{\theta}_{\rm ask}$ should move
+the recovered $\bm{\theta}_{\rm rec}$ rather than leaving it near the
+training-set average.
 
 \vspace{4mm}
 \begin{center}
@@ -176,9 +174,9 @@ a generalizing model tracks the request.
 \end{center}
 
 \SmallFont\color{subgray}
-Probe safeguards: VGG16 frozen (ImageNet); regression head trained on
-\emph{real} slices from non-held-out simulations only; held-out sims 900--931
-used exclusively for testing and calibration.
+Encoder setup: VGG16 is frozen (ImageNet); only the regression head is trained
+on \emph{real} slices from non-held-out simulations. Held-out test simulations
+are used only for encoder validation and generator calibration.
 \end{tcolorbox}
 
 \begin{tcolorbox}[secbox={diffPurple}{Memorization $\to$ generalization transition}]
