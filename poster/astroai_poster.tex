@@ -41,12 +41,12 @@
     enhanced, breakable=false,
     colback=white, colframe=#1,
     boxrule=1.8pt, arc=6mm,
-    left=7mm, right=7mm, top=4mm, bottom=5mm,
+    left=7mm, right=7mm, top=3.5mm, bottom=4mm,
     title={\BoxTitleFont #2},
     coltitle=white, colbacktitle=#1,
     toptitle=3mm, bottomtitle=3mm, lefttitle=8mm,
     drop fuzzy shadow=black!35,
-    before skip=0mm, after skip=8mm
+    before skip=0mm, after skip=5mm
   }
 }
 
@@ -73,24 +73,24 @@
 \begin{tikzpicture}
   \node[anchor=north west, fill=ink, rounded corners=8mm,
         minimum width=99.1cm, minimum height=10.6cm] (hdr) at (0,0) {};
-  \node[anchor=west, text=white, text width=80cm, align=left]
+  \node[anchor=west, text=white, text width=70.5cm, align=left]
     at ($(hdr.west)+(1.8cm,0.9cm)$)
     {\TitleFont Evaluating Diffusion Models for Cosmological Simulation Data:\\[2mm]
      \TitleFont\color{white!75!ink} Memorization, Generalization, and Scientific Fidelity};
-  \node[anchor=west, text=white!88!ink]
+  \node[anchor=west, text=white!88!ink, text width=70.5cm, align=left]
     at ($(hdr.south west)+(1.8cm,1.55cm)$)
     {\AuthorFont Jiaming Pan\,$^{1}$\quad Nicholas Kern\,$^{1}$\quad Dragan Huterer\,$^{1}$
      \quad{\SmallFont $^{1}$Department of Physics, University of Michigan
      \;\;\textbullet\;\; jiamingp@umich.edu \;\;\textbullet\;\; 2026 AstroAI Workshop, CfA}};
-  \node[anchor=east, fill=white, rounded corners=4mm, inner sep=3mm]
-    (litp) at ($(hdr.east)+(-10.6cm,0)$)
-    {\includegraphics[width=7.8cm,height=5.0cm,keepaspectratio]{figs/litp_logo.pdf}};
+  \node[anchor=east, fill=white, rounded corners=4mm, inner sep=4mm]
+    (litp) at ($(hdr.east)+(-10.9cm,0)$)
+    {\includegraphics[width=14.4cm,height=5.8cm,keepaspectratio]{figs/litp_logo.pdf}};
   \node[anchor=east, fill=white, rounded corners=4mm, inner sep=5mm]
     (qr) at ($(hdr.east)+(-1.6cm,0)$)
     {\qrcode[height=7.2cm]{https://github.com/JiamingPan/diffusion-models-simulation-data}};
 \end{tikzpicture}
 
-\vspace{4mm}
+\vspace{2mm}
 
 % ================== THREE COLUMNS =================================
 \newlength{\colw}\setlength{\colw}{31.7cm}
@@ -114,6 +114,7 @@ We train diffusion models on CAMELS HI maps and ask:
 \end{tcolorbox}
 
 \begin{tcolorbox}[secbox={diffPurple}{Data \& models}]
+\SmallFont
 \begin{itemize}[leftmargin=11mm, itemsep=2mm, label=\textcolor{diffPurple}{$\blacktriangleright$}]
 \item \textbf{CAMELS} (IllustrisTNG) HI fields $\to$ $128\times128$ slices;
       6 parameters $\Omega_m,\ \sigma_8,\ A_{\mathrm{SN1}},\ A_{\mathrm{AGN1}},\
@@ -128,21 +129,35 @@ We train diffusion models on CAMELS HI maps and ask:
 \end{tcolorbox}
 
 \begin{tcolorbox}[secbox={fieldTeal}{Detecting memorization}]
+\SmallFont
 For each generated sample $x_j$, find its nearest training field in pixel,
 PCA, and SSCD embedding space:
 \begin{center}
 $s_j = \max_i\, \mathrm{sim}(x_j, y_i), \qquad
 \mathrm{GL}(\tau) = 1 - \Pr[\,s_j > \tau\,]$
 \end{center}
-with $\tau$ chosen \hl{fieldTeal}{adaptively} from leave-one-out
-train--train similarities. Independent architectures trained on the same data
-must agree if they learned the same distribution
-$\to$ \hl{fieldTeal}{cross-model reproducibility} check.
+with $\tau$ calibrated from leave-one-out train--train similarities.
+Independent models should reproduce the same distribution, not the same
+training images.
 
-\vspace{4mm}
-\figslot{29.5cm}{9.5cm}{nf_generalize_fig2_u128_generated_vs_pixel_nn.png}
-  {quickcheck notebook $\to$ ``Generated vs closest training slices'' cell
-   (generated / nearest train / difference)}
+\vspace{2mm}
+\figslot{29.8cm}{11.2cm}{nf_generalize_fig2_u64_generated_vs_pixel_nn.png}
+  {generated / nearest-train visual}
+\end{tcolorbox}
+
+\begin{tcolorbox}[secbox={fieldTeal}{Why this matters for inference}]
+\SmallFont
+Orange is the true field distribution, blue is the data constraint $y$, and
+black points are training-like islands learned under memorization. A likelihood
+using that collapsed generator can return a sharp but biased posterior, so we
+test the failure mode directly:
+\[
+  \bm{\theta}_{\rm ask}\ \to\ x_{\rm gen}\ \to\ \bm{\theta}_{\rm rec}.
+\]
+\begin{center}
+\figslot{27.5cm}{8.6cm}{inference_manifold_implication.pdf}
+  {conceptual manifold schematic: data prior, noisy observable, posterior}
+\end{center}
 \end{tcolorbox}
 
 \end{minipage}\hfill
@@ -157,7 +172,7 @@ a generalizing model tracks the request.
 
 \vspace{4mm}
 \begin{center}
-\includegraphics[width=26.5cm]{figs/calibration_roadmap_v2.pdf}
+\includegraphics[width=25.2cm]{figs/calibration_roadmap_v2.pdf}
 \end{center}
 
 \SmallFont\color{subgray}
@@ -168,24 +183,18 @@ used exclusively for testing and calibration.
 
 \begin{tcolorbox}[secbox={vggOrange}{Calibration results}]
 \begin{center}
-\figslot{27.8cm}{20.8cm}{bias_probe_omega_m_best_vgg_poster.png}
+\figslot{27.8cm}{19.6cm}{vgg_plot.png}
   {VGG notebook $\to$ recovered vs requested $\Omega_m$ bias probe}
 \end{center}
 
 \vspace{1mm}
 \SmallFont
-\hl{vggOrange}{Main result:} recovered-vs-requested $\Omega_m$ slope
-$\approx$ \textbf{0.79} in the high-data regime vs \textbf{0.26} under
-memorization. The high-data model tracks the requested input with
-nonzero seed-to-seed scatter, rather than collapsing to one training-like response.
-
-\vspace{1mm}
-Probe skill on \textbf{real} held-out fields ($R^2$, frozen VGG16 + MLP):
-$\Omega_m\ \mathbf{0.91}$, $\sigma_8\ \mathbf{0.74}$,
-$A_{\mathrm{SN1}}\ 0.45$, $A_{\mathrm{SN2}}\ 0.33$,
-$A_{\mathrm{AGN1}}\ {\approx}\,0$, $A_{\mathrm{AGN2}}\ 0.10$ ---
-astrophysical feedback is only weakly imprinted on single HI slices,
-so calibration leads with $\Omega_m$.
+\hl{vggOrange}{Main result:} $\Omega_m$ recovery is much flatter under
+memorization (\textbf{slope 0.26}, $N_{2D}=2^7$) than in the high-data regime
+(\textbf{slope 0.79}, $N_{2D}=2^{14}$). Error bars are the 16--84 percentile
+spread over generated seeds at fixed $\bm{\theta}_{\rm ask}$. We lead with
+$\Omega_m$ because the real-held-out VGG probe is strongest there
+($R^2=0.91$; $\sigma_8=0.74$, feedback parameters weaker).
 \end{tcolorbox}
 
 \end{minipage}\hfill
@@ -193,12 +202,13 @@ so calibration leads with $\Omega_m$.
 % ----------------------------------------------------------- COL 3
 
 \begin{tcolorbox}[secbox={diffPurple}{Memorization $\to$ generalization transition}]
-\figslot{29.4cm}{14.4cm}{nf_generalize_fig2_poster_pca_generalization_q95_serif_clean.png}
+\figslot{29.4cm}{13.5cm}{nf_generalize_fig2_poster_pca_generalization_q95_serif_clean.png}
   {quickcheck notebook $\to$ PCA generalization curves with q95 threshold}
 
 \vspace{2mm}
 \begin{itemize}[leftmargin=11mm, itemsep=2mm, label=\textcolor{diffPurple}{$\blacktriangleright$}]
-\item Score uses a \textbf{real-data calibrated q95 threshold}: higher means
+\item Score uses a \textbf{q95-calibrated threshold}
+      ($\tau$ = 95th pct train--train NN similarity): higher means
       generated fields are less training-set-like in PCA space.
 \item \textbf{Small $N_{2D}$}: generated maps remain close to training fields.
 \item \textbf{Larger $N_{2D}$}: UNet-64\,/\,128\,/\,256 move toward novel
@@ -206,38 +216,27 @@ so calibration leads with $\Omega_m$.
 \end{itemize}
 \end{tcolorbox}
 
-\begin{tcolorbox}[secbox={fieldTeal}{Why this matters for inference}]
-\begin{minipage}[c]{0.48\linewidth}
-\figslot{14.4cm}{14.4cm}{inference_manifold_implication.pdf}
-  {conceptual manifold schematic: data prior, noisy observable, posterior}
-\end{minipage}\hfill
-\begin{minipage}[c]{0.45\linewidth}
+\begin{tcolorbox}[secbox={fieldTeal}{Physical fidelity}]
+\begin{center}
+\figslot{29.0cm}{9.8cm}{fidelity_onepoint_pk.png}
+  {quickcheck notebook $\to$ one-point PDF and $P(k)$ ratio comparison}
+\end{center}
+\vspace{1mm}
 \SmallFont
-Orange denotes the true field distribution, the blue band is the data
-constraint $y$, and the black points are training-like islands learned in the
-memorization regime. A likelihood using this collapsed generator can return a
-sharp but biased posterior on those islands, rather than the true
-$p(x\mid y)$. We test this failure mode directly:
-\[
-  \bm{\theta}_{\rm ask}\ \to\ x_{\rm gen}\ \to\ \hat{\bm{\theta}}.
-\]
-Generated maps must preserve the requested cosmology before the generator is
-trusted as an inference prior.
-\end{minipage}
+In high-data examples, the one-point PDFs overlap the real reference and the
+mean $P(k)$ ratio is mostly within $\sim20\%$ over the resolved $k$ range.
+Intermediate undertrained runs visibly fail this check, so novelty alone is
+not enough: generalization must also preserve field statistics.
 \end{tcolorbox}
 
 \begin{tcolorbox}[secbox={loopRed}{Takeaways}]
 \begin{enumerate}[leftmargin=14mm, itemsep=2.5mm, label=\textcolor{loopRed}{\textbf{\arabic*.}}]
-\item Diffusion models on CAMELS show a clear
-      \textbf{memorization$\,\to\,$generalization transition} with training-set
-      size, located by NN checks, PCA embeddings, SSCD cross-checks, and
-      cross-model reproducibility.
-\item Under memorization, recovered cosmology is \textbf{tight but biased}
-      toward the training mean; in the high-data regime it \textbf{tracks
-      $\bm{\theta}_{\mathrm{ask}}$} with realistic sample-to-sample spread.
-\item Summary statistics alone are not enough; a useful emulator must be
-      both \textbf{physically faithful} and \textbf{calibrated to the
-      requested cosmology} before it is trusted for inference.
+\item \textbf{Memorization is detectable.} Nearest-neighbor and
+      reproducibility tests locate a data-size transition in CAMELS HI maps.
+\item \textbf{Conditioning is recoverable.} High-data generated fields track
+      $\bm{\theta}_{\rm ask}$ much better than memorization-regime fields.
+\item \textbf{Fidelity requires generalization.} Useful emulators must be
+      novel, statistically faithful, and calibrated before inference use.
 \end{enumerate}
 \end{tcolorbox}
 
