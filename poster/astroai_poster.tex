@@ -119,10 +119,10 @@ statistically faithful. On CAMELS HI maps we ask:
 Toy picture: if the learned prior covers only training islands, the posterior
 can be sharp but displaced from the true distribution.
 \end{minipage}\hfill
-\begin{minipage}[t]{14.4cm}
-\vspace{0pt}
+\begin{minipage}[t]{15.0cm}
+\vspace{3mm}
 \centering
-\figslot{14.2cm}{12.6cm}{inference_manifold_implication.pdf}
+\figslot{15.0cm}{13.2cm}{inference_manifold_implication.pdf}
   {conceptual manifold schematic: learned prior, data constraint, posterior}
 \end{minipage}
 \end{tcolorbox}
@@ -174,9 +174,10 @@ s_j = \max_i\, \mathrm{sim}(x_j,\, y_i)
 \]
 \endgroup
 A high $s_j$ means $x_j$ is nearly a copy of one training map. We measure
-$\mathrm{sim}$ in pixel, PCA, and SSCD space. Two independently trained
-models should agree statistically while no individual map repeats; repeated
-maps mean both copied the training set.
+$\mathrm{sim}$ in pixel, PCA, and SSCD space. Nearest-neighbor plots test
+individual copying; reproducibility plots compare the generated distributions
+from independently trained runs. Good runs can match statistically without
+repeating the same training slices.
 
 \vspace{2mm}
 \figslot{30.0cm}{11.4cm}{nf_generalize_fig2_u64_generated_vs_pixel_nn.png}
@@ -221,9 +222,10 @@ with $\tau$ the 95th percentile of train-vs-train closest-match similarity
 \item $\mathrm{GL} \approx 1$: generated maps are no closer to training
       than training maps are to each other; the model makes
       \hl{fieldTeal}{new fields}.
-\item The jump happens over a narrow range of $N_{2D}$; the wider UNet-256
-      needs more data {\color{subgray}(Zhang et al.\ 2024; Kadkhodaie et
-      al.\ 2024; Yoon et al.\ 2023)}.
+\item The jump happens over a narrow range of $N_{2D}$; in these runs the
+      UNet-256 transition appears at larger $N_{2D}$
+      {\color{subgray}(Zhang et al.\ 2024; Kadkhodaie et al.\ 2024; Yoon et
+      al.\ 2023)}.
 \end{itemize}
 \end{tcolorbox}
 
