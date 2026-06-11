@@ -34,6 +34,7 @@
 \newcommand{\BoxTitleFont}{\fontsize{36}{40}\selectfont\bfseries}
 \newcommand{\BodyFont}{\fontsize{26}{32.5}\selectfont}
 \newcommand{\SmallFont}{\fontsize{20.5}{26}\selectfont}
+\newcommand{\TinyPosterFont}{\fontsize{18}{22}\selectfont}
 
 % ---- Section box style -------------------------------------------
 \tcbset{
@@ -46,7 +47,7 @@
     coltitle=white, colbacktitle=#1,
     toptitle=3mm, bottomtitle=3mm, lefttitle=8mm,
     drop fuzzy shadow=black!35,
-    before skip=0mm, after skip=5.5mm
+    before skip=0mm, after skip=4.8mm
   }
 }
 
@@ -82,9 +83,10 @@
     {\AuthorFont Jiaming Pan\,$^{1}$\quad Nicholas Kern\,$^{1}$\quad Dragan Huterer\,$^{1}$
      \quad{\SmallFont $^{1}$Department of Physics, University of Michigan
      \;\;\textbullet\;\; jiamingp@umich.edu \;\;\textbullet\;\; 2026 AstroAI Workshop, CfA}};
-  \node[anchor=east, fill=white, rounded corners=4mm, inner sep=4mm]
-    (litp) at ($(hdr.east)+(-11.5cm,0)$)
-    {\includegraphics[width=18.0cm,height=6.0cm,keepaspectratio]{figs/litp_logo.pdf}};
+  \node[anchor=east, fill=white, rounded corners=4mm, inner sep=4mm,
+        minimum width=18.8cm, minimum height=5.9cm]
+    (litp) at ($(hdr.east)+(-12.0cm,0cm)$)
+    {\includegraphics[width=17.4cm,height=5.0cm,keepaspectratio]{figs/litp_logo.pdf}};
   \node[anchor=east, fill=white, rounded corners=4mm, inner sep=5mm]
     (qr) at ($(hdr.east)+(-1.4cm,0)$)
     {\qrcode[height=8.4cm]{https://github.com/JiamingPan/diffusion-models-simulation-data}};
@@ -101,9 +103,9 @@
 \SmallFont
 \begin{minipage}[t]{15.2cm}
 \vspace{0pt}
-Generative emulators promise \hl{paramBlue}{cheap surrogates} for expensive
-cosmological simulations --- but an emulator that \hl{loopRed}{memorizes} its
-training set can give a biased prior over fields.
+A trained diffusion model can produce mock HI maps in seconds instead of
+CPU-hours. That speed is only useful if the maps are genuinely new --- a model
+that memorizes its training set gives a biased prior.
 We train diffusion models on CAMELS HI maps and ask:
 
 \begin{enumerate}[leftmargin=9mm, itemsep=1.8mm, label=\textcolor{paramBlue}{\textbf{\arabic*.}}]
@@ -115,8 +117,9 @@ We train diffusion models on CAMELS HI maps and ask:
       (one-point PDF, power spectrum)?
 \end{enumerate}
 
-If the learned prior collapses onto training islands, a downstream posterior
-can become biased even when the likelihood calculation is sharp.
+Toy picture: a memorized prior is a set of islands around the training data.
+The posterior gets pulled toward those islands even when the likelihood is
+sharp.
 \end{minipage}\hfill
 \begin{minipage}[t]{13.2cm}
 \vspace{0pt}
@@ -128,18 +131,36 @@ can become biased even when the likelihood calculation is sharp.
 
 \begin{tcolorbox}[secbox={diffPurple}{Data \& models}]
 \SmallFont
-\begin{itemize}[leftmargin=11mm, itemsep=3mm, label=\textcolor{diffPurple}{$\blacktriangleright$}]
-\item \textbf{CAMELS} (IllustrisTNG) HI fields $\to$ $128\times128$ slices;
-      6 parameters $\Omega_m,\ \sigma_8,\ A_{\mathrm{SN1}},\ A_{\mathrm{AGN1}},\
-      A_{\mathrm{SN2}},\ A_{\mathrm{AGN2}}$.
-\item \textbf{Diffusion objective}: train a UNet denoiser with
-      $x_t=\sqrt{\bar{\alpha}_t}x_0+\sqrt{1-\bar{\alpha}_t}\epsilon$ and
-      $v_t=\sqrt{\bar{\alpha}_t}\epsilon-\sqrt{1-\bar{\alpha}_t}x_0$;
-      minimize $\mathcal{L}_{\rm diff}=\mathbb{E}\,w(t)\|f_\theta(x_t,t,c)-v_t\|_2^2$;
-      $c=\bm{\theta}$ for conditional runs.
+\begin{itemize}[leftmargin=11mm, itemsep=2.2mm, label=\textcolor{diffPurple}{$\blacktriangleright$}]
+\item \textbf{CAMELS} (IllustrisTNG) LH set: 1000 simulations $\to$ 128
+      slices each $\to$ 128{,}000 candidate $128\times128$ HI maps; 32 held out.
+\item Six-parameter conditioning:
+      $\bm{\theta}=(\Omega_m,\sigma_8,A_{\mathrm{SN1}},A_{\mathrm{AGN1}},
+      A_{\mathrm{SN2}},A_{\mathrm{AGN2}})$.
+\item \textbf{Diffusion objective.} The model learns to undo noise: corrupt a
+      real map, train a UNet to predict the velocity target at every noise
+      level; the cosmology enters as conditioning.
+
+\vspace{-1mm}
+\begingroup
+\fontsize{30}{36}\selectfont
+\[
+\begin{aligned}
+x_t &= \sqrt{\bar{\alpha}_t}\,x_0+\sqrt{1-\bar{\alpha}_t}\,\epsilon,
+\qquad \epsilon\sim\mathcal{N}(0,I),\\[1mm]
+\mathcal{L}_{\rm diff}
+&=\mathbb{E}_{x_0,\epsilon,t}\left\|
+f_{\theta}(x_t,t,\bm{\theta})-\mathrm{target}\right\|_2^2 .
+\end{aligned}
+\]
+\endgroup
+{\TinyPosterFont\color{subgray}
+Here the config uses \texttt{v\_prediction}:
+$\mathrm{target}=v_t=\sqrt{\bar{\alpha}_t}\epsilon-\sqrt{1-\bar{\alpha}_t}x_0$.
+Ho et al. 2020 (DDPM).}
 \item \textbf{Sampling}: 50-step DPM-Solver, $8\times$ faster than the
       500-step DDPM baseline at matched quality.
-\item \textbf{Training-set sweep}: $N = 2^{6} \to 2^{15}$ fields, matched
+\item \textbf{Training-set sweep}: $N_{2D}=2^{6} \to 2^{15}$ fields, matched
       optimizer-update budget; runs on U-M Great Lakes HPC.
 \end{itemize}
 \end{tcolorbox}
@@ -155,12 +176,13 @@ s_j = \max_i\, \mathrm{sim}(x_j, y_i), \qquad
 \mathrm{GL}(\tau) = 1 - \Pr[\,s_j > \tau\,]
 \]
 \endgroup
-with $\tau$ calibrated from leave-one-out train--train similarities.
+Here $\tau$ is set from train-vs-train nearest-neighbor similarity
+(95th percentile).
 Independent models should reproduce the same distribution, not the same
 training images.
 
 \vspace{2mm}
-\figslot{30.0cm}{11.7cm}{nf_generalize_fig2_u64_generated_vs_pixel_nn.png}
+\figslot{30.0cm}{12.2cm}{nf_generalize_fig2_u64_generated_vs_pixel_nn.png}
   {generated / nearest-train visual}
 \end{tcolorbox}
 
@@ -177,7 +199,7 @@ training-set average.
 
 \vspace{4mm}
 \begin{center}
-\includegraphics[width=29.4cm]{figs/calibration_roadmap_v2.pdf}
+\includegraphics[width=30.0cm]{figs/calibration_roadmap_v2.pdf}
 \end{center}
 
 \SmallFont\color{subgray}
@@ -187,7 +209,7 @@ are used only for encoder validation and generator calibration.
 \end{tcolorbox}
 
 \begin{tcolorbox}[secbox={diffPurple}{Memorization $\to$ generalization transition}]
-\figslot{30.0cm}{14.7cm}{nf_generalize_fig2_poster_pca_generalization_q95_serif_clean.png}
+\figslot{30.0cm}{14.9cm}{nf_generalize_fig2_poster_pca_generalization_q95_serif_clean.png}
   {quickcheck notebook $\to$ PCA generalization curves with q95 threshold}
 
 \vspace{2mm}
@@ -207,7 +229,7 @@ are used only for encoder validation and generator calibration.
 
 \begin{tcolorbox}[secbox={vggOrange}{Calibration results}]
 \begin{center}
-\figslot{28.4cm}{19.5cm}{bias_probe_omega_m_best_vgg_poster.png}
+\figslot{29.8cm}{20.8cm}{bias_probe_omega_m_best_vgg_poster.png}
   {VGG notebook $\to$ recovered vs requested $\Omega_m$ bias probe}
 \end{center}
 
@@ -222,7 +244,7 @@ because the held-out VGG encoder is strongest there ($R^2=0.91$).
 
 \begin{tcolorbox}[secbox={fieldTeal}{Physical fidelity}]
 \begin{center}
-\figslot{29.6cm}{13.5cm}{learning_process_pk_parallel_poster.png}
+\figslot{30.0cm}{14.0cm}{learning_process_pk_parallel_poster.png}
   {epoch snapshot notebook $\to$ generated and real $P(k)$ across training}
 \end{center}
 \vspace{1mm}
