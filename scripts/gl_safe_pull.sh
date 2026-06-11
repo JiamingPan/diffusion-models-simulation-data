@@ -21,12 +21,19 @@ mapfile -t dirty_tracked < <(
 )
 
 dirty_notebooks=()
+dirty_artifacts=()
 dirty_other=()
 for path in "${dirty_tracked[@]}"; do
   [[ -z "${path}" ]] && continue
   case "${path}" in
     *.ipynb)
       dirty_notebooks+=("${path}")
+      ;;
+    poster/figs/*.png|poster/figs/*.pdf|poster/figs/*.jpg|poster/figs/*.jpeg)
+      # Poster figures are often regenerated on Great Lakes from notebooks.
+      # Back them up and restore the tracked version before pulling, just like
+      # executed notebooks, so generated artifacts do not repeatedly block sync.
+      dirty_artifacts+=("${path}")
       ;;
     results/figures/.gitkeep|results/tables/.gitkeep)
       # Great Lakes often has results/ as a symlink to Turbo storage. These
@@ -45,19 +52,26 @@ if [[ "${#dirty_other[@]}" -gt 0 ]]; then
   exit 1
 fi
 
-if [[ "${#dirty_notebooks[@]}" -gt 0 ]]; then
-  backup_dir="backup_executed_notebooks_$(date +%Y%m%d_%H%M%S)"
+if [[ "${#dirty_notebooks[@]}" -gt 0 || "${#dirty_artifacts[@]}" -gt 0 ]]; then
+  backup_dir="backup_before_safe_pull_$(date +%Y%m%d_%H%M%S)"
   mkdir -p "${backup_dir}"
-  echo "Backing up executed notebooks to ${backup_dir}/"
+  echo "Backing up local generated files to ${backup_dir}/"
   for path in "${dirty_notebooks[@]}"; do
     if [[ -e "${path}" ]]; then
       mkdir -p "${backup_dir}/$(dirname "${path}")"
       cp -p "${path}" "${backup_dir}/${path}"
     fi
   done
-  git restore --staged --worktree -- "${dirty_notebooks[@]}"
+  for path in "${dirty_artifacts[@]}"; do
+    if [[ -e "${path}" ]]; then
+      mkdir -p "${backup_dir}/$(dirname "${path}")"
+      cp -p "${path}" "${backup_dir}/${path}"
+    fi
+  done
+  to_restore=("${dirty_notebooks[@]}" "${dirty_artifacts[@]}")
+  git restore --staged --worktree -- "${to_restore[@]}"
 else
-  echo "No dirty tracked notebooks to back up."
+  echo "No dirty tracked notebooks or poster figure artifacts to back up."
 fi
 
 current_branch=$(git branch --show-current)
