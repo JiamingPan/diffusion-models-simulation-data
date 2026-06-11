@@ -164,22 +164,22 @@ Ho et al. 2020 (DDPM).}
 
 \begin{tcolorbox}[secbox={fieldTeal}{Detecting memorization}]
 \SmallFont
-For each generated map $x_j$, compute its similarity to every training map
-$y_i$ and keep the closest match:
+For each generated HI map $x_j$, compare its image or feature vector to every
+training map $y_i$ and keep the closest match:
 \begingroup
 \fontsize{35}{43}\selectfont
 \[
 s_j = \max_i\, \mathrm{sim}(x_j,\, y_i)
 \]
 \endgroup
-A high $s_j$ means $x_j$ is nearly a copy of one training map. We measure
-$\mathrm{sim}$ in pixel, PCA, and SSCD space. Nearest-neighbor plots test
-individual copying; reproducibility plots compare the generated distributions
-from independently trained runs. Good runs can match statistically without
-repeating the same training slices.
+A high $s_j$ means $x_j$ is nearly a copy of one training map. Here
+$\mathrm{sim}$ is cosine similarity (larger = more alike) measured in pixel,
+PCA, and SSCD spaces; the panel labels show the pixel-space closest-match
+``cos''. Reproducibility curves then check whether independent runs match the
+same distribution without repeating the same slices.
 
 \vspace{2mm}
-\figslot{30.0cm}{11.4cm}{nf_generalize_fig2_u64_generated_vs_pixel_nn.png}
+\figslot{30.0cm}{13.0cm}{nf_generalize_fig2_u64_generated_vs_pixel_nn.png}
   {generated / nearest-train visual}
 \end{tcolorbox}
 
