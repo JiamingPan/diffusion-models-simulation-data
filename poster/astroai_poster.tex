@@ -133,7 +133,7 @@ sharp.
 \SmallFont
 \begin{itemize}[leftmargin=11mm, itemsep=2.2mm, label=\textcolor{diffPurple}{$\blacktriangleright$}]
 \item \textbf{CAMELS} (IllustrisTNG) LH set: 1000 simulations $\to$ 128
-      slices each $\to$ 128{,}000 candidate $128\times128$ HI maps; 32 held out.
+      slices each $\to$ 128{,}000 candidate $128\times128$ HI maps.
 \item Six-parameter conditioning:
       $\bm{\theta}=(\Omega_m,\sigma_8,A_{\mathrm{SN1}},A_{\mathrm{AGN1}},
       A_{\mathrm{SN2}},A_{\mathrm{AGN2}})$.
@@ -191,10 +191,10 @@ training images.
 % ----------------------------------------------------------- COL 2
 
 \begin{tcolorbox}[secbox={loopRed}{Calibration: does the generator obey $\bm{\theta}$?}]
-Ask the conditional model for \textbf{held-out samples}, then read the
-cosmology back from its generated maps with a \textbf{frozen encoder}.
-If the conditioning is used, changing $\bm{\theta}_{\rm ask}$ should move
-the recovered $\bm{\theta}_{\rm rec}$ rather than leaving it near the
+For a held-out sample, request maps at a chosen cosmology
+$\bm{\theta}_{\rm ask}$.  A \textbf{frozen encoder} then estimates
+$\bm{\theta}_{\rm rec}$ from the generated maps.  If conditioning is working,
+$\bm{\theta}_{\rm rec}$ should move with the request, not stay near the
 training-set average.
 
 \vspace{4mm}
@@ -236,10 +236,11 @@ are used only for encoder validation and generator calibration.
 \vspace{1mm}
 \SmallFont
 \hl{vggOrange}{Main result:} error bars show 16--84\% seed scatter at fixed
-$\bm{\theta}_{\rm ask}$.  In the high-data regime they bracket the requested
-$\Omega_m$; under memorization they can be small but centered on the wrong
-value. Slopes (0.26 vs 0.79) are secondary summaries; $\Omega_m$ is shown
-because the held-out VGG encoder is strongest there ($R^2=0.91$).
+$\bm{\theta}_{\rm ask}$.  In the high-data regime, different noise seeds give
+a real spread and the intervals often bracket the requested $\Omega_m$.
+Under memorization, many seeds collapse toward the same training-like fields:
+the bars can look tight while still being biased.  This is why calibration
+matters more than just small scatter.
 \end{tcolorbox}
 
 \begin{tcolorbox}[secbox={fieldTeal}{Physical fidelity}]
@@ -250,19 +251,19 @@ because the held-out VGG encoder is strongest there ($R^2=0.91$).
 \vspace{1mm}
 \SmallFont
 Across a single run, generated power spectra move toward the real reference
-from early to final checkpoints. Early checkpoints suppress power over many
-$k$ bins; by the final checkpoint the generated $P(k)$ follows the real
-shape much more closely.
+from early to final checkpoints. Early checkpoints suppress power across
+much of $k\,[{\rm Mpc}^{-1}]$; by the final checkpoint the generated $P(k)$
+follows the real shape much more closely.
 \end{tcolorbox}
 
 \begin{tcolorbox}[secbox={loopRed}{Takeaways}]
 \begin{enumerate}[leftmargin=14mm, itemsep=2.5mm, label=\textcolor{loopRed}{\textbf{\arabic*.}}]
-\item \textbf{Memorization is detectable.} Nearest-neighbor and
-      reproducibility tests locate a data-size transition in CAMELS HI maps.
-\item \textbf{Conditioning is recoverable.} High-data generated fields track
-      $\bm{\theta}_{\rm ask}$ much better than memorization-regime fields.
-\item \textbf{Fidelity requires generalization.} Useful emulators must be
-      novel, statistically faithful, and calibrated before inference use.
+\item \textbf{Copying is measurable.} Nearest-neighbor and reproducibility
+      tests expose when generated maps are training-set-like.
+\item \textbf{More data changes behavior.} Increasing $N_{2D}$ moves models
+      from memorized slices toward new fields with realistic statistics.
+\item \textbf{Calibration is the test.} Useful emulators must be novel,
+      statistically faithful, and faithful to the requested cosmology.
 \end{enumerate}
 \end{tcolorbox}
 
