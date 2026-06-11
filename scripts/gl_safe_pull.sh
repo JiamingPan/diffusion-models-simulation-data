@@ -66,6 +66,26 @@ if [[ "${current_branch}" != "${branch}" ]]; then
 fi
 
 git fetch origin "${branch}"
+
+mapfile -t untracked_conflicts < <(
+  comm -12 \
+    <(git ls-files --others --exclude-standard | sort -u) \
+    <(git ls-tree -r --name-only "origin/${branch}" | sort -u)
+)
+
+if [[ "${#untracked_conflicts[@]}" -gt 0 ]]; then
+  backup_dir="backup_untracked_before_pull_$(date +%Y%m%d_%H%M%S)"
+  mkdir -p "${backup_dir}"
+  echo "Backing up untracked files that would be overwritten to ${backup_dir}/"
+  for path in "${untracked_conflicts[@]}"; do
+    if [[ -e "${path}" ]]; then
+      mkdir -p "${backup_dir}/$(dirname "${path}")"
+      mv "${path}" "${backup_dir}/${path}"
+      echo "  moved ${path}"
+    fi
+  done
+fi
+
 git pull --ff-only origin "${branch}"
 
 echo "Safe pull complete:"
