@@ -128,8 +128,11 @@ can become biased even when the likelihood calculation is sharp.
 \item \textbf{CAMELS} (IllustrisTNG) HI fields $\to$ $128\times128$ slices;
       6 parameters $\Omega_m,\ \sigma_8,\ A_{\mathrm{SN1}},\ A_{\mathrm{AGN1}},\
       A_{\mathrm{SN2}},\ A_{\mathrm{AGN2}}$.
-\item \textbf{Diffusion}: UNet denoisers (widths 64 / 128 / 256); conditional variant
-      injects $\bm{\theta}$ at every level via cross-attention.
+\item \textbf{Diffusion objective}: train a UNet denoiser with
+      $x_t=\sqrt{\bar{\alpha}_t}x_0+\sqrt{1-\bar{\alpha}_t}\epsilon$ and
+      $v_t=\sqrt{\bar{\alpha}_t}\epsilon-\sqrt{1-\bar{\alpha}_t}x_0$;
+      minimize $\mathcal{L}_{\rm diff}=\mathbb{E}\,w(t)\|f_\theta(x_t,t,c)-v_t\|_2^2$;
+      $c=\bm{\theta}$ for conditional runs.
 \item \textbf{Sampling}: 50-step DPM-Solver, $8\times$ faster than the
       500-step DDPM baseline at matched quality.
 \item \textbf{Training-set sweep}: $N = 2^{6} \to 2^{15}$ fields, matched
