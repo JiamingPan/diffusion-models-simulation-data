@@ -207,18 +207,17 @@ are used only for encoder validation and generator calibration.
 
 \begin{tcolorbox}[secbox={vggOrange}{Calibration results}]
 \begin{center}
-\figslot{28.8cm}{20.8cm}{vgg_plot.png}
+\figslot{28.4cm}{19.5cm}{bias_probe_omega_m_best_vgg_poster.png}
   {VGG notebook $\to$ recovered vs requested $\Omega_m$ bias probe}
 \end{center}
 
 \vspace{1mm}
 \SmallFont
-\hl{vggOrange}{Main result:} $\Omega_m$ recovery is much flatter under
-memorization (\textbf{slope 0.26}, $N_{2D}=2^7$) than in the high-data regime
-(\textbf{slope 0.79}, $N_{2D}=2^{14}$). Error bars are the 16--84 percentile
-spread over generated seeds at fixed $\bm{\theta}_{\rm ask}$. We lead with
-$\Omega_m$ because the real-held-out VGG probe is strongest there
-($R^2=0.91$; $\sigma_8=0.74$, feedback parameters weaker).
+\hl{vggOrange}{Main result:} error bars show 16--84\% seed scatter at fixed
+$\bm{\theta}_{\rm ask}$.  In the high-data regime they bracket the requested
+$\Omega_m$; under memorization they can be small but centered on the wrong
+value. Slopes (0.26 vs 0.79) are secondary summaries; $\Omega_m$ is shown
+because the held-out VGG encoder is strongest there ($R^2=0.91$).
 \end{tcolorbox}
 
 \begin{tcolorbox}[secbox={fieldTeal}{Physical fidelity}]
