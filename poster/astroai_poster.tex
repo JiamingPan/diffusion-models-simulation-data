@@ -244,8 +244,9 @@ with $\tau$ the 95th percentile of train-vs-train closest-match similarity
 $\bm{\theta}_{\rm ask}$. In the high-data regime, the medians usually bracket
 the requested $\Omega_m$ within that scatter. In the memorization regime, seeds
 can return similar training-like maps, so the bars look tight while the median
-is biased. The slope (0.26 vs 0.79) supports the same point, but uncertainty
-calibration is the main message.
+is biased. The slope is measured through a finite-accuracy VGG encoder
+($R^2=0.91$ on real held-out $\Omega_m$), so 0.26 vs 0.79 is a
+probe-calibrated summary; uncertainty calibration is the main message.
 \end{tcolorbox}
 
 \begin{tcolorbox}[secbox={fieldTeal}{Physical fidelity}]
