@@ -98,12 +98,15 @@
 % ----------------------------------------------------------- COL 1
 
 \begin{tcolorbox}[secbox={paramBlue}{The question}]
+\SmallFont
+\begin{minipage}[t]{15.2cm}
+\vspace{0pt}
 Generative emulators promise \hl{paramBlue}{cheap surrogates} for expensive
 cosmological simulations --- but an emulator that \hl{loopRed}{memorizes} its
 training set can give a biased prior over fields.
 We train diffusion models on CAMELS HI maps and ask:
 
-\begin{enumerate}[leftmargin=14mm, itemsep=2mm, label=\textcolor{paramBlue}{\textbf{\arabic*.}}]
+\begin{enumerate}[leftmargin=9mm, itemsep=1.8mm, label=\textcolor{paramBlue}{\textbf{\arabic*.}}]
 \item When does the model stop \hl{loopRed}{copying} training fields and start
       \hl{fieldTeal}{sampling} the underlying distribution?
 \item Does conditional generation actually \hl{diffPurple}{respond to the requested
@@ -112,14 +115,15 @@ We train diffusion models on CAMELS HI maps and ask:
       (one-point PDF, power spectrum)?
 \end{enumerate}
 
-\vspace{2mm}
-\begin{center}
-\figslot{29.5cm}{8.7cm}{inference_manifold_implication.pdf}
-  {conceptual manifold schematic: learned prior, data constraint, posterior}
-\end{center}
-\SmallFont
 If the learned prior collapses onto training islands, a downstream posterior
 can become biased even when the likelihood calculation is sharp.
+\end{minipage}\hfill
+\begin{minipage}[t]{13.2cm}
+\vspace{0pt}
+\centering
+\figslot{13.2cm}{12.4cm}{inference_manifold_implication.pdf}
+  {conceptual manifold schematic: learned prior, data constraint, posterior}
+\end{minipage}
 \end{tcolorbox}
 
 \begin{tcolorbox}[secbox={diffPurple}{Data \& models}]
