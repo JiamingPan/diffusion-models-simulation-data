@@ -103,21 +103,20 @@
 \SmallFont
 \begin{minipage}[t]{14.6cm}
 \vspace{0pt}
-Diffusion models are attractive as fast priors for cosmological fields, but
-inference needs more than visual realism: samples must be new, conditioned, and
-statistically faithful. On CAMELS HI maps we ask:
+For inference, a diffusion generator becomes a prior over HI fields $x$. The
+cartoon shows the failure mode: orange is the true field distribution $p(x)$,
+black dots are training maps, purple $s_\theta(x)$ is the learned diffusion
+score/prior, and blue is the data constraint $y$. If $s_\theta(x)$ wraps only
+training islands, $p(x|y)$ can be sharp but biased. We therefore test:
 
 \begin{enumerate}[leftmargin=9mm, itemsep=1.8mm, label=\textcolor{paramBlue}{\textbf{\arabic*.}}]
-\item \hl{loopRed}{Memorization:} when do generated maps stop matching
-      individual training slices?
+\item \hl{loopRed}{Novelty:} when do generated maps stop matching individual
+      training slices?
 \item \hl{diffPurple}{Conditioning:} does changing
       $\bm{\theta}_{\rm ask}$ change the recovered cosmology?
 \item \hl{fieldTeal}{Fidelity:} do novel maps retain the one-point PDF and
       power spectrum?
 \end{enumerate}
-
-Toy picture: if the learned prior covers only training islands, the posterior
-can be sharp but displaced from the true distribution.
 \end{minipage}\hfill
 \begin{minipage}[t]{15.0cm}
 \vspace{3mm}
