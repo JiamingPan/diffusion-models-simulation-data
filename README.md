@@ -1,8 +1,8 @@
 # Diffusion Models for CAMELS Simulation Fields
 
-This repository studies diffusion models for CAMELS cosmological simulation fields. The main question is whether a diffusion model learns the underlying distribution of physical fields, or whether it memorizes the finite training set.
+This repository studies diffusion models for CAMELS cosmological simulation fields. The main question is whether a model learns a useful distribution of physical fields, or whether it mainly reproduces the finite training set.
 
-The project builds on [`nkern/cosmo_diffusion`](https://github.com/nkern/cosmo_diffusion) for the base diffusion training code. This repository adds CAMELS-specific experiment organization, evaluation scripts, diagnostics, notebooks, and project notes. It is an active research repo, so results and interfaces are still evolving.
+The project builds on [`nkern/cosmo_diffusion`](https://github.com/nkern/cosmo_diffusion) for the base diffusion training code. This repository adds CAMELS-specific experiment organization, evaluation scripts, diagnostics, notebooks, and project notes. It is an active research repository; the public README is intentionally high level while the analysis is still being cleaned up for a paper.
 
 ## Project Goals
 
@@ -24,6 +24,10 @@ results/            generated tables and figures; mostly ignored or symlinked lo
 ```
 
 Large CAMELS data files, generated samples, checkpoints, personal paths, logs, and account-specific Slurm files are intentionally excluded from git.
+
+## Scope
+
+This is a working research codebase rather than a polished benchmark package. The repo contains the reusable analysis code, templates, and selected notebooks needed to understand the workflow, but it does not publish raw data, trained checkpoints, private cluster paths, or every intermediate run artifact. Quantitative claims should be treated as current working results until the manuscript version is released.
 
 ## Minimal Setup
 
@@ -47,21 +51,21 @@ At a high level, the workflow is:
 4. Evaluate generated fields with physical statistics and memorization/generalization diagnostics.
 5. Inspect and polish results in notebooks.
 
-The main notebooks currently used for figures and checks are:
+Representative notebooks currently used for figures and checks are:
 
-- `notebooks/nf_generalize_fig2_partial_quickcheck.ipynb`: memorization/generalization curves, one-point checks, power spectra, and poster figures.
-- `notebooks/nf_conditional_bias_probe_check.ipynb`: continuous-cosmology calibration checks.
-- `notebooks/nf_poster_ablation_appendix.ipynb`: guidance/CFG ablation plots for appendix-style checks.
+- `notebooks/nf_generalize_fig2_partial_quickcheck.ipynb`: memorization/generalization curves and physical-statistics checks.
+- `notebooks/nf_conditional_bias_probe_check.ipynb`: conditional-cosmology calibration checks.
+- `notebooks/nf_generalize_scaling_diagnostic.ipynb`: exploratory scaling diagnostics for the transition.
 
 ## Current Results
 
 These are current working results, not final paper claims.
 
-- **Memorization-to-generalization transition:** generated fields are training-set-like at small dataset sizes and become less training-set-like as training data increases. This is measured with nearest-neighbor diagnostics in PCA and SSCD feature spaces.
-- **Architecture dependence:** wider U-Net models generally require more data and/or training to reach the same generalization behavior.
-- **Physical fidelity checks:** generated fields are compared to real fields using one-point pixel-value distributions and radial power spectra, so the evaluation is not based only on visual similarity.
-- **Faster sampling:** DPM-Solver multistep sampling with 50 steps gives much faster generation than the original 500-step DDPM baseline while preserving the key diagnostics used here.
-- **Conditional cosmology calibration:** for HI-only continuous conditioning, generated fields are encoded back to cosmology parameters. The best current probe uses frozen VGG16 features with average+max pooling and an MLP regression head. The large-data model tracks the requested `Omega_m` much better than the small-data model; `sigma_8` is weaker, and feedback parameters remain harder to recover from HI alone.
+- **Memorization-to-generalization transition:** generated fields are close to individual training slices at small data sizes and become less training-set-like as data increases.
+- **Feature-space diagnostics:** the transition is checked with nearest-neighbor comparisons in multiple image/field representations, plus reproducibility checks across independently trained models.
+- **Physical fidelity checks:** generated fields are compared to real fields using one-point pixel-value distributions and power spectra, so the evaluation is not based only on visual similarity.
+- **Conditional cosmology calibration:** for HI-only continuous conditioning, generated fields are encoded back to cosmological parameters with an independent frozen encoder. The high-data regime tracks the requested matter-density parameter more reliably than the small-data memorization regime.
+- **Exploratory scaling:** early diagnostics suggest the transition shifts with model capacity, but the current evidence is too sparse to treat the fitted scaling law as a final result.
 
 ## Key Evaluation Ideas
 
@@ -69,7 +73,7 @@ These are current working results, not final paper claims.
 - **Power spectrum `P(k)`:** checks whether generated fields reproduce spatial structure across scales.
 - **Nearest-neighbor similarity:** checks whether generated samples are too close to training samples.
 - **Reproducibility:** compares generated sets from independently trained models.
-- **Conditional calibration:** compares requested cosmology parameters with parameters recovered from generated fields.
+- **Conditional calibration:** compares requested cosmology parameters with parameters recovered from generated fields using an encoder trained only on real fields.
 
 ## Status
 

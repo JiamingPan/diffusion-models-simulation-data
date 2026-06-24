@@ -1,0 +1,283 @@
+% =================================================================
+% 2026 AstroAI Workshop poster  --  40 x 30 in, landscape
+% Jiaming Pan, Nicholas Kern, Dragan Huterer (U. Michigan)
+% Compile:  pdflatex astroai_poster.tex   (run from this folder)
+% Drop exported notebook PNGs into  figs/  -- slots fill themselves.
+% =================================================================
+\documentclass{article}
+\usepackage[paperwidth=101.6cm,paperheight=76.2cm,margin=1.2cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{helvet}\renewcommand{\familydefault}{\sfdefault}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{graphicx}
+\usepackage{enumitem}
+\usepackage{tikz}
+\usetikzlibrary{calc}
+\usepackage[most]{tcolorbox}
+\usepackage{qrcode}
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+
+% ---- Palette (matches the roadmap figure) -----------------------
+\definecolor{ink}{HTML}{1B2A4A}
+\definecolor{subgray}{HTML}{5A6678}
+\definecolor{paramBlue}{HTML}{2E5EAA}
+\definecolor{diffPurple}{HTML}{6B4FA0}
+\definecolor{fieldTeal}{HTML}{0E7C72}
+\definecolor{vggOrange}{HTML}{C25E12}
+\definecolor{loopRed}{HTML}{B0303C}
+\definecolor{paleBg}{HTML}{F4F6FA}
+
+% ---- Type sizes --------------------------------------------------
+\newcommand{\TitleFont}{\fontsize{74}{82}\selectfont\bfseries}
+\newcommand{\AuthorFont}{\fontsize{37}{45}\selectfont}
+\newcommand{\BoxTitleFont}{\fontsize{36}{40}\selectfont\bfseries}
+\newcommand{\BodyFont}{\fontsize{26}{32.5}\selectfont}
+\newcommand{\SmallFont}{\fontsize{20.5}{26}\selectfont}
+\newcommand{\TinyPosterFont}{\fontsize{18}{22}\selectfont}
+
+% ---- Section box style -------------------------------------------
+\tcbset{
+  secbox/.style 2 args={
+    enhanced, breakable=false,
+    colback=white, colframe=#1,
+    boxrule=1.8pt, arc=6mm,
+    left=7mm, right=7mm, top=4mm, bottom=4.5mm,
+    title={\BoxTitleFont #2},
+    coltitle=white, colbacktitle=#1,
+    toptitle=3mm, bottomtitle=3mm, lefttitle=8mm,
+    drop fuzzy shadow=black!35,
+    before skip=0mm, after skip=4.8mm
+  }
+}
+
+% ---- Figure slot: shows the PNG if present, else instructions ----
+% \figslot{<width>}{<height if placeholder>}{<file>}{<where to export it>}
+\newcommand{\figslot}[4]{%
+  \IfFileExists{figs/#3}{%
+    {\centering\includegraphics[width=#1,height=#2,keepaspectratio]{figs/#3}\par}%
+  }{%
+    \begin{tikzpicture}
+      \draw[dashed, line width=2pt, subgray, rounded corners=5mm, fill=paleBg]
+        (0,0) rectangle (#1,#2);
+      \node[align=center, text=subgray, text width={\dimexpr#1-4cm\relax}] at (0.5*#1,0.5*#2)
+        {\SmallFont\bfseries missing figure:\ {\ttfamily\detokenize{figs/#3}}\\[3mm]\SmallFont #4};
+    \end{tikzpicture}%
+  }%
+}
+
+\newcommand{\hl}[2]{{\color{#1}\bfseries #2}}
+
+\begin{document}\BodyFont\color{ink}
+
+% ================== HEADER BAND ===================================
+\begin{tikzpicture}
+  \node[anchor=north west, fill=ink, rounded corners=8mm,
+        minimum width=99.1cm, minimum height=12.0cm] (hdr) at (0,0) {};
+  \node[anchor=west, text=white, text width=65.2cm, align=left]
+    at ($(hdr.west)+(1.8cm,0.9cm)$)
+    {\TitleFont Understanding the Transition from Memorization\\[2mm]
+     \TitleFont\color{white!75!ink} to Generalization in Diffusion Models for Cosmology};
+  \node[anchor=west, text=white!88!ink, text width=65.2cm, align=left]
+    at ($(hdr.south west)+(1.8cm,1.55cm)$)
+    {\AuthorFont Jiaming Pan\,$^{1}$\quad Nicholas Kern\,$^{1}$\quad Dragan Huterer\,$^{1}$
+     \quad{\SmallFont $^{1}$Department of Physics, University of Michigan
+     \;\;\textbullet\;\; jiamingp@umich.edu \;\;\textbullet\;\; 2026 AstroAI Workshop, CfA}};
+  \node[anchor=east, fill=white, rounded corners=4mm, inner sep=4mm,
+        minimum width=18.8cm, minimum height=5.9cm]
+    (litp) at ($(hdr.east)+(-12.0cm,0cm)$)
+    {\includegraphics[width=17.4cm,height=5.0cm,keepaspectratio]{figs/litp_logo.pdf}};
+  \node[anchor=east, fill=white, rounded corners=4mm, inner sep=5mm]
+    (qr) at ($(hdr.east)+(-1.4cm,0)$)
+    {\qrcode[height=8.4cm]{https://github.com/JiamingPan/diffusion-models-simulation-data}};
+\end{tikzpicture}
+
+\vspace{2mm}
+
+% ================== THREE COLUMNS =================================
+\newlength{\colw}\setlength{\colw}{31.7cm}
+\begin{minipage}[t]{\colw}\vspace{0pt}
+% ----------------------------------------------------------- COL 1
+
+\begin{tcolorbox}[secbox={paramBlue}{The question}]
+\SmallFont
+\begin{minipage}[t]{14.6cm}
+\vspace{0pt}
+For inference, a diffusion generator becomes a prior over HI fields $x$. The
+cartoon shows the failure mode: orange is the true field distribution $p(x)$,
+black dots are training maps, purple $s_\theta(x)$ is the learned diffusion
+score/prior, and blue is the data constraint $y$. If $s_\theta(x)$ wraps only
+training islands, $p(x|y)$ can be sharp but biased. We therefore test:
+
+\begin{enumerate}[leftmargin=9mm, itemsep=1.8mm, label=\textcolor{paramBlue}{\textbf{\arabic*.}}]
+\item \hl{loopRed}{Novelty:} when do generated maps stop matching individual
+      training slices?
+\item \hl{diffPurple}{Conditioning:} does changing
+      $\bm{\theta}_{\rm ask}$ change the recovered cosmology?
+\item \hl{fieldTeal}{Fidelity:} do novel maps retain the one-point PDF and
+      power spectrum?
+\end{enumerate}
+\end{minipage}\hfill
+\begin{minipage}[t]{15.0cm}
+\vspace{3mm}
+\centering
+\figslot{15.0cm}{13.2cm}{inference_manifold_implication.pdf}
+  {conceptual manifold schematic: learned prior, data constraint, posterior}
+\end{minipage}
+\end{tcolorbox}
+
+\begin{tcolorbox}[secbox={diffPurple}{Data \& models}]
+\SmallFont
+\begin{itemize}[leftmargin=11mm, itemsep=2.2mm, label=\textcolor{diffPurple}{$\blacktriangleright$}]
+\item \textbf{CAMELS Multifield Dataset} (IllustrisTNG LH; Villaescusa-Navarro
+      et al.\ 2021): 1000 simulations $\to$ 128 slices each $\to$
+      128{,}000 candidate $128\times128$ HI maps.
+\item Six-parameter conditioning:
+      $\bm{\theta}=(\Omega_m,\sigma_8,A_{\mathrm{SN1}},A_{\mathrm{AGN1}},
+      A_{\mathrm{SN2}},A_{\mathrm{AGN2}})$.
+\item \textbf{Diffusion objective.} We corrupt a real map with noise and
+      train a UNet to predict the velocity target at every noise level,
+      with the cosmology $\bm{\theta}$ as conditioning.
+
+\vspace{-1mm}
+\begingroup
+\fontsize{30}{36}\selectfont
+\[
+\begin{aligned}
+x_t &= \sqrt{\bar{\alpha}_t}\,x_0+\sqrt{1-\bar{\alpha}_t}\,\epsilon,
+\qquad \epsilon\sim\mathcal{N}(0,I),\\[1mm]
+\mathcal{L}_{\rm diff}
+&=\mathbb{E}_{x_0,\epsilon,t}\left\|
+f_{\theta}(x_t,t,\bm{\theta})-\mathrm{target}\right\|_2^2 .
+\end{aligned}
+\]
+\endgroup
+{\TinyPosterFont\color{subgray}
+Here the config uses \texttt{v\_prediction}:
+$\mathrm{target}=v_t=\sqrt{\bar{\alpha}_t}\epsilon-\sqrt{1-\bar{\alpha}_t}x_0$.
+Ho et al. 2020 (DDPM).}
+\item \textbf{Sampling}: 50-step DPM-Solver, $8\times$ faster than the
+      500-step DDPM baseline at matched quality.
+\item \textbf{Training-set sweep}: $N_{2D}=2^{6} \to 2^{15}$ fields, matched
+      optimizer-update budget; runs on U-M Great Lakes HPC.
+\end{itemize}
+\end{tcolorbox}
+
+\begin{tcolorbox}[secbox={fieldTeal}{Detecting memorization}]
+\SmallFont
+For each generated HI map $x_j$, compare its image or feature vector to every
+training map $y_i$ and keep the closest match:
+\begingroup
+\fontsize{35}{43}\selectfont
+\[
+s_j = \max_i\, \mathrm{sim}(x_j,\, y_i)
+\]
+\endgroup
+A high $s_j$ means $x_j$ is nearly a copy of one training map. Here
+$\mathrm{sim}$ is cosine similarity (larger = more alike) measured in pixel,
+PCA, and SSCD spaces; the panel labels show the pixel-space closest-match
+``cos''. Reproducibility curves then check whether independent runs match the
+same distribution without repeating the same slices.
+
+\vspace{2mm}
+\figslot{30.0cm}{13.0cm}{nf_generalize_fig2_u64_generated_vs_pixel_nn.png}
+  {generated / nearest-train visual}
+\end{tcolorbox}
+
+\end{minipage}\hfill
+\begin{minipage}[t]{\colw}\vspace{0pt}
+% ----------------------------------------------------------- COL 2
+
+\begin{tcolorbox}[secbox={loopRed}{Calibration: does the generator obey $\bm{\theta}$?}]
+Left to right, a cosmology vector $\bm{\theta}_{\rm ask}$ conditions the
+UNet through cross-attention while it denoises random noise into an HI map.
+The map is copied to 3 channels, resized, and encoded by frozen VGG16
+features; an MLP head returns $\bm{\theta}_{\rm rec}$. The dashed loop asks
+whether $\bm{\theta}_{\rm rec} \approx \bm{\theta}_{\rm ask}$.
+
+\vspace{4mm}
+\begin{center}
+\includegraphics[width=28.2cm]{figs/calibration_roadmap_v2.pdf}
+\end{center}
+
+\end{tcolorbox}
+
+\begin{tcolorbox}[secbox={diffPurple}{Memorization $\to$ generalization transition}]
+\figslot{26.0cm}{12.4cm}{nf_generalize_fig2_poster_pca_generalization_q95_serif_clean.png}
+  {quickcheck notebook $\to$ PCA generalization curves with q95 threshold}
+
+\vspace{1mm}
+The generalization score is the fraction of generated maps that are
+\emph{not} close to any training map,
+\begin{center}
+\vspace{1mm}
+\scalebox{1.7}{$\mathrm{GL} = \Pr[\, s_j < \tau \,]$\,,}
+\vspace{1mm}
+\end{center}
+with $\tau$ the 95th percentile of train-vs-train closest-match similarity
+(PCA space).
+\begin{itemize}[leftmargin=11mm, itemsep=2mm, label=\textcolor{diffPurple}{$\blacktriangleright$}]
+\item $\mathrm{GL} \approx 0$: almost every generated map sits on top of a
+      training map. The model is \hl{loopRed}{copying}.
+\item $\mathrm{GL} \approx 1$: generated maps are no closer to training
+      than training maps are to each other; the model makes
+      \hl{fieldTeal}{new fields}.
+\item The jump happens over a narrow range of $N_{2D}$; in these runs the
+      UNet-256 transition appears at larger $N_{2D}$
+      {\color{subgray}(Zhang et al.\ 2024; Kadkhodaie et al.\ 2024; Yoon et
+      al.\ 2023)}.
+\end{itemize}
+\end{tcolorbox}
+
+\end{minipage}\hfill
+\begin{minipage}[t]{\colw}\vspace{0pt}
+% ----------------------------------------------------------- COL 3
+
+\begin{tcolorbox}[secbox={vggOrange}{Calibration results}]
+\begin{center}
+\figslot{29.8cm}{20.8cm}{bias_probe_omega_m_best_vgg_poster.png}
+  {VGG notebook $\to$ recovered vs requested $\Omega_m$ bias probe}
+\end{center}
+
+\vspace{1mm}
+\SmallFont
+\hl{vggOrange}{Main result:} the bars show 16--84\% seed scatter at fixed
+$\bm{\theta}_{\rm ask}$. In the high-data regime, the medians usually bracket
+the requested $\Omega_m$ within that scatter. In the memorization regime, seeds
+can return similar training-like maps, so the bars look tight while the median
+is biased. The slope is measured through a finite-accuracy VGG encoder
+($R^2=0.91$ on real held-out $\Omega_m$), so 0.26 vs 0.79 is a
+probe-calibrated summary; uncertainty calibration is the main message.
+\end{tcolorbox}
+
+\begin{tcolorbox}[secbox={fieldTeal}{Physical fidelity}]
+\begin{center}
+\figslot{30.0cm}{14.0cm}{learning_process_pk_parallel_poster.png}
+  {epoch snapshot notebook $\to$ generated and real $P(k)$ across training}
+\end{center}
+\vspace{1mm}
+\SmallFont
+Across a single run, generated power spectra move toward the real reference
+from early to final checkpoints. Early checkpoints suppress power across
+much of $k\,[{\rm Mpc}^{-1}]$; by the final checkpoint the generated $P(k)$
+follows the real shape much more closely.
+\end{tcolorbox}
+
+\begin{tcolorbox}[secbox={loopRed}{Takeaways}]
+\SmallFont
+\begin{enumerate}[leftmargin=12mm, itemsep=2mm, label=\textcolor{loopRed}{\textbf{\arabic*.}}]
+\item \textbf{The transition appears in cosmological data.} The
+      memorization-to-generalization transition known from natural images
+      also occurs in CAMELS HI maps.
+\item \textbf{It explains the error bars.} Small training sets give
+      near-copies: inference looks precise but is biased toward the training
+      values. Past the transition, $\bm{\theta}$ follows the input with
+      honest scatter.
+\item \textbf{It gives a practical check.} Nearest-neighbor similarity and
+      encoder calibration reveal an emulator's regime before inference.
+\end{enumerate}
+\end{tcolorbox}
+
+\end{minipage}
+
+\end{document}
