@@ -312,6 +312,18 @@ def _load_unet_direct(checkpoint: Path, config_path: Path | None, *, allow_defau
     return model, scheduler
 
 
+def _load_dit_direct(checkpoint: Path, config_path: Path | None, *, allow_default_scheduler: bool = False):
+    """Load DiT checkpoints directly for transformer sampling."""
+    from diffusers import DiTTransformer2DModel
+
+    model = DiTTransformer2DModel.from_pretrained(str(checkpoint))
+    scheduler = _load_scheduler_from_config(
+        config_path,
+        allow_default_scheduler=allow_default_scheduler,
+    )
+    return model, scheduler
+
+
 def _load_for_sampling(checkpoint: Path, config_path: Path | None, *, allow_default_scheduler: bool = False):
     model_class = _config_model_class(config_path)
     if model_class in {"UNet2DModel", "diffusers.UNet2DModel"}:
@@ -324,6 +336,16 @@ def _load_for_sampling(checkpoint: Path, config_path: Path | None, *, allow_defa
         except Exception as exc:
             print(f"Direct UNet load failed, trying cosmodiff load_checkpoint: {exc}")
 
+    if model_class in {"DiTTransformer2DModel", "diffusers.DiTTransformer2DModel"}:
+        try:
+            return _load_dit_direct(
+                checkpoint,
+                config_path,
+                allow_default_scheduler=allow_default_scheduler,
+            )
+        except Exception as exc:
+            print(f"Direct DiT load failed, trying cosmodiff load_checkpoint: {exc}")
+
     from cosmodiff import utils
 
     try:
@@ -335,6 +357,12 @@ def _load_for_sampling(checkpoint: Path, config_path: Path | None, *, allow_defa
                 "cosmodiff load_checkpoint failed; loading UNet weights directly "
                 f"and reconstructing the scheduler from config. Error: {exc}"
             )
+            if model_class in {"DiTTransformer2DModel", "diffusers.DiTTransformer2DModel"}:
+                return _load_dit_direct(
+                    checkpoint,
+                    config_path,
+                    allow_default_scheduler=allow_default_scheduler,
+                )
             return _load_unet_direct(
                 checkpoint,
                 config_path,
@@ -399,6 +427,7 @@ def generate_samples(
     num_steps: int | None,
     device: torch.device,
     generator: torch.Generator | None,
+    class_labels: torch.Tensor | None = None,
 ) -> torch.Tensor:
     model.eval()
     n_steps = int(num_steps or noise_scheduler.config.num_train_timesteps)
@@ -413,13 +442,39 @@ def generate_samples(
 
     for t in noise_scheduler.timesteps:
         timesteps = torch.full((batch_size,), t, device=device, dtype=torch.long)
-        noise_pred = model(images, timesteps, return_dict=False)[0]
+        if class_labels is not None:
+            labels = class_labels.to(device=device, dtype=torch.long)
+            noise_pred = model(
+                images,
+                timestep=timesteps,
+                class_labels=labels,
+                return_dict=False,
+            )[0]
+        else:
+            noise_pred = model(images, timesteps, return_dict=False)[0]
         step_kwargs = {}
         if "generator" in step_params:
             step_kwargs["generator"] = generator
         images = noise_scheduler.step(noise_pred, t, images, **step_kwargs).prev_sample
 
     return images
+
+
+def _labels_for_batch(
+    *,
+    labels: np.ndarray | None,
+    class_label: int | None,
+    start: int,
+    batch_size: int,
+) -> torch.Tensor | None:
+    if labels is not None:
+        end = start + batch_size
+        if end > len(labels):
+            raise ValueError(f"Requested labels[{start}:{end}] but only {len(labels)} labels are available.")
+        return torch.as_tensor(labels[start:end], dtype=torch.long)
+    if class_label is not None:
+        return torch.full((batch_size,), int(class_label), dtype=torch.long)
+    return None
 
 
 def main() -> None:
@@ -438,6 +493,8 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--scheduler", default=None, help="Optional inference scheduler class, e.g. DPMSolverMultistepScheduler.")
     parser.add_argument("--num-steps", type=int, default=None, help="Optional inference-step count for the scheduler.")
+    parser.add_argument("--class-label", type=int, default=None, help="Use one class label for every generated sample.")
+    parser.add_argument("--labels", default=None, help="Optional .npy file with one integer class label per generated sample.")
     parser.add_argument(
         "--ema-sigma-rel",
         type=float,
@@ -491,10 +548,23 @@ def main() -> None:
 
     batches = []
     remaining = args.num_samples
+    labels = np.load(args.labels) if args.labels else None
+    if labels is not None:
+        labels = np.asarray(labels, dtype=np.int64).reshape(-1)
+        if len(labels) < args.num_samples:
+            raise ValueError(f"--labels has {len(labels)} labels, but --num-samples={args.num_samples}.")
+
     generator = torch.Generator(device=device).manual_seed(args.seed)
+    offset = 0
     with torch.no_grad():
         while remaining > 0:
             n = min(args.batch_size, remaining)
+            batch_labels = _labels_for_batch(
+                labels=labels,
+                class_label=args.class_label,
+                start=offset,
+                batch_size=n,
+            )
             samples = generate_samples(
                 model,
                 scheduler,
@@ -503,9 +573,11 @@ def main() -> None:
                 num_steps=args.num_steps,
                 device=device,
                 generator=generator,
+                class_labels=batch_labels,
             )
             batches.append(samples.detach().cpu().numpy())
             remaining -= n
+            offset += n
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
