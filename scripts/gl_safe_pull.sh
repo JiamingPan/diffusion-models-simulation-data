@@ -100,7 +100,7 @@ if [[ "${#untracked_conflicts[@]}" -gt 0 ]]; then
   done
 fi
 
-git pull --ff-only origin "${branch}"
+git merge --ff-only "origin/${branch}"
 
 echo "Safe pull complete:"
 git log --oneline -1
