@@ -82,6 +82,12 @@ if [[ "${COSMODIFF_BRANCH}" != "${REQUIRED_COSMODIFF_BRANCH}" ]]; then
   exit 1
 fi
 
+PATCH_LOCK="${COSMODIFF_DIR}/.codex_dit_class_labels_patch.lock"
+(
+  flock -x 9
+  "${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_dit_class_labels.py" "${COSMODIFF_DIR}"
+) 9>"${PATCH_LOCK}"
+
 "${PYTHON_BIN}" - <<'PY'
 import inspect
 import os
@@ -105,6 +111,13 @@ required_train = {
 missing = required_train.difference(inspect.signature(optim.train).parameters)
 if missing:
     raise SystemExit(f"cosmodiff.optim.train is too old; missing {sorted(missing)}")
+
+source = optim_path.read_text()
+if "codex DiT class-label patch" not in source and "class_labels=batch_labels" not in source:
+    raise SystemExit(
+        "cosmodiff.optim.train does not pass labels into DiT forward(); "
+        "the DiT class-label patch did not apply."
+    )
 
 print("cosmodiff main support:", optim_path)
 print("cosmodiff data support:", utils_path)
