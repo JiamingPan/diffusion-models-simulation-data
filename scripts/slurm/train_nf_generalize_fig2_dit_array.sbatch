@@ -82,9 +82,10 @@ if [[ "${COSMODIFF_BRANCH}" != "${REQUIRED_COSMODIFF_BRANCH}" ]]; then
   exit 1
 fi
 
-PATCH_LOCK="${COSMODIFF_DIR}/.codex_dit_class_labels_patch.lock"
+PATCH_LOCK="${COSMODIFF_DIR}/.codex_dit_patches.lock"
 (
   flock -x 9
+  "${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_constant_label.py" "${COSMODIFF_DIR}"
   "${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_dit_class_labels.py" "${COSMODIFF_DIR}"
 ) 9>"${PATCH_LOCK}"
 
@@ -117,6 +118,13 @@ if "codex DiT class-label patch" not in source and "class_labels=batch_labels" n
     raise SystemExit(
         "cosmodiff.optim.train does not pass labels into DiT forward(); "
         "the DiT class-label patch did not apply."
+    )
+
+utils_source = utils_path.read_text()
+if "codex constant-label patch" not in utils_source and "constant_label = data_cfg.get" not in utils_source:
+    raise SystemExit(
+        "cosmodiff.utils.parse_config_data does not create labels from data.constant_label; "
+        "the constant-label data patch did not apply."
     )
 
 print("cosmodiff main support:", optim_path)
