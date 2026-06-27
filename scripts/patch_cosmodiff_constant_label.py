@@ -33,28 +33,59 @@ def patch_utils(path: Path) -> bool:
         print("cosmo_diffusion constant-label patch: ok")
         return False
 
-    pattern = re.compile(
+    return_pattern = re.compile(
         r"^(?P<indent>\s*)return ArrayDataset\(images, labels=labels(?P<tail>[^\n]*)\)",
         flags=re.MULTILINE,
     )
-    match = pattern.search(source)
+    match = return_pattern.search(source)
+    if match is not None:
+        indent = match.group("indent")
+        tail = match.group("tail")
+        replacement = (
+            f"{indent}# {MARKER}: make unconditional DiT runs provide a null class label.\n"
+            f"{indent}constant_label = data_cfg.get(\"constant_label\", None)\n"
+            f"{indent}if labels is None and constant_label is not None:\n"
+            f"{indent}    labels = torch.full(\n"
+            f"{indent}        (len(images),),\n"
+            f"{indent}        int(constant_label),\n"
+            f"{indent}        dtype=torch.long,\n"
+            f"{indent}        device=images.device,\n"
+            f"{indent}    )\n"
+            f"\n"
+            f"{indent}return ArrayDataset(images, labels=labels{tail})"
+        )
+
+        path.write_text(return_pattern.sub(replacement, source, count=1))
+        print("cosmo_diffusion constant-label patch: patched")
+        return True
+
+    dict_pattern = re.compile(
+        r"^(?P<indent>[ \t]*)output = \{\s*$(?=\n[ \t]*['\"]data['\"]:\s*ArrayDataset\()",
+        flags=re.MULTILINE,
+    )
+    match = dict_pattern.search(source)
     if match is None:
         raise RuntimeError(
-            f"Could not find the expected ArrayDataset return in {path}; inspect cosmodiff.utils.parse_config_data."
+            f"Could not find the expected ArrayDataset construction in {path}; "
+            "inspect cosmodiff.utils.parse_config_data."
         )
 
     indent = match.group("indent")
-    tail = match.group("tail")
     replacement = (
         f"{indent}# {MARKER}: make unconditional DiT runs provide a null class label.\n"
         f"{indent}constant_label = data_cfg.get(\"constant_label\", None)\n"
-        f"{indent}if labels is None and constant_label is not None:\n"
-        f"{indent}    labels = torch.full((len(images),), int(constant_label), dtype=torch.long)\n"
+        f"{indent}if out.get(\"labels\") is None and constant_label is not None:\n"
+        f"{indent}    out[\"labels\"] = torch.full(\n"
+        f"{indent}        (len(out[\"images\"]),),\n"
+        f"{indent}        int(constant_label),\n"
+        f"{indent}        dtype=torch.long,\n"
+        f"{indent}        device=out[\"images\"].device,\n"
+        f"{indent}    )\n"
         f"\n"
-        f"{indent}return ArrayDataset(images, labels=labels{tail})"
+        f"{indent}output = {{"
     )
 
-    path.write_text(pattern.sub(replacement, source, count=1))
+    path.write_text(dict_pattern.sub(replacement, source, count=1))
     print("cosmo_diffusion constant-label patch: patched")
     return True
 

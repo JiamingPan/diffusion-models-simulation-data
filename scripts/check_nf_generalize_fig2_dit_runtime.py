@@ -103,7 +103,8 @@ def precheck(args: argparse.Namespace) -> None:
     if not any(small_config["data"]["n_samples"]):
         raise RuntimeError(f"Small-load n_samples became all zero: {small_config['data']['n_samples']}")
 
-    dataset = utils.parse_config_data(small_config)
+    data_out = utils.parse_config_data(small_config)
+    dataset = data_out["data"] if isinstance(data_out, dict) else data_out
     sample = dataset[0]
     if "labels" not in sample:
         raise RuntimeError("Dataset sample has no labels; DiT would crash with class_labels=None.")
