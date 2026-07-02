@@ -39,18 +39,17 @@ from prepare_nf_generalize_nick_data_configs import (
 SWEEP_NAME = "nf_generalize_fig2_dit"
 CHECKPOINT_ROOT = f"/scratch/huterer_root/huterer0/jiamingp/saved_runs/{SWEEP_NAME}"
 
-DIT_VARIANTS: dict[str, dict[str, Any]] = {
-    "dit_base": {
-        "label": "DiT-base",
-        "variant_tag": "dit_base_noaug_fixed_updates",
-        "variant_label": "DiT-base, no augmentation, fixed 200k updates",
-        # Matches the existing template: roughly U128-size parameter count.
+def dit_variant(depth: int, label: str, note: str) -> dict[str, Any]:
+    return {
+        "label": label,
+        "variant_tag": f"dit_l{depth}_noaug_fixed_updates",
+        "variant_label": f"{label}, no augmentation, fixed 200k updates",
         "model_kwargs": {
             "sample_size": 128,
             "patch_size": 8,
             "in_channels": 1,
             "out_channels": 1,
-            "num_layers": 12,
+            "num_layers": depth,
             "num_attention_heads": 12,
             "attention_head_dim": 64,
             "num_embeds_ada_norm": 1,
@@ -60,7 +59,26 @@ DIT_VARIANTS: dict[str, dict[str, Any]] = {
         # on optimizer updates after gradient accumulation.
         "batch_size": 2,
         "gradient_accumulation_steps": 4,
-    },
+        "note": note,
+    }
+
+
+DIT_VARIANTS: dict[str, dict[str, Any]] = {
+    "dit_l8": dit_variant(
+        8,
+        "DiT-L8",
+        "Depth-scaling DiT run: 8 transformer layers at width 768.",
+    ),
+    "dit_base": dit_variant(
+        12,
+        "DiT-base",
+        "Matches the existing template: roughly U128-size parameter count.",
+    ),
+    "dit_l16": dit_variant(
+        16,
+        "DiT-L16",
+        "Depth-scaling DiT run: 16 transformer layers at width 768.",
+    ),
 }
 
 

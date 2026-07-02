@@ -41,6 +41,7 @@ SEED=${SEED:-123}
 CLASS_LABEL=${CLASS_LABEL:-0}
 OVERWRITE=${OVERWRITE:-0}
 REQUIRED_COSMODIFF_BRANCH=${REQUIRED_COSMODIFF_BRANCH:-main}
+DIT_VARIANTS=${DIT_VARIANTS:-dit_base}
 
 cd "${PROJECT_DIR}"
 mkdir -p logs/nf_generalize_fig2_dit "${SAMPLE_ROOT}"
@@ -50,7 +51,16 @@ fi
 source "${PROJECT_DIR}/scripts/nf_class_conditional_pythonpath.sh"
 set_nf_class_conditional_pythonpath "${VENV_PATH}/bin/python" "${BASE_VENV_PATH}"
 
-mapfile -t RUNS < <("${PYTHON_BIN}" scripts/prepare_nf_generalize_fig2_dit_configs.py --project-dir "${PROJECT_DIR}" --print-runs)
+VARIANT_ARGS=()
+IFS=',' read -ra VARIANT_LIST <<< "${DIT_VARIANTS}"
+for variant in "${VARIANT_LIST[@]}"; do
+  variant="${variant//[[:space:]]/}"
+  if [[ -n "${variant}" ]]; then
+    VARIANT_ARGS+=(--variant "${variant}")
+  fi
+done
+
+mapfile -t RUNS < <("${PYTHON_BIN}" scripts/prepare_nf_generalize_fig2_dit_configs.py --project-dir "${PROJECT_DIR}" --print-runs "${VARIANT_ARGS[@]}")
 if (( SLURM_ARRAY_TASK_ID < 0 || SLURM_ARRAY_TASK_ID >= ${#RUNS[@]} )); then
   echo "Invalid array task ${SLURM_ARRAY_TASK_ID}; valid range is 0-$(( ${#RUNS[@]} - 1 ))" >&2
   exit 1
