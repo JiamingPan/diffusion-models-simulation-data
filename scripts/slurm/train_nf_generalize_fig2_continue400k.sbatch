@@ -30,6 +30,8 @@ CONFIG_DIR=${CONFIG_DIR:-${PROJECT_DIR}/local/nf_generalize_fig2_continue400k/co
 CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-/scratch/huterer_root/huterer0/jiamingp/saved_runs/nf_generalize_fig2}
 PYTHON_BIN=${PYTHON_BIN:-python}
 REQUIRED_COSMODIFF_BRANCH=${REQUIRED_COSMODIFF_BRANCH:-main}
+TOTAL_UPDATES=${TOTAL_UPDATES:-400000}
+CHECKPOINT_EVERY_N_EPOCHS=${CHECKPOINT_EVERY_N_EPOCHS:-1}
 
 cd "${PROJECT_DIR}"
 mkdir -p logs/nf_generalize_fig2_continue400k
@@ -105,12 +107,15 @@ PY
 "${PYTHON_BIN}" scripts/prepare_nf_generalize_fig2_continue400k_configs.py \
   --project-dir "${PROJECT_DIR}" \
   --check-only \
-  --run-name "${RUN_NAME}"
+  --run-name "${RUN_NAME}" \
+  --total-updates "${TOTAL_UPDATES}" \
+  --checkpoint-every-n-epochs "${CHECKPOINT_EVERY_N_EPOCHS}"
 
 echo "Continuing ${RUN_NAME}"
 echo "  config:      ${CONFIG_PATH}"
 echo "  checkpoints: ${CHECKPOINT_DIR}"
-echo "  target:      about 400k total optimizer updates, no augmentation"
+echo "  target:      about ${TOTAL_UPDATES} optimizer updates, no augmentation"
+echo "  checkpoint:  every ${CHECKPOINT_EVERY_N_EPOCHS} epoch(s)"
 echo "  cosmodiff:   ${COSMODIFF_DIR}"
 echo "  python:      ${PYTHON_BIN}"
 

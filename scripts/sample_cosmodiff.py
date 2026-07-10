@@ -477,6 +477,34 @@ def _labels_for_batch(
     return None
 
 
+def save_sample_output(
+    output: Path,
+    samples: np.ndarray,
+    *,
+    requested_checkpoint: Path,
+    resolved_checkpoint: Path,
+    config_path: Path | None,
+    scheduler_name: str,
+    num_steps: int,
+    seed: int,
+) -> None:
+    """Save samples with enough provenance to audit checkpoint comparisons."""
+    output.parent.mkdir(parents=True, exist_ok=True)
+    if output.suffix == ".npz":
+        np.savez(
+            output,
+            samples=samples,
+            requested_checkpoint=np.asarray(str(requested_checkpoint)),
+            resolved_checkpoint=np.asarray(str(resolved_checkpoint)),
+            config_path=np.asarray(str(config_path) if config_path is not None else ""),
+            scheduler=np.asarray(str(scheduler_name)),
+            num_steps=np.asarray(int(num_steps), dtype=np.int64),
+            seed=np.asarray(int(seed), dtype=np.int64),
+        )
+    else:
+        np.save(output, samples)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", required=True, help="Checkpoint directory or run output directory.")
@@ -532,8 +560,8 @@ def main() -> None:
         sigma_rel=args.ema_sigma_rel,
     )
     scheduler = build_inference_scheduler(scheduler, args.scheduler)
+    n_steps = int(args.num_steps or scheduler.config.num_train_timesteps)
     if args.preflight_only:
-        n_steps = int(args.num_steps or scheduler.config.num_train_timesteps)
         scheduler.set_timesteps(n_steps)
         print(
             "preflight ok: "
@@ -541,6 +569,8 @@ def main() -> None:
             f"steps={len(scheduler.timesteps)} ema_sigma_rel={args.ema_sigma_rel}"
         )
         return
+
+    print(f"resolved checkpoint: {checkpoint}")
 
     device = torch.device(args.device)
     model.to(device)
@@ -580,12 +610,17 @@ def main() -> None:
             offset += n
 
     output = Path(args.output)
-    output.parent.mkdir(parents=True, exist_ok=True)
     samples = np.concatenate(batches, axis=0)
-    if output.suffix == ".npz":
-        np.savez(output, samples=samples)
-    else:
-        np.save(output, samples)
+    save_sample_output(
+        output,
+        samples,
+        requested_checkpoint=requested_checkpoint,
+        resolved_checkpoint=checkpoint,
+        config_path=config_path,
+        scheduler_name=scheduler.__class__.__name__,
+        num_steps=n_steps,
+        seed=args.seed,
+    )
     print(f"Wrote {args.num_samples} samples to {output}")
 
 
