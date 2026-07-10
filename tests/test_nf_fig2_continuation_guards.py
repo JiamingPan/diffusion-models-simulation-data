@@ -68,6 +68,16 @@ class ContinuationSamplingGuardTests(unittest.TestCase):
         self.assertIn("np.array_equal", source)
         self.assertIn("resolved_checkpoint", source)
 
+    def test_notebook_defaults_to_the_verified_continuation_checkpoint(self):
+        notebook_path = REPO_ROOT / "notebooks" / "nf_generalize_fig2_partial_quickcheck.ipynb"
+        notebook = json.loads(notebook_path.read_text())
+        source = "\n".join(
+            "".join(cell.get("source", []))
+            for cell in notebook["cells"]
+        )
+        self.assertIn("dpm50,dpm50_cont_epoch18768", source)
+        self.assertNotIn("200k_vs_400k_fidelity", source)
+
 
 if __name__ == "__main__":
     unittest.main()
