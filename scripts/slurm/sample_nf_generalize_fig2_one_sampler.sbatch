@@ -55,6 +55,7 @@ set_nf_class_conditional_pythonpath "${VENV_PATH}/bin/python" "${BASE_VENV_PATH}
 
 CONFIG_PATH=${CONFIG_DIR}/${RUN_NAME}.yaml
 CHECKPOINT_DIR=${CHECKPOINT_ROOT}/${RUN_NAME}_checkpoints
+CHECKPOINT_PATH=${CHECKPOINT_PATH:-${CHECKPOINT_DIR}}
 OUTPUT_PATH=${SAMPLE_ROOT}/${RUN_NAME}_seed${SEED}_${SAMPLE_LABEL}.npz
 
 STUB_ROOT="${PROJECT_DIR}/results/cache/python_stubs"
@@ -71,8 +72,8 @@ if [[ ! -f "${CONFIG_PATH}" ]]; then
   exit 1
 fi
 
-if [[ ! -d "${CHECKPOINT_DIR}" ]]; then
-  echo "Missing checkpoint directory: ${CHECKPOINT_DIR}" >&2
+if [[ ! -e "${CHECKPOINT_PATH}" ]]; then
+  echo "Missing checkpoint path: ${CHECKPOINT_PATH}" >&2
   exit 1
 fi
 
@@ -96,7 +97,7 @@ if [[ -f "${OUTPUT_PATH}" && "${OVERWRITE}" != "1" ]]; then
 fi
 
 echo "Sampling Fig. 2 run ${RUN_NAME}"
-echo "  checkpoint root: ${CHECKPOINT_DIR}"
+echo "  checkpoint input: ${CHECKPOINT_PATH}"
 echo "  config:          ${CONFIG_PATH}"
 echo "  output:          ${OUTPUT_PATH}"
 echo "  samples:         ${NUM_SAMPLES}"
@@ -106,7 +107,7 @@ echo "  cosmodiff:       ${COSMODIFF_DIR}"
 echo "  venv:            ${VENV_PATH}"
 
 "${PYTHON_BIN}" "${PROJECT_DIR}/scripts/sample_cosmodiff.py" \
-  --checkpoint "${CHECKPOINT_DIR}" \
+  --checkpoint "${CHECKPOINT_PATH}" \
   --config "${CONFIG_PATH}" \
   --output "${OUTPUT_PATH}" \
   --num-samples 1 \
@@ -119,7 +120,7 @@ echo "  venv:            ${VENV_PATH}"
   --preflight-only
 
 "${PYTHON_BIN}" "${PROJECT_DIR}/scripts/sample_cosmodiff.py" \
-  --checkpoint "${CHECKPOINT_DIR}" \
+  --checkpoint "${CHECKPOINT_PATH}" \
   --config "${CONFIG_PATH}" \
   --output "${OUTPUT_PATH}" \
   --num-samples "${NUM_SAMPLES}" \
