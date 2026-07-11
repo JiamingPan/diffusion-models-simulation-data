@@ -15,6 +15,7 @@ set -euo pipefail
 PROJECT_DIR=${PROJECT_DIR:-/home/jiamingp/diffusion_models_repo}
 VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
 PYTHON_BIN=${PYTHON_BIN:-python}
+MANIFEST_PATH=${MANIFEST_PATH:-${PROJECT_DIR}/local/nf_generalize_fig2_dit/manifest.json}
 
 SSCD_PATH=${SSCD_PATH:-/home/jiamingp/.cache/torch/hub/sscd_disc_mixup.torchscript.pt}
 SSCD_DEVICE=${SSCD_DEVICE:-cpu}
@@ -42,7 +43,7 @@ export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 
 "${PYTHON_BIN}" scripts/compute_nf_generalize_sscd_full_nn.py \
   --project-dir "${PROJECT_DIR}" \
-  --manifest "${PROJECT_DIR}/local/nf_generalize_fig2_dit/manifest.json" \
+  --manifest "${MANIFEST_PATH}" \
   --output-dir "${PROJECT_DIR}/results/nf_generalize_fig2_dit/quickcheck" \
   --table-dir "${PROJECT_DIR}/results/nf_generalize_fig2_dit/tables" \
   --cache-dir "${PROJECT_DIR}/results/nf_generalize_fig2_dit/cache/sscd_full_nn" \
