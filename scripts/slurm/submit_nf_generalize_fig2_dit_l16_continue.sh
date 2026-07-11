@@ -35,6 +35,13 @@ python scripts/prepare_nf_generalize_fig2_dit_l16_continue_configs.py \
   --use-existing-manifest \
   --check-only
 
+resume_precheck=$(
+  CONTINUE_STAGE="${START_STAGE}" sbatch -A "${ACCOUNT}" --parsable \
+    scripts/slurm/precheck_nf_generalize_fig2_dit_l16_resume.sbatch
+)
+resume_precheck=${resume_precheck%%;*}
+echo "checkpoint-resume precheck: ${resume_precheck}"
+
 ANALYSIS_MANIFEST=${PROJECT_DIR}/local/nf_generalize_fig2_dit_l16_continue/analysis_manifest.json
 if [[ "${SUBMIT_ANALYSIS}" == "1" && "${START_STAGE}" == "1" ]]; then
   baseline_pca=$(
@@ -52,7 +59,7 @@ if [[ "${SUBMIT_ANALYSIS}" == "1" && "${START_STAGE}" == "1" ]]; then
   echo "baseline 200k analysis: pca=${baseline_pca%%;*} sscd=${baseline_sscd%%;*}"
 fi
 
-previous_job=""
+previous_job=${resume_precheck}
 echo "Submitting four sequential 25k-update stages; each array is limited to two GPUs."
 for stage in 1 2 3 4; do
   if (( stage < START_STAGE )); then
@@ -106,6 +113,7 @@ for stage in 1 2 3 4; do
   previous_job=${sample_job}
 done
 
-echo "The chain is fully sequential across stages, with at most two GPU tasks active at once."
+echo "Continuation stages are sequential; each continuation array uses at most two GPUs."
+echo "Other jobs, including Jupyter and CPU analyses, are not included in that two-GPU limit."
 echo "If a stage times out, restart from it with:"
 echo "  START_STAGE=<stage> REUSE_EXISTING_MANIFEST=1 bash scripts/slurm/submit_nf_generalize_fig2_dit_l16_continue.sh"
