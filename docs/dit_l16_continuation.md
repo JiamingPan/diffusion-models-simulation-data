@@ -52,7 +52,17 @@ sacct -j JOB_ID --format=JobID,JobName%28,State,ExitCode,Elapsed,MaxRSS
 ```
 
 If one training stage times out, inspect the latest recovery checkpoint and
-resubmit only that stage and its sampler rather than regenerating the manifest.
+restart the chain from that stage without regenerating the manifest:
+
+```bash
+START_STAGE=2 REUSE_EXISTING_MANIFEST=1 \
+  bash scripts/slurm/submit_nf_generalize_fig2_dit_l16_continue.sh
+```
+
+Replace `2` with the interrupted stage. Runs that already reached that stage's
+exact checkpoint exit immediately; unfinished runs resume from their newest
+recovery checkpoint. The remaining stages are submitted behind the repaired
+stage with fresh `afterok` dependencies.
 
 ## Real-reference provenance
 

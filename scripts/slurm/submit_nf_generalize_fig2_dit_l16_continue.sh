@@ -7,11 +7,28 @@ PROJECT_DIR=${PROJECT_DIR:-/home/jiamingp/diffusion_models_repo}
 ACCOUNT=${ACCOUNT:-huterer2}
 OVERWRITE=${OVERWRITE:-0}
 SUBMIT_ANALYSIS=${SUBMIT_ANALYSIS:-1}
+START_STAGE=${START_STAGE:-1}
+REUSE_EXISTING_MANIFEST=${REUSE_EXISTING_MANIFEST:-0}
 
 cd "${PROJECT_DIR}"
 
-python scripts/prepare_nf_generalize_fig2_dit_l16_continue_configs.py \
-  --project-dir "${PROJECT_DIR}"
+if (( START_STAGE < 1 || START_STAGE > 4 )); then
+  echo "START_STAGE must be between 1 and 4; got ${START_STAGE}" >&2
+  exit 1
+fi
+
+if [[ "${REUSE_EXISTING_MANIFEST}" == "1" ]]; then
+  test -f "${PROJECT_DIR}/local/nf_generalize_fig2_dit_l16_continue/manifest.json"
+  test -f "${PROJECT_DIR}/local/nf_generalize_fig2_dit_l16_continue/analysis_manifest.json"
+  echo "Reusing the frozen continuation manifest from its original preparation."
+else
+  if [[ "${START_STAGE}" != "1" ]]; then
+    echo "START_STAGE>1 requires REUSE_EXISTING_MANIFEST=1 to prevent target drift." >&2
+    exit 1
+  fi
+  python scripts/prepare_nf_generalize_fig2_dit_l16_continue_configs.py \
+    --project-dir "${PROJECT_DIR}"
+fi
 
 python scripts/prepare_nf_generalize_fig2_dit_l16_continue_configs.py \
   --project-dir "${PROJECT_DIR}" \
@@ -19,7 +36,7 @@ python scripts/prepare_nf_generalize_fig2_dit_l16_continue_configs.py \
   --check-only
 
 ANALYSIS_MANIFEST=${PROJECT_DIR}/local/nf_generalize_fig2_dit_l16_continue/analysis_manifest.json
-if [[ "${SUBMIT_ANALYSIS}" == "1" ]]; then
+if [[ "${SUBMIT_ANALYSIS}" == "1" && "${START_STAGE}" == "1" ]]; then
   baseline_pca=$(
     MANIFEST_PATH="${ANALYSIS_MANIFEST}" SAMPLE_LABEL="dpm50" \
     OUT_PREFIX="nf_generalize_fig2_dit_l16_cont_200k_pca_full_nn" \
@@ -38,6 +55,9 @@ fi
 previous_job=""
 echo "Submitting four sequential 25k-update stages; each array is limited to two GPUs."
 for stage in 1 2 3 4; do
+  if (( stage < START_STAGE )); then
+    continue
+  fi
   dependency_args=()
   if [[ -n "${previous_job}" ]]; then
     dependency_args+=(--dependency="afterok:${previous_job}")
@@ -87,4 +107,5 @@ for stage in 1 2 3 4; do
 done
 
 echo "The chain is fully sequential across stages, with at most two GPU tasks active at once."
-echo "If a stage times out, re-submit only that stage; it resumes from its latest recovery checkpoint."
+echo "If a stage times out, restart from it with:"
+echo "  START_STAGE=<stage> REUSE_EXISTING_MANIFEST=1 bash scripts/slurm/submit_nf_generalize_fig2_dit_l16_continue.sh"
