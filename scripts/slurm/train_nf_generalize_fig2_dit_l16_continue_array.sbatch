@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=80gb
-#SBATCH --time=08:00:00
+#SBATCH --time=24:00:00
 #SBATCH --array=0-4%2
 #SBATCH -o /home/jiamingp/diffusion_models_repo/logs/nf_generalize_fig2_dit_l16_continue/train_stage%a_%A_%a.out
 #SBATCH -e /home/jiamingp/diffusion_models_repo/logs/nf_generalize_fig2_dit_l16_continue/train_stage%a_%A_%a.err
@@ -114,7 +114,7 @@ echo "Continuing ${RUN_NAME}, stage ${CONTINUE_STAGE}/4"
 echo "  config:              ${CONFIG_PATH}"
 echo "  checkpoint directory: ${CHECKPOINT_DIR}"
 echo "  exact stage target:   ${EXPECTED_CHECKPOINT}"
-echo "  walltime:             8 hours"
+echo "  walltime:             24 hours"
 echo "  recovery interval:    approximately 5,000 optimizer updates"
 
 "${PYTHON_BIN}" scripts/run_cosmodiff_train_with_dit_resume.py \

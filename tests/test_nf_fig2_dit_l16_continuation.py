@@ -75,7 +75,7 @@ class DitL16ContinuationTests(unittest.TestCase):
         sample = (REPO_ROOT / "scripts" / "slurm" / "sample_nf_generalize_fig2_dit_l16_continue_array.sbatch").read_text()
         submit = (REPO_ROOT / "scripts" / "slurm" / "submit_nf_generalize_fig2_dit_l16_continue.sh").read_text()
 
-        self.assertIn("#SBATCH --time=08:00:00", train)
+        self.assertIn("#SBATCH --time=24:00:00", train)
         self.assertIn("CONTINUE_STAGE=${CONTINUE_STAGE:?", train)
         self.assertIn("expected_checkpoint", sample)
         self.assertIn('--checkpoint "${CHECKPOINT_PATH}"', sample)
