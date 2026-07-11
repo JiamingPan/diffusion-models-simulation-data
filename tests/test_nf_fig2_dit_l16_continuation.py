@@ -85,6 +85,7 @@ class DitL16ContinuationTests(unittest.TestCase):
         self.assertIn("START_STAGE=${START_STAGE:-1}", submit)
         self.assertIn("REUSE_EXISTING_MANIFEST=${REUSE_EXISTING_MANIFEST:-0}", submit)
         self.assertIn('if (( stage < START_STAGE ))', submit)
+        self.assertIn("precheck_nf_generalize_fig2_dit_l16_resume.sbatch", submit)
 
     def test_analyzers_accept_the_frozen_small_data_manifest(self):
         pca = (REPO_ROOT / "scripts" / "slurm" / "analyze_nf_generalize_fig2_dit_pca.sbatch").read_text()

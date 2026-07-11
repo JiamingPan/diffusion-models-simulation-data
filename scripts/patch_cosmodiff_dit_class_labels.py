@@ -19,6 +19,7 @@ from pathlib import Path
 
 
 MARKER = "codex DiT class-label patch"
+CHECKPOINT_MARKER = "codex DiT checkpoint-class patch"
 
 
 def source_for_patch(path: Path) -> str:
@@ -75,15 +76,80 @@ def patch_optim(path: Path) -> bool:
     return True
 
 
+def patch_checkpoint_loader(path: Path) -> bool:
+    """Make checkpoint resume reconstruct the saved diffusers model class."""
+    source = source_for_patch(path)
+    if CHECKPOINT_MARKER in source:
+        print("cosmo_diffusion DiT checkpoint-class patch: ok")
+        return False
+
+    patterns = (
+        re.compile(
+            r"^(?P<indent>\s*)model = AutoModel\.from_pretrained\(ckpt_path\)",
+            flags=re.MULTILINE,
+        ),
+        re.compile(
+            r"^(?P<indent>\s*)model = diffusers\.UNet2DModel\.from_pretrained\(ckpt_path\)",
+            flags=re.MULTILINE,
+        ),
+    )
+    match = next((pattern.search(source) for pattern in patterns if pattern.search(source)), None)
+    if match is None:
+        if 'model_config.get("_class_name")' in source and "getattr(diffusers, class_name)" in source:
+            print("cosmo_diffusion DiT checkpoint-class patch: already supported")
+            return False
+        raise RuntimeError(
+            f"Could not find the expected checkpoint model loader in {path}; "
+            "inspect cosmodiff.utils.load_checkpoint."
+        )
+
+    indent = match.group("indent")
+    replacement = (
+        f"{indent}# {CHECKPOINT_MARKER}: reconstruct the class recorded by save_pretrained.\n"
+        f"{indent}model_config_path = os.path.join(ckpt_path, \"config.json\")\n"
+        f"{indent}if not os.path.exists(model_config_path):\n"
+        f"{indent}    raise FileNotFoundError(f\"Missing diffusers config: {{model_config_path}}\")\n"
+        f"{indent}with open(model_config_path) as model_config_file:\n"
+        f"{indent}    model_config = json.load(model_config_file)\n"
+        f"{indent}class_name = model_config.get(\"_class_name\")\n"
+        f"{indent}if not class_name:\n"
+        f"{indent}    raise ValueError(f\"Checkpoint {{ckpt_path!r}} does not record _class_name\")\n"
+        f"{indent}try:\n"
+        f"{indent}    model_cls = getattr(diffusers, class_name)\n"
+        f"{indent}except AttributeError as exc:\n"
+        f"{indent}    raise ValueError(\n"
+        f"{indent}        f\"Checkpoint {{ckpt_path!r}} requires unavailable diffusers class {{class_name!r}}\"\n"
+        f"{indent}    ) from exc\n"
+        f"{indent}model = model_cls.from_pretrained(ckpt_path)\n"
+        f"{indent}meta_parameters = [\n"
+        f"{indent}    name for name, parameter in model.named_parameters()\n"
+        f"{indent}    if parameter.device.type == \"meta\"\n"
+        f"{indent}]\n"
+        f"{indent}if meta_parameters:\n"
+        f"{indent}    raise RuntimeError(\n"
+        f"{indent}        f\"Checkpoint {{ckpt_path!r}} left meta parameters after loading: {{meta_parameters[:8]}}\"\n"
+        f"{indent}    )"
+    )
+
+    patched = source[: match.start()] + replacement + source[match.end() :]
+    path.write_text(patched)
+    print("cosmo_diffusion DiT checkpoint-class patch: patched")
+    return True
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("cosmodiff_dir", type=Path)
     args = parser.parse_args()
 
     optim_path = args.cosmodiff_dir / "cosmodiff" / "optim.py"
+    utils_path = args.cosmodiff_dir / "cosmodiff" / "utils.py"
     if not optim_path.exists():
         raise FileNotFoundError(f"Missing {optim_path}")
+    if not utils_path.exists():
+        raise FileNotFoundError(f"Missing {utils_path}")
     patch_optim(optim_path)
+    patch_checkpoint_loader(utils_path)
 
 
 if __name__ == "__main__":
