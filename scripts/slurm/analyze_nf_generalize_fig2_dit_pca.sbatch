@@ -15,6 +15,7 @@ set -euo pipefail
 PROJECT_DIR=${PROJECT_DIR:-/home/jiamingp/diffusion_models_repo}
 VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
 PYTHON_BIN=${PYTHON_BIN:-python}
+MANIFEST_PATH=${MANIFEST_PATH:-${PROJECT_DIR}/local/nf_generalize_fig2_dit/manifest.json}
 
 PCA_COMPONENTS=${PCA_COMPONENTS:-8192}
 PCA_FIT_MAX_SLICES=${PCA_FIT_MAX_SLICES:-0}
@@ -46,7 +47,7 @@ fi
 
 "${PYTHON_BIN}" scripts/compute_nf_generalize_pca_full_nn.py \
   --project-dir "${PROJECT_DIR}" \
-  --manifest "${PROJECT_DIR}/local/nf_generalize_fig2_dit/manifest.json" \
+  --manifest "${MANIFEST_PATH}" \
   --output-dir "${PROJECT_DIR}/results/nf_generalize_fig2_dit/quickcheck" \
   --table-dir "${PROJECT_DIR}/results/nf_generalize_fig2_dit/tables" \
   --out-prefix "${OUT_PREFIX}" \

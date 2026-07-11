@@ -78,6 +78,18 @@ class ContinuationSamplingGuardTests(unittest.TestCase):
         self.assertIn("dpm50,dpm50_cont_epoch18768", source)
         self.assertNotIn("200k_vs_400k_fidelity", source)
 
+    def test_controlled_fidelity_uses_complete_training_reference(self):
+        notebook_path = REPO_ROOT / "notebooks" / "nf_generalize_fig2_partial_quickcheck.ipynb"
+        notebook = json.loads(notebook_path.read_text())
+        source = "\n".join(
+            "".join(cell.get("source", []))
+            for cell in notebook["cells"]
+        )
+
+        self.assertIn("max_raw_samples=None", source)
+        self.assertIn("FULL TRAINING REFERENCE MISMATCH", source)
+        self.assertIn("real_reference_kind", source)
+
 
 if __name__ == "__main__":
     unittest.main()
