@@ -117,7 +117,7 @@ echo "  exact stage target:   ${EXPECTED_CHECKPOINT}"
 echo "  walltime:             8 hours"
 echo "  recovery interval:    approximately 5,000 optimizer updates"
 
-"${PYTHON_BIN}" scripts/train_cosmodiff.py \
+"${PYTHON_BIN}" scripts/run_cosmodiff_train_with_dit_resume.py \
   --config "${CONFIG_PATH}" \
   --cosmodiff-train "${COSMODIFF_DIR}/scripts/cosmodiff_train.py"
 

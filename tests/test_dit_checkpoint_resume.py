@@ -47,10 +47,23 @@ class DitCheckpointResumeTests(unittest.TestCase):
 
     def test_resume_precheck_loads_actual_checkpoint_and_rejects_meta_parameters(self):
         check = (REPO_ROOT / "scripts" / "check_nf_generalize_fig2_dit_resume.py").read_text()
-        self.assertIn("utils.load_checkpoint", check)
+        self.assertIn("load_checkpoint_preserving_class", check)
         self.assertIn("DiTTransformer2DModel", check)
         self.assertIn("meta_parameters", check)
         self.assertIn("PASS: checkpoint resume loader reconstructed DiT", check)
+
+    def test_training_uses_in_process_dit_resume_wrapper(self):
+        train = (
+            REPO_ROOT / "scripts" / "slurm" / "train_nf_generalize_fig2_dit_l16_continue_array.sbatch"
+        ).read_text()
+        wrapper = (REPO_ROOT / "scripts" / "run_cosmodiff_train_with_dit_resume.py").read_text()
+
+        self.assertIn("run_cosmodiff_train_with_dit_resume.py", train)
+        self.assertNotIn('"${PYTHON_BIN}" scripts/train_cosmodiff.py', train)
+        self.assertIn("load_checkpoint_preserving_class", wrapper)
+        self.assertIn('model_config.get("_class_name")', wrapper)
+        self.assertIn("utils.load_checkpoint = load_checkpoint_preserving_class", wrapper)
+        self.assertIn("runpy.run_path", wrapper)
 
 
 if __name__ == "__main__":
