@@ -82,6 +82,9 @@ class DitL16ContinuationTests(unittest.TestCase):
         self.assertIn("afterok", submit)
         self.assertIn("for stage in 1 2 3 4", submit)
         self.assertIn("--array=0-4%2", submit)
+        self.assertIn("START_STAGE=${START_STAGE:-1}", submit)
+        self.assertIn("REUSE_EXISTING_MANIFEST=${REUSE_EXISTING_MANIFEST:-0}", submit)
+        self.assertIn('if (( stage < START_STAGE ))', submit)
 
     def test_analyzers_accept_the_frozen_small_data_manifest(self):
         pca = (REPO_ROOT / "scripts" / "slurm" / "analyze_nf_generalize_fig2_dit_pca.sbatch").read_text()
