@@ -90,6 +90,24 @@ def load_real_from_config(config_path: str | Path, max_raw_samples: int | None =
     return dataset.arrays.detach().cpu().numpy()
 
 
+def load_real_reference_from_config(
+    config_path: str | Path,
+    max_slices: int | None = None,
+) -> np.ndarray:
+    """Load a reference normalized from the complete configured training set.
+
+    Capping raw simulations before normalization changes inferred values such
+    as ``center`` and ``xmax`` when those config entries are unset. Reference
+    curves must instead use full-training normalization. Any plotting limit is
+    therefore applied only after the complete set has been normalized.
+    """
+    full_reference = as_nchw(load_real_from_config(config_path, max_raw_samples=None))
+    if max_slices is None or int(max_slices) <= 0 or len(full_reference) <= int(max_slices):
+        return full_reference
+    indices = np.linspace(0, len(full_reference) - 1, int(max_slices), dtype=np.int64)
+    return np.asarray(full_reference[indices], dtype=np.float32).copy()
+
+
 def _cap_n_samples(current: Any, max_raw_samples: int, img_path: Any = None) -> int | list[int]:
     """Cap config ``n_samples`` while preserving list-of-file semantics."""
     max_raw_samples = int(max_raw_samples)
