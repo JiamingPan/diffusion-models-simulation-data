@@ -8,6 +8,8 @@ import inspect
 import json
 from pathlib import Path
 
+from run_cosmodiff_train_with_dit_resume import load_checkpoint_preserving_class
+
 
 DEFAULT_COSMODIFF_DIR = "/home/jiamingp/Diffusion_model/cosmo_diffusion_main"
 EXPECTED_CLASS = "DiTTransformer2DModel"
@@ -44,7 +46,7 @@ def main() -> None:
     if cosmodiff_dir not in utils_path.parents:
         raise RuntimeError(f"Imported cosmodiff.utils from {utils_path}, expected under {cosmodiff_dir}")
 
-    loaded = utils.load_checkpoint(str(checkpoint))
+    loaded = load_checkpoint_preserving_class(str(checkpoint))
     model = loaded[0]
     optimizer = loaded[2]
     actual_class = type(model).__name__
