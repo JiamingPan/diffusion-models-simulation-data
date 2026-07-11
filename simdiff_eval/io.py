@@ -101,11 +101,195 @@ def load_real_reference_from_config(
     curves must instead use full-training normalization. Any plotting limit is
     therefore applied only after the complete set has been normalized.
     """
-    full_reference = as_nchw(load_real_from_config(config_path, max_raw_samples=None))
-    if max_slices is None or int(max_slices) <= 0 or len(full_reference) <= int(max_slices):
-        return full_reference
-    indices = np.linspace(0, len(full_reference) - 1, int(max_slices), dtype=np.int64)
-    return np.asarray(full_reference[indices], dtype=np.float32).copy()
+    import yaml
+
+    with open(config_path) as handle:
+        config: dict[str, Any] = yaml.safe_load(handle)
+    try:
+        return _load_real_reference_streaming(config, max_slices=max_slices)
+    except (NotImplementedError, TypeError, ValueError) as exc:
+        print(f"Streaming real-reference load unavailable; using full loader. Error: {exc}")
+        full_reference = as_nchw(load_real_from_config(config_path, max_raw_samples=None))
+        if max_slices is None or int(max_slices) <= 0 or len(full_reference) <= int(max_slices):
+            return full_reference
+        indices = np.linspace(0, len(full_reference) - 1, int(max_slices), dtype=np.int64)
+        return np.asarray(full_reference[indices], dtype=np.float32).copy()
+
+
+def _source_values(value: Any, n_sources: int, name: str) -> list[Any]:
+    if isinstance(value, (list, tuple)):
+        if len(value) != n_sources:
+            raise ValueError(f"data.{name} has {len(value)} values for {n_sources} sources")
+        return list(value)
+    return [value] * n_sources
+
+
+def _streaming_source_specs(data_cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    paths = data_cfg.get("img_path")
+    if isinstance(paths, (str, Path)):
+        paths = [paths]
+    if not isinstance(paths, (list, tuple)) or not paths:
+        raise NotImplementedError("streaming references require one or more .npy paths")
+
+    read_fns = _source_values(data_cfg.get("img_read_fn", "npy_read_fn"), len(paths), "img_read_fn")
+    sample_counts = _source_values(data_cfg.get("n_samples"), len(paths), "n_samples")
+    seeds = _source_values(data_cfg.get("seed"), len(paths), "seed")
+    specs: list[dict[str, Any]] = []
+    for path, read_fn, sample_count, seed in zip(paths, read_fns, sample_counts, seeds):
+        if read_fn not in {None, "npy_read_fn"}:
+            raise NotImplementedError(f"streaming reference does not support img_read_fn={read_fn!r}")
+        array = np.load(path, mmap_mode="r")
+        if array.ndim not in {3, 4}:
+            raise ValueError(f"Expected raw .npy data with 3 or 4 dimensions, got {array.shape}")
+        count = len(array) if sample_count is None else int(sample_count)
+        if count < 0 or count > len(array):
+            raise ValueError(f"Invalid n_samples={count} for {path} with {len(array)} entries")
+        if seed is None:
+            selected = np.arange(count, dtype=np.int64)
+        else:
+            selected = np.random.default_rng(seed).choice(len(array), size=count, replace=False)
+        specs.append({"path": str(path), "array": array, "selected": np.asarray(selected, dtype=np.int64)})
+    return specs
+
+
+def _transformed_raw_chunks(
+    specs: list[dict[str, Any]],
+    *,
+    use_log: bool,
+    chunk_size: int = 4,
+):
+    for spec in specs:
+        selected = spec["selected"]
+        array = spec["array"]
+        for start in range(0, len(selected), int(chunk_size)):
+            indices = selected[start : start + int(chunk_size)]
+            chunk = np.asarray(array[indices], dtype=np.float32)
+            if use_log:
+                chunk = np.log(chunk)
+            yield chunk
+
+
+def _full_normalization_stats(
+    specs: list[dict[str, Any]],
+    data_cfg: dict[str, Any],
+) -> tuple[float | None, float | None]:
+    transform = data_cfg.get("transform")
+    use_log = bool(data_cfg.get("log", False)) or (
+        isinstance(transform, (list, tuple)) and "log" in transform
+    )
+    normalization = data_cfg.get("normalization")
+    norm_kwargs = dict(data_cfg.get("norm_kwargs") or {})
+    if normalization not in {None, "none", "tanh", "centermax", "center-max", "centered_maxabs"}:
+        raise NotImplementedError(f"streaming reference does not support normalization={normalization!r}")
+    if normalization in {None, "none"}:
+        return None, None
+
+    center = norm_kwargs.get("center")
+    if center is None:
+        total = 0.0
+        count = 0
+        for chunk in _transformed_raw_chunks(specs, use_log=use_log):
+            total += float(np.sum(chunk, dtype=np.float64))
+            count += int(chunk.size)
+        if count == 0:
+            raise ValueError("Configured real reference contains no values")
+        center = total / count
+
+    xmax = norm_kwargs.get("xmax")
+    if xmax is None:
+        xmax = 0.0
+        center32 = np.float32(center)
+        for chunk in _transformed_raw_chunks(specs, use_log=use_log):
+            xmax = max(xmax, float(np.max(np.abs(chunk - center32))))
+    return float(center), float(xmax)
+
+
+def _selected_reference_slices(
+    specs: list[dict[str, Any]],
+    data_cfg: dict[str, Any],
+    max_slices: int | None,
+) -> np.ndarray:
+    reshape = data_cfg.get("reshape")
+    two_dim = data_cfg.get("two_dim", True if reshape is None else reshape == "2d")
+    if not (two_dim or reshape == "2d"):
+        raise NotImplementedError("streaming reference currently supports 2D slice configs only")
+    zthin = int(data_cfg.get("zthin", 1))
+    if zthin < 1:
+        raise ValueError("data.zthin must be >= 1")
+
+    source_counts = []
+    z_indices_by_source = []
+    for spec in specs:
+        array = spec["array"]
+        z_indices = np.arange(0, array.shape[1], zthin, dtype=np.int64) if array.ndim == 4 else np.array([0])
+        z_indices_by_source.append(z_indices)
+        source_counts.append(len(spec["selected"]) * len(z_indices))
+    total_slices = int(sum(source_counts))
+    if total_slices == 0:
+        raise ValueError("Configured real reference contains no 2D slices")
+
+    limit = total_slices if max_slices is None or int(max_slices) <= 0 else min(total_slices, int(max_slices))
+    global_indices = np.linspace(0, total_slices - 1, limit, dtype=np.int64)
+    cumulative = np.cumsum(source_counts)
+    output = []
+    for global_index in global_indices:
+        source_index = int(np.searchsorted(cumulative, global_index, side="right"))
+        source_start = 0 if source_index == 0 else int(cumulative[source_index - 1])
+        local_index = int(global_index) - source_start
+        spec = specs[source_index]
+        z_indices = z_indices_by_source[source_index]
+        cube_position, z_position = divmod(local_index, len(z_indices))
+        raw_index = int(spec["selected"][cube_position])
+        if spec["array"].ndim == 4:
+            image = spec["array"][raw_index, int(z_indices[z_position])]
+        else:
+            image = spec["array"][raw_index]
+        output.append(np.asarray(image, dtype=np.float32))
+    return np.stack(output, axis=0)
+
+
+def _normalize_reference_slices(
+    images: np.ndarray,
+    data_cfg: dict[str, Any],
+    center: float | None,
+    xmax: float | None,
+) -> np.ndarray:
+    transform = data_cfg.get("transform")
+    use_log = bool(data_cfg.get("log", False)) or (
+        isinstance(transform, (list, tuple)) and "log" in transform
+    )
+    images = np.asarray(images, dtype=np.float32)
+    if use_log:
+        images = np.log(images)
+
+    normalization = data_cfg.get("normalization")
+    norm_kwargs = dict(data_cfg.get("norm_kwargs") or {})
+    if normalization in {"tanh", "centermax", "center-max", "centered_maxabs"}:
+        images = images - np.float32(center)
+        images = images / np.float32(max(float(xmax), 1e-30))
+    if normalization == "tanh":
+        alpha = float(norm_kwargs.get("alpha", 1.0))
+        beta = float(norm_kwargs.get("beta", 1.0))
+        gamma = float(norm_kwargs.get("gamma", 1.0))
+        delta = float(norm_kwargs.get("delta", 1.0))
+        sigma = float(norm_kwargs.get("sigma", 1.0))
+        mu = float(norm_kwargs.get("mu", 0.0))
+        shifted = images - np.float32(mu)
+        positive = alpha * np.tanh((gamma * shifted) / alpha)
+        negative = beta * np.tanh((delta * shifted) / beta)
+        images = np.where(shifted >= 0, positive, negative) * sigma
+    return np.asarray(images[:, None], dtype=np.float32)
+
+
+def _load_real_reference_streaming(
+    config: dict[str, Any],
+    max_slices: int | None,
+) -> np.ndarray:
+    data_cfg = config["data"]
+    specs = _streaming_source_specs(data_cfg)
+    center, xmax = _full_normalization_stats(specs, data_cfg)
+    selected_slices = _selected_reference_slices(specs, data_cfg, max_slices)
+    return _normalize_reference_slices(selected_slices, data_cfg, center, xmax)
 
 
 def _cap_n_samples(current: Any, max_raw_samples: int, img_path: Any = None) -> int | list[int]:
