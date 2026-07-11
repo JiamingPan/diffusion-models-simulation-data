@@ -90,6 +90,23 @@ class ContinuationSamplingGuardTests(unittest.TestCase):
         self.assertIn("FULL TRAINING REFERENCE MISMATCH", source)
         self.assertIn("real_reference_kind", source)
 
+    def test_all_quickcheck_real_curves_use_full_normalization_reference(self):
+        for notebook_name in (
+            "nf_generalize_fig2_partial_quickcheck.ipynb",
+            "nf_generalize_fig2_dit_results.ipynb",
+        ):
+            notebook_path = REPO_ROOT / "notebooks" / notebook_name
+            notebook = json.loads(notebook_path.read_text())
+            source = "\n".join(
+                "".join(cell.get("source", []))
+                for cell in notebook["cells"]
+            )
+
+            self.assertIn("load_real_reference_from_config", source, notebook_name)
+            self.assertIn("MAX_REAL_REFERENCE_SLICES", source, notebook_name)
+            self.assertIn("normalized from complete configured training set", source, notebook_name)
+            self.assertNotIn("max_raw_samples=raw_cap", source, notebook_name)
+
 
 if __name__ == "__main__":
     unittest.main()
