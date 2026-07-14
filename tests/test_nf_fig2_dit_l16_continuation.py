@@ -110,6 +110,8 @@ class DitL16ContinuationTests(unittest.TestCase):
             self.assertIn(label, source)
         self.assertIn("continuation_fidelity_df", source)
         self.assertIn("max_raw_samples=None", source)
+        self.assertIn("continuation_table_audit_df", source)
+        self.assertIn("At least two analyzed checkpoints are required", source)
 
     def test_results_notebook_continuation_title_has_valid_mathtext(self):
         notebook = json.loads(
