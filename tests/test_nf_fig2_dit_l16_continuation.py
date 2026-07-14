@@ -112,6 +112,10 @@ class DitL16ContinuationTests(unittest.TestCase):
         self.assertIn("max_raw_samples=None", source)
         self.assertIn("continuation_table_audit_df", source)
         self.assertIn("At least two analyzed checkpoints are required", source)
+        self.assertIn("available_novelty_updates", source)
+        self.assertIn("Training set size $N_{2D}$", source)
+        self.assertIn("one curve per checkpoint", source)
+        self.assertIn("nf_generalize_fig2_dit_l16_continuation_by_data_size.png", source)
 
     def test_results_notebook_continuation_title_has_valid_mathtext(self):
         notebook = json.loads(
