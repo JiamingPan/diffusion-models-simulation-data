@@ -111,6 +111,15 @@ class DitL16ContinuationTests(unittest.TestCase):
         self.assertIn("continuation_fidelity_df", source)
         self.assertIn("max_raw_samples=None", source)
 
+    def test_results_notebook_continuation_title_has_valid_mathtext(self):
+        notebook = json.loads(
+            (REPO_ROOT / "notebooks" / "nf_generalize_fig2_dit_results.ipynb").read_text()
+        )
+        source = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
+
+        self.assertNotIn("$N_{{2D}}={n_label}$", source)
+        self.assertIn("$N_{{2D}}$ = {n_label}", source)
+
 
 if __name__ == "__main__":
     unittest.main()
