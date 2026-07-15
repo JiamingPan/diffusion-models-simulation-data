@@ -6,6 +6,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PATCH_PATH = REPO_ROOT / "scripts" / "patch_cosmodiff_dit_class_labels.py"
+WRAPPER_PATH = REPO_ROOT / "scripts" / "run_cosmodiff_train_with_dit_resume.py"
 
 
 def load_patch_module():
@@ -16,7 +17,79 @@ def load_patch_module():
     return module
 
 
+def load_wrapper_module():
+    spec = importlib.util.spec_from_file_location("dit_resume_wrapper_for_test", WRAPPER_PATH)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def absolute_epoch_train(*, start_epoch, num_epochs):
+    for _epoch in range(start_epoch, num_epochs):
+        pass
+
+
+def additional_epoch_train(*, start_epoch, num_epochs):
+    for _epoch in range(start_epoch, start_epoch + num_epochs):
+        pass
+
+
+def indirect_additional_epoch_train(*, start_epoch, num_epochs):
+    end_epoch = start_epoch + num_epochs
+    for _epoch in range(start_epoch, end_epoch):
+        pass
+
+
 class DitCheckpointResumeTests(unittest.TestCase):
+    def test_epoch_argument_reproduces_and_fixes_observed_overshoot(self):
+        module = load_wrapper_module()
+
+        self.assertEqual(module.epoch_argument(12_792, 14_062, "additional"), 1_271)
+        self.assertEqual(module.epoch_argument(12_792, 14_062, "absolute"), 14_063)
+        self.assertEqual(12_792 + 14_063 - 1, 26_854)
+
+    def test_epoch_semantics_are_detected_from_trainer_loop(self):
+        module = load_wrapper_module()
+
+        self.assertEqual(module.detect_epoch_semantics(absolute_epoch_train), "absolute")
+        self.assertEqual(module.detect_epoch_semantics(additional_epoch_train), "additional")
+        self.assertEqual(
+            module.detect_epoch_semantics(indirect_additional_epoch_train), "additional"
+        )
+
+    def test_resume_state_uses_latest_clean_checkpoint_and_rejects_overshoot(self):
+        module = load_wrapper_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_dir = Path(tmpdir)
+            (checkpoint_dir / "checkpoint-epoch-12499").mkdir()
+            (checkpoint_dir / "checkpoint-epoch-12791").mkdir()
+            target = checkpoint_dir / "checkpoint-epoch-14062"
+
+            current, current_epoch, target_epoch = module.validate_resume_target(
+                checkpoint_dir, target
+            )
+            self.assertEqual(current.name, "checkpoint-epoch-12791")
+            self.assertEqual(current_epoch, 12_791)
+            self.assertEqual(target_epoch, 14_062)
+
+            (checkpoint_dir / "checkpoint-epoch-14063").mkdir()
+            with self.assertRaisesRegex(ValueError, "beyond exact target"):
+                module.validate_resume_target(checkpoint_dir, target)
+
+    def test_resume_state_allows_exact_target_noop(self):
+        module = load_wrapper_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_dir = Path(tmpdir)
+            target = checkpoint_dir / "checkpoint-epoch-14062"
+            target.mkdir()
+
+            current, current_epoch, target_epoch = module.validate_resume_target(
+                checkpoint_dir, target
+            )
+            self.assertEqual(current.resolve(), target.resolve())
+            self.assertEqual(current_epoch, target_epoch)
+
     def test_checkpoint_loader_uses_saved_diffusers_class(self):
         module = load_patch_module()
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -63,6 +136,9 @@ class DitCheckpointResumeTests(unittest.TestCase):
         self.assertIn("load_checkpoint_preserving_class", wrapper)
         self.assertIn('model_config.get("_class_name")', wrapper)
         self.assertIn("utils.load_checkpoint = load_checkpoint_preserving_class", wrapper)
+        self.assertIn("optim.train = train_to_exact_target", wrapper)
+        self.assertIn('parser.add_argument("--checkpoint-dir"', wrapper)
+        self.assertIn('parser.add_argument("--target-checkpoint"', wrapper)
         self.assertIn("runpy.run_path", wrapper)
 
 
