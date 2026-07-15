@@ -2,6 +2,7 @@ import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -41,6 +42,20 @@ def indirect_additional_epoch_train(*, start_epoch, num_epochs):
         pass
 
 
+def legacy_resume_train(
+    dataset,
+    model=None,
+    *,
+    resume_from_checkpoint=None,
+    num_epochs=50,
+):
+    start_epoch = int(str(resume_from_checkpoint).split("-")[-1]) + 1
+    final_epoch = None
+    for final_epoch in range(start_epoch, start_epoch + num_epochs):
+        pass
+    return start_epoch, num_epochs, final_epoch
+
+
 class DitCheckpointResumeTests(unittest.TestCase):
     def test_epoch_argument_reproduces_and_fixes_observed_overshoot(self):
         module = load_wrapper_module()
@@ -57,6 +72,25 @@ class DitCheckpointResumeTests(unittest.TestCase):
         self.assertEqual(
             module.detect_epoch_semantics(indirect_additional_epoch_train), "additional"
         )
+        self.assertEqual(module.detect_epoch_semantics(legacy_resume_train), "additional")
+
+    def test_exact_target_adapter_supports_legacy_resume_checkpoint_api(self):
+        module = load_wrapper_module()
+        optim = SimpleNamespace(train=legacy_resume_train)
+
+        semantics = module.install_exact_target_adapter(
+            optim,
+            expected_start_epoch=12_792,
+            target_epoch=14_062,
+        )
+        result = optim.train(
+            object(),
+            resume_from_checkpoint="/tmp/checkpoint-epoch-12791",
+            num_epochs=99_999,
+        )
+
+        self.assertEqual(semantics, "additional")
+        self.assertEqual(result, (12_792, 1_271, 14_062))
 
     def test_resume_state_uses_latest_clean_checkpoint_and_rejects_overshoot(self):
         module = load_wrapper_module()
@@ -137,9 +171,13 @@ class DitCheckpointResumeTests(unittest.TestCase):
     def test_resume_precheck_loads_actual_checkpoint_and_rejects_meta_parameters(self):
         check = (REPO_ROOT / "scripts" / "check_nf_generalize_fig2_dit_resume.py").read_text()
         self.assertIn("load_checkpoint_preserving_class", check)
+        self.assertIn("validate_installed_train_api", check)
+        self.assertIn("bound_start_epoch", check)
+        self.assertIn("detect_epoch_semantics", check)
         self.assertIn("DiTTransformer2DModel", check)
         self.assertIn("meta_parameters", check)
         self.assertIn("PASS: checkpoint resume loader reconstructed DiT", check)
+        self.assertIn("PASS: installed training API supports exact-target resume", check)
 
     def test_training_uses_in_process_dit_resume_wrapper(self):
         train = (
