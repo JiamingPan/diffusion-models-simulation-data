@@ -39,7 +39,10 @@ def latest_checkpoint(checkpoint_dir: Path) -> tuple[Path, int]:
 
 
 def validate_resume_target(
-    checkpoint_dir: Path, target_checkpoint: Path
+    checkpoint_dir: Path,
+    target_checkpoint: Path,
+    *,
+    minimum_checkpoint: Path | None = None,
 ) -> tuple[Path, int, int]:
     checkpoint_dir = checkpoint_dir.expanduser().resolve()
     target_checkpoint = target_checkpoint.expanduser()
@@ -52,6 +55,27 @@ def validate_resume_target(
         )
 
     current, current_epoch = latest_checkpoint(checkpoint_dir)
+    if minimum_checkpoint is not None:
+        minimum_checkpoint = minimum_checkpoint.expanduser()
+        minimum_epoch = checkpoint_epoch(minimum_checkpoint)
+        if minimum_epoch is None:
+            raise ValueError(
+                f"Invalid required stage-start checkpoint name: {minimum_checkpoint}"
+            )
+        if minimum_checkpoint.parent.resolve() != checkpoint_dir:
+            raise ValueError(
+                f"Required stage-start checkpoint {minimum_checkpoint} is not under "
+                f"checkpoint directory {checkpoint_dir}"
+            )
+        if current_epoch < minimum_epoch:
+            raise ValueError(
+                f"Latest clean checkpoint epoch {current_epoch} is behind required stage start "
+                f"epoch {minimum_epoch}"
+            )
+        if not minimum_checkpoint.is_dir():
+            raise FileNotFoundError(
+                f"Required exact stage-start checkpoint is missing: {minimum_checkpoint}"
+            )
     if current_epoch > target_epoch:
         raise ValueError(
             f"Latest clean checkpoint epoch {current_epoch} is beyond exact target "
@@ -212,6 +236,7 @@ def main() -> None:
     parser.add_argument("--config", required=True)
     parser.add_argument("--cosmodiff-train", required=True, type=Path)
     parser.add_argument("--checkpoint-dir", required=True, type=Path)
+    parser.add_argument("--minimum-checkpoint", required=True, type=Path)
     parser.add_argument("--target-checkpoint", required=True, type=Path)
     args, extra_args = parser.parse_known_args()
 
@@ -222,7 +247,9 @@ def main() -> None:
     checkpoint_dir = args.checkpoint_dir.expanduser().resolve()
     target_checkpoint = args.target_checkpoint.expanduser()
     current, current_epoch, target_epoch = validate_resume_target(
-        checkpoint_dir, target_checkpoint
+        checkpoint_dir,
+        target_checkpoint,
+        minimum_checkpoint=args.minimum_checkpoint,
     )
     if current_epoch == target_epoch:
         print(f"Exact target already exists; no training needed: {current}", flush=True)

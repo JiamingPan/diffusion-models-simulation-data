@@ -35,6 +35,11 @@ python scripts/prepare_nf_generalize_fig2_dit_l16_continue_configs.py \
   --use-existing-manifest \
   --check-only
 
+python scripts/prepare_nf_generalize_fig2_dit_l16_continue_configs.py \
+  --project-dir "${PROJECT_DIR}" \
+  --use-existing-manifest \
+  --seed-checkpoints
+
 resume_precheck=$(
   CONTINUE_STAGE="${START_STAGE}" sbatch -A "${ACCOUNT}" --parsable \
     scripts/slurm/precheck_nf_generalize_fig2_dit_l16_resume.sbatch
