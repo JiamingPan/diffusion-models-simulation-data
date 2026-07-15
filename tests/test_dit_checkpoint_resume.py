@@ -90,6 +90,22 @@ class DitCheckpointResumeTests(unittest.TestCase):
             self.assertEqual(current.resolve(), target.resolve())
             self.assertEqual(current_epoch, target_epoch)
 
+    def test_resume_state_rejects_checkpoint_before_required_stage_start(self):
+        module = load_wrapper_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_dir = Path(tmpdir)
+            base = checkpoint_dir / "checkpoint-epoch-12499"
+            minimum = checkpoint_dir / "checkpoint-epoch-14062"
+            target = checkpoint_dir / "checkpoint-epoch-15624"
+            base.mkdir()
+
+            with self.assertRaisesRegex(ValueError, "behind required stage start"):
+                module.validate_resume_target(
+                    checkpoint_dir,
+                    target,
+                    minimum_checkpoint=minimum,
+                )
+
     def test_checkpoint_loader_uses_saved_diffusers_class(self):
         module = load_patch_module()
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -138,6 +154,7 @@ class DitCheckpointResumeTests(unittest.TestCase):
         self.assertIn("utils.load_checkpoint = load_checkpoint_preserving_class", wrapper)
         self.assertIn("optim.train = train_to_exact_target", wrapper)
         self.assertIn('parser.add_argument("--checkpoint-dir"', wrapper)
+        self.assertIn('parser.add_argument("--minimum-checkpoint"', wrapper)
         self.assertIn('parser.add_argument("--target-checkpoint"', wrapper)
         self.assertIn("runpy.run_path", wrapper)
 

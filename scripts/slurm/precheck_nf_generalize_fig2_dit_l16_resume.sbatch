@@ -35,17 +35,16 @@ RUN_NAME=$(
     --stage "${CONTINUE_STAGE}" \
     --print-runs | head -1
 )
-CHECKPOINT_DIR=$(
+CHECKPOINT=$(
   "${PYTHON_BIN}" "${PREPARE_SCRIPT}" \
     --project-dir "${PROJECT_DIR}" \
     --use-existing-manifest \
     --stage "${CONTINUE_STAGE}" \
     --run-name "${RUN_NAME}" \
-    --print-field checkpoint_dir
+    --print-field previous_expected_checkpoint
 )
-CHECKPOINT=$(find "${CHECKPOINT_DIR}" -maxdepth 1 -type d -name 'checkpoint-epoch-*' | sort -V | tail -1)
-if [[ -z "${CHECKPOINT}" ]]; then
-  echo "No checkpoint found under ${CHECKPOINT_DIR}" >&2
+if [[ ! -d "${CHECKPOINT}" ]]; then
+  echo "Missing exact previous-stage checkpoint: ${CHECKPOINT}" >&2
   exit 1
 fi
 

@@ -56,6 +56,7 @@ field() {
 CONFIG_REL=$(field config)
 CONFIG_PATH=${PROJECT_DIR}/${CONFIG_REL}
 CHECKPOINT_DIR=$(field checkpoint_dir)
+PREVIOUS_EXPECTED_CHECKPOINT=$(field previous_expected_checkpoint)
 EXPECTED_CHECKPOINT=$(field expected_checkpoint)
 
 if [[ ! -f "${CONFIG_PATH}" ]]; then
@@ -68,6 +69,10 @@ if [[ ! -d "${CHECKPOINT_DIR}" ]]; then
 fi
 if ! compgen -G "${CHECKPOINT_DIR}/checkpoint-epoch-*" > /dev/null; then
   echo "No checkpoint exists to resume under ${CHECKPOINT_DIR}" >&2
+  exit 1
+fi
+if [[ ! -d "${PREVIOUS_EXPECTED_CHECKPOINT}" ]]; then
+  echo "Missing exact previous-stage checkpoint: ${PREVIOUS_EXPECTED_CHECKPOINT}" >&2
   exit 1
 fi
 
@@ -113,13 +118,17 @@ PATCH_LOCK="${COSMODIFF_DIR}/.codex_dit_patches.lock"
 echo "Continuing ${RUN_NAME}, stage ${CONTINUE_STAGE}/4"
 echo "  config:              ${CONFIG_PATH}"
 echo "  checkpoint directory: ${CHECKPOINT_DIR}"
+echo "  required stage start:  ${PREVIOUS_EXPECTED_CHECKPOINT}"
 echo "  exact stage target:   ${EXPECTED_CHECKPOINT}"
 echo "  walltime:             24 hours"
 echo "  recovery interval:    approximately 5,000 optimizer updates"
 
 "${PYTHON_BIN}" scripts/run_cosmodiff_train_with_dit_resume.py \
   --config "${CONFIG_PATH}" \
-  --cosmodiff-train "${COSMODIFF_DIR}/scripts/cosmodiff_train.py"
+  --cosmodiff-train "${COSMODIFF_DIR}/scripts/cosmodiff_train.py" \
+  --checkpoint-dir "${CHECKPOINT_DIR}" \
+  --minimum-checkpoint "${PREVIOUS_EXPECTED_CHECKPOINT}" \
+  --target-checkpoint "${EXPECTED_CHECKPOINT}"
 
 if [[ ! -d "${EXPECTED_CHECKPOINT}" ]]; then
   echo "Training exited without the exact stage checkpoint: ${EXPECTED_CHECKPOINT}" >&2
