@@ -139,6 +139,26 @@ def detect_epoch_semantics(train_fn) -> str:
     )
 
 
+def bound_start_epoch(bound: inspect.BoundArguments) -> int:
+    """Read the resume epoch from either supported cosmodiff training API."""
+    if "start_epoch" in bound.arguments:
+        return int(bound.arguments["start_epoch"])
+
+    resume_from_checkpoint = bound.arguments.get("resume_from_checkpoint")
+    if resume_from_checkpoint:
+        resume_epoch = checkpoint_epoch(Path(resume_from_checkpoint))
+        if resume_epoch is None:
+            raise ValueError(
+                "Could not derive start epoch from resume checkpoint: "
+                f"{resume_from_checkpoint}"
+            )
+        return resume_epoch + 1
+
+    raise RuntimeError(
+        "cosmodiff.optim.train must expose start_epoch or resume_from_checkpoint"
+    )
+
+
 def install_exact_target_adapter(optim, *, expected_start_epoch: int, target_epoch: int) -> str:
     original_train = optim.train
     semantics = detect_epoch_semantics(original_train)
@@ -147,9 +167,9 @@ def install_exact_target_adapter(optim, *, expected_start_epoch: int, target_epo
         signature = inspect.signature(original_train)
         bound = signature.bind_partial(*args, **kwargs)
         bound.apply_defaults()
-        if "start_epoch" not in bound.arguments or "num_epochs" not in bound.arguments:
-            raise RuntimeError("cosmodiff.optim.train must expose start_epoch and num_epochs")
-        start_epoch = int(bound.arguments["start_epoch"])
+        if "num_epochs" not in bound.arguments:
+            raise RuntimeError("cosmodiff.optim.train must expose num_epochs")
+        start_epoch = bound_start_epoch(bound)
         if start_epoch != expected_start_epoch:
             raise RuntimeError(
                 f"External trainer selected start epoch {start_epoch}, expected "
