@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 """Prepare resumable 25k-update continuation stages for small-data DiT-L16 runs.
 
-The generated manifest freezes the checkpoint arithmetic at preparation time.
-Slurm jobs must read that existing manifest rather than regenerate it between
-stages, because later stages add checkpoints to the same run directories.
+The generated manifest freezes exact base, previous-stage, and target
+checkpoints. Original training directories are read-only inputs; continuation
+stages write to isolated directories so overshot historical checkpoints cannot
+change resume selection.
 """
 
 from __future__ import annotations
@@ -28,10 +29,14 @@ import prepare_nf_generalize_fig2_dit_configs as base
 
 
 CONTINUE_SWEEP_NAME = "nf_generalize_fig2_dit_l16_continue"
+MANIFEST_VERSION = 2
 DEFAULT_DATASET_TAGS = ("d2p06", "d2p07", "d2p08", "d2p09", "d2p10")
 DEFAULT_STAGE_UPDATES = 25_000
 DEFAULT_STAGES = 4
 DEFAULT_SAFETY_CHECKPOINT_UPDATES = 5_000
+DEFAULT_CONTINUATION_CHECKPOINT_ROOT = Path(
+    "/scratch/huterer_root/huterer0/jiamingp/saved_runs/nf_generalize_fig2_dit_l16_continue"
+)
 CHECKPOINT_RE = re.compile(r"checkpoint-epoch-(\d+)$")
 
 
@@ -51,10 +56,17 @@ def latest_checkpoint_epoch(checkpoint_dir: Path) -> int | None:
     return max(epochs) if epochs else None
 
 
-def _checkpoint_dir(row: dict[str, Any], checkpoint_root: Path | None) -> Path:
+def _original_checkpoint_dir(row: dict[str, Any], checkpoint_root: Path | None) -> Path:
     if checkpoint_root is None:
         return Path(row["checkpoint_dir"])
     return checkpoint_root / f'{row["run_name"]}_checkpoints'
+
+
+def _continuation_checkpoint_dir(
+    row: dict[str, Any], continuation_checkpoint_root: Path | None
+) -> Path:
+    root = continuation_checkpoint_root or DEFAULT_CONTINUATION_CHECKPOINT_ROOT
+    return root / f'{row["run_name"]}_checkpoints'
 
 
 def _selected_base_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
@@ -73,28 +85,43 @@ def _selected_base_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
 def continue_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
     """Return frozen stage arithmetic for the selected DiT-L16 runs."""
     checkpoint_root = Path(args.checkpoint_root) if args.checkpoint_root is not None else None
+    continuation_root_arg = getattr(args, "continuation_checkpoint_root", None)
+    continuation_checkpoint_root = (
+        Path(continuation_root_arg) if continuation_root_arg is not None else None
+    )
     stage_updates = int(args.stage_updates)
     stages = int(args.stages)
     safety_updates = int(args.safety_checkpoint_updates)
     rows: list[dict[str, Any]] = []
 
     for base_row in _selected_base_rows(args):
-        checkpoint_dir = _checkpoint_dir(base_row, checkpoint_root)
-        latest_epoch = latest_checkpoint_epoch(checkpoint_dir)
-        if latest_epoch is None:
+        original_checkpoint_dir = _original_checkpoint_dir(base_row, checkpoint_root)
+        checkpoint_dir = _continuation_checkpoint_dir(
+            base_row, continuation_checkpoint_root
+        )
+        base_checkpoint_epoch = int(base_row["epochs"]) - 1
+        base_checkpoint = (
+            original_checkpoint_dir / f"checkpoint-epoch-{base_checkpoint_epoch:04d}"
+        )
+        if not base_checkpoint.is_dir():
             raise FileNotFoundError(
-                f"No checkpoint-epoch-* directories found for {base_row['run_name']} under {checkpoint_dir}"
+                f"Missing exact 200k checkpoint for {base_row['run_name']}: {base_checkpoint}"
             )
 
         steps_per_epoch = int(base_row["optimizer_steps_per_epoch"])
-        resume_start_epoch = latest_epoch + 1
         safety_epochs = max(1, round(safety_updates / steps_per_epoch))
 
         for stage in range(1, stages + 1):
+            previous_cumulative_updates = (stage - 1) * stage_updates
             cumulative_target_updates = stage * stage_updates
+            previous_cumulative_epochs = math.ceil(
+                previous_cumulative_updates / steps_per_epoch
+            )
             cumulative_epochs = max(1, math.ceil(cumulative_target_updates / steps_per_epoch))
-            final_num_epochs = resume_start_epoch + cumulative_epochs
-            final_epoch = final_num_epochs - 1
+            previous_epoch = base_checkpoint_epoch + previous_cumulative_epochs
+            final_epoch = base_checkpoint_epoch + cumulative_epochs
+            final_num_epochs = final_epoch + 1
+            stage_additional_epochs = final_epoch - previous_epoch
             stage_target_total_updates = int(base_row["target_updates"]) + cumulative_target_updates
             sample_label = f"dpm50_cont_{stage_target_total_updates // 1000}k"
             config_rel = (
@@ -104,11 +131,19 @@ def continue_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
             row = deepcopy(base_row)
             row.update(
                 {
+                    "manifest_version": MANIFEST_VERSION,
                     "continue_sweep_name": CONTINUE_SWEEP_NAME,
                     "continue_stage": stage,
-                    "latest_checkpoint_epoch_at_prepare": latest_epoch,
-                    "resume_start_epoch": resume_start_epoch,
+                    "original_checkpoint_dir": str(original_checkpoint_dir),
+                    "base_checkpoint_epoch": base_checkpoint_epoch,
+                    "base_checkpoint": str(base_checkpoint),
+                    "previous_expected_epoch": previous_epoch,
+                    "previous_expected_checkpoint": str(
+                        checkpoint_dir / f"checkpoint-epoch-{previous_epoch:04d}"
+                    ),
                     "stage_target_updates": stage_updates,
+                    "stage_additional_epochs": stage_additional_epochs,
+                    "stage_actual_updates": stage_additional_epochs * steps_per_epoch,
                     "cumulative_target_updates": cumulative_target_updates,
                     "cumulative_actual_updates": cumulative_epochs * steps_per_epoch,
                     "target_total_updates": stage_target_total_updates,
@@ -196,7 +231,53 @@ def _load_existing_rows(project_dir: Path) -> list[dict[str, Any]]:
         raise FileNotFoundError(
             f"Missing frozen continuation manifest: {path}. Run this script once without --use-existing-manifest."
         )
-    return json.loads(path.read_text())
+    rows = json.loads(path.read_text())
+    required = {
+        "manifest_version",
+        "base_checkpoint",
+        "previous_expected_checkpoint",
+        "expected_checkpoint",
+    }
+    if not isinstance(rows, list) or not rows:
+        raise ValueError(f"Frozen continuation manifest version is invalid or empty: {path}")
+    for index, row in enumerate(rows):
+        if row.get("manifest_version") != MANIFEST_VERSION:
+            raise ValueError(
+                f"Frozen continuation manifest version mismatch at row {index}: "
+                f"expected {MANIFEST_VERSION}, got {row.get('manifest_version')!r}. "
+                "Regenerate it without --use-existing-manifest."
+            )
+        missing = sorted(required - set(row))
+        if missing:
+            raise ValueError(
+                f"Frozen continuation manifest version {MANIFEST_VERSION} row {index} "
+                f"is missing: {', '.join(missing)}"
+            )
+    return rows
+
+
+def seed_continuation_directories(rows: list[dict[str, Any]]) -> None:
+    """Seed each isolated continuation directory with its exact 200k checkpoint."""
+    seen: set[tuple[Path, Path]] = set()
+    for row in rows:
+        source = Path(row["base_checkpoint"])
+        checkpoint_dir = Path(row["checkpoint_dir"])
+        key = (checkpoint_dir, source)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        if not source.is_dir():
+            raise FileNotFoundError(f"Missing exact base checkpoint: {source}")
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        seed = checkpoint_dir / source.name
+        if seed.exists() or seed.is_symlink():
+            if seed.is_symlink() and seed.resolve() == source.resolve():
+                continue
+            raise ValueError(
+                f"Continuation directory contains a conflicting checkpoint at {seed}"
+            )
+        seed.symlink_to(source.resolve(), target_is_directory=True)
 
 
 def _filter_rows(rows: list[dict[str, Any]], args: argparse.Namespace) -> list[dict[str, Any]]:
@@ -215,6 +296,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-dir", default=".")
     parser.add_argument("--checkpoint-root", type=Path)
+    parser.add_argument("--continuation-checkpoint-root", type=Path)
     parser.add_argument("--dataset-tag", action="append")
     parser.add_argument("--run-name", action="append")
     parser.add_argument("--stage", type=int, choices=range(1, DEFAULT_STAGES + 1))
@@ -226,12 +308,21 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_SAFETY_CHECKPOINT_UPDATES,
     )
     parser.add_argument("--use-existing-manifest", action="store_true")
+    parser.add_argument("--seed-checkpoints", action="store_true")
     parser.add_argument("--check-only", action="store_true")
     parser.add_argument("--print-runs", action="store_true")
     parser.add_argument("--print-table", action="store_true")
     parser.add_argument(
         "--print-field",
-        choices=("config", "checkpoint_dir", "expected_checkpoint", "sample_label", "sample_path"),
+        choices=(
+            "config",
+            "checkpoint_dir",
+            "base_checkpoint",
+            "previous_expected_checkpoint",
+            "expected_checkpoint",
+            "sample_label",
+            "sample_path",
+        ),
     )
     return parser.parse_args()
 
@@ -249,6 +340,11 @@ def main() -> None:
             print(row["run_name"])
         return
 
+    if args.seed_checkpoints:
+        seed_continuation_directories(rows)
+        print(f"Seeded {len({row['run_name'] for row in rows})} isolated continuation directories.")
+        return
+
     if args.print_field:
         if len(rows) != 1:
             raise SystemExit(
@@ -259,11 +355,14 @@ def main() -> None:
 
     if args.print_table:
         columns = (
+            "manifest_version",
             "continue_stage",
             "run_name",
             "dataset_size",
             "steps_per_epoch",
-            "latest_checkpoint_epoch_at_prepare",
+            "base_checkpoint_epoch",
+            "previous_expected_epoch",
+            "stage_additional_epochs",
             "final_num_epochs",
             "expected_final_epoch",
             "cumulative_target_updates",
