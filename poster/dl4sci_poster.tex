@@ -1,11 +1,13 @@
 % =================================================================
-% 2026 Dl4Sci Workshop poster  --  40 x 30 in, landscape
-% Jiaming Pan, Nicholas Kern, Dragan Huterer (U. Michigan)
-% Compile:  pdflatex astroai_poster.tex   (run from this folder)
+% 2026 Dl4Sci Workshop poster  --  36 x 24 in, landscape
+% Nicholas Kern, Jiaming Pan, Dragan Huterer (U. Michigan)
+% Compile:  pdflatex dl4sci_poster.tex   (run from this folder)
 % Drop exported notebook PNGs into  figs/  -- slots fill themselves.
+%
+
 % =================================================================
 \documentclass{article}
-\usepackage[paperwidth=101.6cm,paperheight=76.2cm,margin=1.2cm]{geometry}
+\usepackage[paperwidth=91.44cm,paperheight=60.96cm,margin=1.0cm]{geometry}
 \usepackage[T1]{fontenc}
 \usepackage{helvet}\renewcommand{\familydefault}{\sfdefault}
 \usepackage{amsmath,amssymb,bm}
@@ -28,26 +30,26 @@
 \definecolor{loopRed}{HTML}{B0303C}
 \definecolor{paleBg}{HTML}{F4F6FA}
 
-% ---- Type sizes --------------------------------------------------
-\newcommand{\TitleFont}{\fontsize{74}{82}\selectfont\bfseries}
-\newcommand{\AuthorFont}{\fontsize{37}{45}\selectfont}
-\newcommand{\BoxTitleFont}{\fontsize{36}{40}\selectfont\bfseries}
-\newcommand{\BodyFont}{\fontsize{26}{32.5}\selectfont}
-\newcommand{\SmallFont}{\fontsize{20.5}{26}\selectfont}
-\newcommand{\TinyPosterFont}{\fontsize{18}{22}\selectfont}
+% ---- Type sizes (x0.85 of the 40x30 original) --------------------
+\newcommand{\TitleFont}{\fontsize{63}{70}\selectfont\bfseries}
+\newcommand{\AuthorFont}{\fontsize{31.5}{38}\selectfont}
+\newcommand{\BoxTitleFont}{\fontsize{30.5}{34}\selectfont\bfseries}
+\newcommand{\BodyFont}{\fontsize{22}{27.5}\selectfont}
+\newcommand{\SmallFont}{\fontsize{17.5}{22}\selectfont}
+\newcommand{\TinyPosterFont}{\fontsize{15.5}{19}\selectfont}
 
-% ---- Section box style -------------------------------------------
+% ---- Section box style (spacings x0.80) --------------------------
 \tcbset{
   secbox/.style 2 args={
     enhanced, breakable=false,
     colback=white, colframe=#1,
-    boxrule=1.8pt, arc=6mm,
-    left=7mm, right=7mm, top=4mm, bottom=4.5mm,
+    boxrule=1.5pt, arc=5mm,
+    left=6mm, right=6mm, top=3.2mm, bottom=3.6mm,
     title={\BoxTitleFont #2},
     coltitle=white, colbacktitle=#1,
-    toptitle=3mm, bottomtitle=3mm, lefttitle=8mm,
+    toptitle=2.4mm, bottomtitle=2.4mm, lefttitle=6.5mm,
     drop fuzzy shadow=black!35,
-    before skip=0mm, after skip=4.8mm
+    before skip=0mm, after skip=3.8mm
   }
 }
 
@@ -58,10 +60,10 @@
     {\centering\includegraphics[width=#1,height=#2,keepaspectratio]{figs/#3}\par}%
   }{%
     \begin{tikzpicture}
-      \draw[dashed, line width=2pt, subgray, rounded corners=5mm, fill=paleBg]
+      \draw[dashed, line width=1.5pt, subgray, rounded corners=4mm, fill=paleBg]
         (0,0) rectangle (#1,#2);
-      \node[align=center, text=subgray, text width={\dimexpr#1-4cm\relax}] at (0.5*#1,0.5*#2)
-        {\SmallFont\bfseries missing figure:\ {\ttfamily\detokenize{figs/#3}}\\[3mm]\SmallFont #4};
+      \node[align=center, text=subgray, text width={\dimexpr#1-3.4cm\relax}] at (0.5*#1,0.5*#2)
+        {\SmallFont\bfseries missing figure:\ {\ttfamily\detokenize{figs/#3}}\\[2.5mm]\SmallFont #4};
     \end{tikzpicture}%
   }%
 }
@@ -72,39 +74,39 @@
 
 % ================== HEADER BAND ===================================
 \begin{tikzpicture}
-  \node[anchor=north west, fill=ink, rounded corners=8mm,
-        minimum width=99.1cm, minimum height=12.0cm] (hdr) at (0,0) {};
-  \node[anchor=west, text=white, text width=65.2cm, align=left]
-    at ($(hdr.west)+(1.8cm,0.9cm)$)
+  \node[anchor=north west, fill=ink, rounded corners=7mm,
+        minimum width=89.3cm, minimum height=9.0cm] (hdr) at (0,0) {};
+  \node[anchor=west, text=white, text width=58.7cm, align=left]
+    at ($(hdr.west)+(1.5cm,0.8cm)$)
     {\TitleFont Understanding the Transition from Memorization\\[2mm]
      \TitleFont\color{white!75!ink} to Generalization in Diffusion Models for Cosmology};
-  \node[anchor=west, text=white!88!ink, text width=65.2cm, align=left]
-    at ($(hdr.south west)+(1.8cm,1.55cm)$)
+  \node[anchor=west, text=white!88!ink, text width=58.7cm, align=left]
+    at ($(hdr.south west)+(1.5cm,1.3cm)$)
     {\AuthorFont Nicholas Kern\,$^{1}$\quad Jiaming Pan\,$^{1}$\quad Dragan Huterer\,$^{1}$
      \quad{\SmallFont $^{1}$Department of Physics, University of Michigan
      \;\;\textbullet\;\; nkern@umich.edu \;\;\textbullet\;\; 2026 DL4Sci School, LBNL}};
-  \node[anchor=east, fill=white, rounded corners=4mm, inner sep=4mm,
-        minimum width=18.8cm, minimum height=5.9cm]
-    (litp) at ($(hdr.east)+(-12.0cm,0cm)$)
-    {\includegraphics[width=17.4cm,height=5.0cm,keepaspectratio]{figs/litp_logo.pdf}};
-  \node[anchor=east, fill=white, rounded corners=4mm, inner sep=5mm]
-    (qr) at ($(hdr.east)+(-1.4cm,0)$)
-    {\qrcode[height=8.4cm]{https://github.com/JiamingPan/diffusion-models-simulation-data}};
+  \node[anchor=east, fill=white, rounded corners=3.5mm, inner sep=3.2mm,
+        minimum width=14.0cm, minimum height=4.3cm]
+    (litp) at ($(hdr.east)+(-9.0cm,0cm)$)
+    {\includegraphics[width=13.0cm,height=3.6cm,keepaspectratio]{figs/litp_logo.pdf}};
+  \node[anchor=east, fill=white, rounded corners=3.5mm, inner sep=4mm]
+    (qr) at ($(hdr.east)+(-1.2cm,0)$)
+    {\qrcode[height=6.0cm]{https://github.com/JiamingPan/diffusion-models-simulation-data}};
 \end{tikzpicture}
 
 % Suppress the \baselineskip glue TeX would insert between the header box and
 % the column row; set the gap explicitly instead (see \vspace below).
 \nointerlineskip
-\vspace{6mm}
+\vspace{5mm}
 
 % ================== THREE COLUMNS =================================
-\newlength{\colw}\setlength{\colw}{31.7cm}
+\newlength{\colw}\setlength{\colw}{28.6cm}
 \begin{minipage}[t]{\colw}\vspace{0pt}
 % ----------------------------------------------------------- COL 1
 
 \begin{tcolorbox}[secbox={paramBlue}{The question}]
 \SmallFont
-\begin{minipage}[t]{14.6cm}
+\begin{minipage}[t]{15.5cm}
 \vspace{0pt}
 For inference, a trained diffusion model $s_\theta(x)$ becomes a prior over cosmological fields $x$.
 If the model has memorized its training data (black points), its score (pink) will
@@ -112,23 +114,23 @@ not accurately reflect the true prior score, pushing inference to local clumps i
 data space. When confronted with observational data (blue), the inferred posterior
 distribution $p(x|y)$ will therefore be biased and overly confident.
 
-\begin{enumerate}[leftmargin=9mm, itemsep=1.8mm, label=\textcolor{paramBlue}{\textbf{\arabic*.}}]
+\begin{enumerate}[leftmargin=7.5mm, itemsep=1.5mm, label=\textcolor{paramBlue}{\textbf{\arabic*.}}]
 \item \hl{loopRed}{Novelty:} when do generated samples memorize training samples w.r.t. $N_{\rm train}$?
 \item \hl{diffPurple}{Conditioning:} can we recover accurate posteriors on cosmological parameters, $\theta$?
 \item \hl{fieldTeal}{Fidelity:} do samples retain accurate statistical properties (1 \& 2-pt functions)?
 \end{enumerate}
 \end{minipage}\hfill
-\begin{minipage}[t]{16.0cm}
-\vspace{3mm}
+\begin{minipage}[t]{11.5cm}
+\vspace{2.5mm}
 \centering
-\figslot{16.0cm}{15cm}{inference_manifold_implication.pdf}
+\figslot{11.5cm}{11.5cm}{inference_manifold_implication.pdf}
   {conceptual manifold schematic: learned prior, data constraint, posterior}
 \end{minipage}
 \end{tcolorbox}
 
 \begin{tcolorbox}[secbox={diffPurple}{Data \& models}]
 \SmallFont
-\begin{itemize}[leftmargin=11mm, itemsep=2.2mm, label=\textcolor{diffPurple}{$\blacktriangleright$}]
+\begin{itemize}[leftmargin=9mm, itemsep=1.8mm, label=\textcolor{diffPurple}{$\blacktriangleright$}]
 \item \textbf{CAMELS Multifield Dataset} (IllustrisTNG; Villaescusa-Navarro
       et al.\ 2021): 1000 simulations $\to$ 128 slices each $\to$
       128k HI (neutral hydrogen) maps of size $128\times128$.
@@ -141,7 +143,7 @@ distribution $p(x|y)$ will therefore be biased and overly confident.
 
 \vspace{-1mm}
 \begingroup
-\fontsize{30}{36}\selectfont
+\fontsize{25.5}{30.5}\selectfont
 \[
 \begin{aligned}
 x_t &= \sqrt{\bar{\alpha}_t}\,x_0+\sqrt{1-\bar{\alpha}_t}\,\epsilon,
@@ -167,7 +169,7 @@ s_{\theta}(x_t,t,\bm{\theta})-\epsilon\right\|_2^2 .
 After training, we generate 100 novel 2D HI maps $x_j$, compare them to every
 map in the model's training set $y_i$, and keep the closest match:
 \begingroup
-\fontsize{35}{43}\selectfont
+\fontsize{29.5}{36.5}\selectfont
 \[
 s_j = \max_i\, \mathrm{sim}(x_j,\, y_i)
 \]
@@ -176,8 +178,8 @@ A high $s_j$ means $x_j$ is nearly a copy of one of its training map. Separately
 Here, $\mathrm{sim}$ is {\bfseries cosine similarity} (larger = more alike) measured in either pixel or PCA latent space.
 For a fixed model size, the generated samples will transition from memorization to generalization at some $N_{\rm train}$ threshold.
 
-\vspace{2mm}
-\figslot{30.0cm}{14.0cm}{nf_generalize_fig2_u64_generated_vs_pixel_nn.png}
+\vspace{1.5mm}
+\figslot{21.5cm}{9.9cm}{nf_generalize_fig2_u64_generated_vs_pixel_nn.png}
   {generated / nearest-train visual}
 \end{tcolorbox}
 
@@ -190,15 +192,15 @@ We ask a conditional diffusion model to generate a sample with a given cosmology
 We pass those 2D samples to a classifier (VGG16) with an MLP head $\rightarrow\theta_{\rm rec}$, trained on our full 128k dataset.
 Thus, we are able to compare the actual cosmology generated by the diffusion models $\theta_{\rm rec}$ when conditioned on an input cosmology $\theta_{\rm ask}$, which we probe as a function of training set size and model capacity.
 
-\vspace{4mm}
+\vspace{3mm}
 \begin{center}
-\includegraphics[width=28.2cm]{figs/calibration_roadmap_v2.pdf}
+\includegraphics[width=21.5cm]{figs/calibration_roadmap_v2.pdf}
 \end{center}
 
 \end{tcolorbox}
 
 \begin{tcolorbox}[secbox={diffPurple}{Memorization $\to$ generalization transition}]
-\figslot{26.0cm}{12.4cm}{nf_generalize_fig2_poster_pca_generalization_q95_serif_clean.png}
+\figslot{22.1cm}{9.6cm}{nf_generalize_fig2_poster_pca_generalization_q95_serif_clean.png}
   {quickcheck notebook $\to$ PCA generalization curves with q95 threshold}
 
 \vspace{1mm}
@@ -210,7 +212,7 @@ For each case we generate 1000 samples: the generalization score is the fraction
 \vspace{1mm}
 \end{center}
 based on the cosine similarity score $s_j$, with $\tau$ (the ``memorization gap'') set by the 95th percentile of train-vs-train closest-match similarity.
-\begin{itemize}[leftmargin=11mm, itemsep=2mm, label=\textcolor{diffPurple}{$\blacktriangleright$}]
+\begin{itemize}[leftmargin=9mm, itemsep=1.6mm, label=\textcolor{diffPurple}{$\blacktriangleright$}]
 \item $\mathrm{G} \approx 0$: generated samples = training samples (\hl{loopRed}{memorization}).
 \item $\mathrm{G} \approx 1$: generated samples are unique to training samples.
 \item The transition happens at larger $N_{\rm train}$ for larger models (is this regime predictable and universal?) {\color{subgray}(Zhang et al.\ 2024; Kadkhodaie et al.\ 2024; Yoon et
@@ -222,9 +224,9 @@ based on the cosine similarity score $s_j$, with $\tau$ (the ``memorization gap'
 \begin{minipage}[t]{\colw}\vspace{0pt}
 % ----------------------------------------------------------- COL 3
 
-\begin{tcolorbox}[secbox={vggOrange}{Calibration results}]
+\begin{tcolorbox}[secbox={vggOrange}{Inference results}]
 \begin{center}
-\figslot{29.8cm}{20.8cm}{bias_probe_omega_m_best_vgg_poster.png}
+\figslot{25.3cm}{15.9cm}{bias_probe_omega_m_best_vgg_poster.png}
   {VGG notebook $\to$ recovered vs requested $\Omega_m$ bias probe}
 \end{center}
 
@@ -238,18 +240,18 @@ The VGG+MLP encoder has $R^2=0.91$ on real held-out $\Omega_m$, so the differenc
 
 \begin{tcolorbox}[secbox={fieldTeal}{Statistical fidelity}]
 \begin{center}
-\figslot{30.0cm}{14.0cm}{learning_process_pk_parallel_poster.png}
+\figslot{25.5cm}{10.8cm}{learning_process_pk_parallel_poster.png}
   {epoch snapshot notebook $\to$ generated and real $P(k)$ across training}
 \end{center}
 \vspace{1mm}
 \SmallFont
 Here we show that our diffusion models are indeed retaining accurate statistical information in the maps (via the 2-pt function aka power spectrum).
-During training, we show the first learns large-scale features and fills-in small-scale features later in training.
+During training, we show it first learns low-frequency features and fills in high-frequency features later in training.
 \end{tcolorbox}
 
 \begin{tcolorbox}[secbox={loopRed}{Takeaways}]
 \SmallFont
-\begin{enumerate}[leftmargin=12mm, itemsep=2mm, label=\textcolor{loopRed}{\textbf{\arabic*.}}]
+\begin{enumerate}[leftmargin=10mm, itemsep=1.6mm, label=\textcolor{loopRed}{\textbf{\arabic*.}}]
 \item \textbf{The generalization transition appears in cosmological data.} The known
       memorization-to-generalization transition also occurs in CAMELS cosmological maps.
 \item \textbf{It biases inference.} Small training sets yield models that memorize: inference looks precise but is biased toward the training
