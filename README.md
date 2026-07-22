@@ -13,25 +13,44 @@ diffusion transformer (DiT) experiments, plus U-Net models conditioned on
 continuous cosmological parameters. It also provides tools for comparing model
 families, training-set sizes, and checkpoints.
 
-The training code builds on
-[`nkern/cosmo_diffusion`](https://github.com/nkern/cosmo_diffusion). This
-repository adds experiment preparation, portable configuration templates,
-sampling wrappers, evaluation code, Great Lakes workflows, and analysis
-notebooks.
+The project builds on the training and data utilities in
+[`nkern/cosmo_diffusion`](https://github.com/nkern/cosmo_diffusion), but it is
+not only a collection of notebooks around that package. The DiT integration,
+conditional experiments, sampling and resume code, augmentation support,
+cluster workflows, and evaluation framework used in this study are implemented
+here.
 
 ## What This Repository Contains
 
-### Model training and sampling
+### Model and training extensions
 
-- U-Net and DiT configuration templates for unconditional models, plus
-  continuous conditioning for U-Net experiments.
-- Saved manifests that keep data-size and architecture sweeps fixed and
-  reviewable.
-- Checkpoint continuation and resume checks for long-running experiments.
-- Sampling with standard diffusion schedulers, including DPM-Solver for faster
-  generation from trained checkpoints.
-- Slurm job chains for training, sampling, and downstream analysis on Great
-  Lakes.
+- **Diffusion transformers:** this repository adds the
+  [`DiTTransformer2DModel`](https://huggingface.co/docs/diffusers/api/models/dit_transformer2d)
+  path used in the project. It generates DiT configurations, passes the labels
+  required by adaptive layer normalization through training, loads DiT
+  checkpoints directly, runs depth sweeps, and resumes staged training at exact
+  checkpoints.
+- **U-Net experiments:** the U-Net workflow covers unconditional models,
+  class-conditional models, and continuous conditioning on the six CAMELS
+  cosmology and feedback parameters.
+- **Sampling:** the checkpoint-aware sampler loads both U-Net and DiT models,
+  reconstructs the saved noise scheduler, supports post-hoc EMA, records sample
+  provenance, and can replace the training scheduler with DPM-Solver.
+- **Physics-preserving augmentation:** the augmentation path adds random
+  90-degree rotations and the eight symmetries of a square, and fixes flip
+  dimensions for scalar field maps.
+- **Long-run safeguards:** preflight checks, saved manifests, exact checkpoint
+  targets, and resume guards are used before expensive training and sampling
+  jobs are submitted.
+
+Key implementation files:
+
+- [DiT sweep and model configuration](scripts/prepare_nf_generalize_fig2_dit_configs.py)
+- [DiT class-label and checkpoint integration](scripts/patch_cosmodiff_dit_class_labels.py)
+- [Exact DiT checkpoint resume](scripts/run_cosmodiff_train_with_dit_resume.py)
+- [U-Net and DiT sampling](scripts/sample_cosmodiff.py)
+- [Continuous conditional U-Net configuration](scripts/prepare_nf_conditional_u128_config.py)
+- [Square-symmetry augmentations](scripts/patch_cosmodiff_augmentations.py)
 
 ### Memorization and sample-novelty diagnostics
 
@@ -90,30 +109,75 @@ A typical experiment follows this sequence:
 ```text
 configs/templates/  portable U-Net and DiT configuration templates
 simdiff_eval/       reusable statistics, nearest-neighbor, and plotting code
-scripts/            config preparation, sampling, and evaluation entry points
+scripts/            model integration, config, training, sampling, and analysis
 scripts/slurm/      Great Lakes training, sampling, and analysis workflows
 notebooks/          reproducible analysis and figure notebooks
+tests/              resume, continuation, reference-data, and notebook checks
 docs/               methodology, experiment, and workflow notes
 results/            local tables and figures; large outputs are mostly ignored
 ```
 
 Representative entry points:
 
-- [DiT sweep preparation](scripts/prepare_nf_generalize_fig2_dit_configs.py)
-- [Conditional U-Net preparation](scripts/prepare_nf_conditional_u128_config.py)
-- [Checkpoint-aware sampling](scripts/sample_cosmodiff.py)
 - [PCA nearest-neighbor analysis](scripts/compute_nf_generalize_pca_full_nn.py)
 - [SSCD nearest-neighbor analysis](scripts/compute_nf_generalize_sscd_full_nn.py)
 - [Conditional parameter-recovery evaluation](scripts/evaluate_nf_conditional_bias_probe.py)
-- [U-Net generalization and physical-statistics notebook](notebooks/nf_generalize_fig2_partial_quickcheck.ipynb)
-- [DiT depth and data-size notebook](notebooks/nf_generalize_fig2_dit_results.ipynb)
-- [Conditional calibration notebook](notebooks/nf_conditional_bias_probe_check.ipynb)
-- [Transition-scaling diagnostics](notebooks/nf_generalize_scaling_diagnostic.ipynb)
+- [Staged DiT continuation workflow](scripts/slurm/submit_nf_generalize_fig2_dit_l16_continue.sh)
 
 More detailed command references are available in
 [`scripts/README.md`](scripts/README.md),
 [`configs/README.md`](configs/README.md), and
 [`notebooks/README.md`](notebooks/README.md).
+
+## Notebook Index
+
+All tracked analysis notebooks are linked below. The executed DiT snapshot is
+kept separately so collaborators can inspect its saved outputs without rerunning
+the full analysis.
+
+### Memorization, generalization, and physical statistics
+
+- [SSCD generalizability figure](notebooks/generalizability_figure.ipynb)
+- [PCA generalizability figure](notebooks/generalizability_figure_pca.ipynb)
+- [PCA representation diagnostics](notebooks/generalizability_figure_pca_diagnostics.ipynb)
+- [U-Net data-size sweep and physical-statistics checks](notebooks/nf_generalize_fig2_partial_quickcheck.ipynb)
+- [Small-data memorization quickcheck](notebooks/nf_generalize_n64_memorize_quickcheck.ipynb)
+- [Reference U-Net data sweep](notebooks/nf_generalize_nick_data_quickcheck.ipynb)
+- [Reference sweep with SSCD and physical statistics](notebooks/nf_generalize_nick_data_sscd_quickcheck.ipynb)
+- [DDPM and DPM-Solver sampling comparison](notebooks/nf_generalize_nick_data_dpm50_compare.ipynb)
+- [Transition-scaling diagnostic](notebooks/nf_generalize_scaling_diagnostic.ipynb)
+- [Training-checkpoint learning process](notebooks/nf_generalize_epoch_snapshots_poster.ipynb)
+
+### Diffusion transformers
+
+- [DiT depth and data-size results](notebooks/nf_generalize_fig2_dit_results.ipynb)
+- [Executed DiT results snapshot](notebooks/nf_generalize_fig2_dit_results_executed.ipynb)
+
+### Conditional generation and calibration
+
+- [Four-field class-conditional quickcheck](notebooks/nf_class_conditional_fourfield_quickcheck.ipynb)
+- [Continuous conditional inference](notebooks/nf_conditional_inference_results.ipynb)
+- [Continuous cosmology bias probe](notebooks/nf_conditional_bias_probe_check.ipynb)
+- [VGG cosmology recovery results](notebooks/nf_conditional_bias_vgg_results.ipynb)
+
+### Training, EMA, augmentation, and ablations
+
+- [U64 run and hyperparameter inspection](notebooks/inspect_run16_run12_run15.ipynb)
+- [U64, U128, and U256 run inspection](notebooks/inspect_run9_run10_run11.ipynb)
+- [U64 full-data EMA check](notebooks/nf_generalize_fig2_u64_d2p15_ema_check.ipynb)
+- [Poster EMA and guidance ablations](notebooks/nf_poster_ablation_appendix.ipynb)
+- [Augmentation sweep quickcheck](notebooks/nf_sweep_aug_quickcheck.ipynb)
+- [EMA length sweep quickcheck](notebooks/nf_sweep_ema_sigma_quickcheck.ipynb)
+- [Initial sweep inspection](notebooks/nf_sweep_inspection.ipynb)
+- [Small-EMA quickcheck](notebooks/nf_sweep_small_ema_quickcheck.ipynb)
+- [Direct and post-hoc EMA comparison](notebooks/nf_sweep_v2_ema_direct_vs_posthoc.ipynb)
+- [Second sweep quickcheck](notebooks/nf_sweep_v2_quickcheck.ipynb)
+- [Second sweep smoke-training check](notebooks/nf_sweep_v2_smoke_train_check.ipynb)
+
+### Reproducibility and data validation
+
+- [Normalization-fix and SSCD evaluation](notebooks/normalization_fixes_sscd_eval.ipynb)
+- [Cross-run reproducibility analysis](notebooks/reproducibility_figure_analysis.ipynb)
 
 ## Setup
 
@@ -149,7 +213,7 @@ intermediate run artifacts are intentionally excluded from git.
 
 This project builds on Nicholas Kern's
 [`nkern/cosmo_diffusion`](https://github.com/nkern/cosmo_diffusion) package for
-the core diffusion training, data parsing, checkpoint, and sampling utilities.
-The additions here focus on CAMELS experiment design, cluster workflows,
-memorization diagnostics, physical-statistics checks, and conditional
-calibration.
+the original diffusion training and CAMELS data utilities. The DiT integration,
+conditional-model experiments, augmentation support, model-aware sampling and
+resume logic, sweep automation, and evaluation framework described above are
+implemented in this repository.
