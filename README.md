@@ -4,8 +4,10 @@
 memorization-to-generalization transition in diffusion models trained on cosmological
 fields, and shows what crossing it — or failing to — does to the science downstream.
 
-Presented as a poster at the **2026 Deep Learning for Science School, Lawrence Berkeley
-National Laboratory** ([`poster/astroai_poster.pdf`](poster/astroai_poster.pdf)).
+Presented at the **AstroAI 2026 Workshop**
+([`poster/astroai_poster.pdf`](poster/astroai_poster.pdf)) and at the **2026 Deep
+Learning for Science School, Lawrence Berkeley National Laboratory**
+([`poster/dl4sci_poster.pdf`](poster/dl4sci_poster.pdf)).
 Work with Nicholas Kern and Dragan Huterer, University of Michigan.
 
 ## The problem
