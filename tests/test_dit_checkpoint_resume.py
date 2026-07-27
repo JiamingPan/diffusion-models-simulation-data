@@ -1,8 +1,11 @@
 import importlib.util
+import pickle
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+
+import torch
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -57,6 +60,55 @@ def legacy_resume_train(
 
 
 class DitCheckpointResumeTests(unittest.TestCase):
+    def test_resume_loader_restores_optimizer_and_scheduler_state(self):
+        module = load_wrapper_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_dir = Path(tmpdir)
+            saved_model = torch.nn.Linear(2, 1)
+            saved_optimizer = torch.optim.AdamW(
+                saved_model.parameters(),
+                lr=3.0e-4,
+                weight_decay=2.0e-2,
+            )
+            loss = saved_model(torch.ones(1, 2)).sum()
+            loss.backward()
+            saved_optimizer.step()
+            saved_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                saved_optimizer,
+                T_max=20,
+            )
+            saved_optimizer.zero_grad()
+            saved_model(torch.ones(1, 2)).sum().backward()
+            saved_optimizer.step()
+            saved_scheduler.step()
+
+            with (checkpoint_dir / "optimizer.pkl").open("wb") as handle:
+                pickle.dump(saved_optimizer, handle)
+            with (checkpoint_dir / "lr_scheduler.pkl").open("wb") as handle:
+                pickle.dump(saved_scheduler, handle)
+
+            resumed_model = torch.nn.Linear(2, 1)
+            optimizer, scheduler = module.restore_optimizer_and_lr_scheduler(
+                resumed_model,
+                checkpoint_dir,
+            )
+
+            resumed_parameters = list(resumed_model.parameters())
+            optimizer_parameters = [
+                parameter
+                for group in optimizer.param_groups
+                for parameter in group["params"]
+            ]
+            self.assertEqual(
+                [id(parameter) for parameter in optimizer_parameters],
+                [id(parameter) for parameter in resumed_parameters],
+            )
+            self.assertEqual(optimizer.defaults["lr"], 3.0e-4)
+            self.assertEqual(optimizer.defaults["weight_decay"], 2.0e-2)
+            self.assertTrue(optimizer.state)
+            self.assertEqual(scheduler.last_epoch, saved_scheduler.last_epoch)
+            self.assertIs(scheduler.optimizer, optimizer)
+
     def test_epoch_argument_reproduces_and_fixes_observed_overshoot(self):
         module = load_wrapper_module()
 
@@ -176,7 +228,10 @@ class DitCheckpointResumeTests(unittest.TestCase):
         self.assertIn("detect_epoch_semantics", check)
         self.assertIn("DiTTransformer2DModel", check)
         self.assertIn("meta_parameters", check)
+        self.assertIn("if not optimizer.state", check)
+        self.assertIn("lr_scheduler.optimizer is not optimizer", check)
         self.assertIn("PASS: checkpoint resume loader reconstructed DiT", check)
+        self.assertIn("PASS: optimizer moments and scheduler progress were restored", check)
         self.assertIn("PASS: installed training API supports exact-target resume", check)
 
     def test_training_uses_in_process_dit_resume_wrapper(self):
