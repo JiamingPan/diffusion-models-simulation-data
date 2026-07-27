@@ -13,13 +13,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PREPARE_PATH = (
     REPO_ROOT
     / "scripts"
-    / "prepare_nf_generalize_fig2_dit_l16_fresh300k_configs.py"
+    / "prepare_nf_generalize_fig2_dit_l16_fresh400k_configs.py"
 )
 FRESH_WRAPPER_PATH = REPO_ROOT / "scripts" / "run_cosmodiff_train_fresh_seeded.py"
 RESULT_AUDIT_PATH = (
     REPO_ROOT
     / "scripts"
-    / "audit_nf_generalize_fig2_dit_l16_fresh300k_results.py"
+    / "audit_nf_generalize_fig2_dit_l16_fresh400k_results.py"
 )
 
 
@@ -59,35 +59,38 @@ class FreshDitL16ManifestTests(unittest.TestCase):
             run_name=None,
             stage=None,
             stage_updates=25_000,
-            stages=12,
+            stages=16,
             safety_checkpoint_updates=5_000,
         )
 
-    def test_all_ten_runs_train_fresh_through_300k(self):
+    def test_all_ten_runs_train_fresh_through_400k(self):
         module = load_prepare_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             rows = module.fresh_rows(
                 self._args(Path(tmpdir) / module.SWEEP_NAME)
             )
 
-        self.assertEqual(len(rows), 120)
+        self.assertEqual(len(rows), 160)
         self.assertEqual(
             sorted({row["dataset_tag"] for row in rows}),
             [f"d2p{power:02d}" for power in range(6, 16)],
         )
-        self.assertEqual(sorted({row["stage"] for row in rows}), list(range(1, 13)))
-        self.assertEqual({row["target_total_updates"] for row in rows if row["stage"] == 12}, {300_000})
+        self.assertEqual(sorted({row["stage"] for row in rows}), list(range(1, 17)))
+        self.assertEqual(
+            {row["target_total_updates"] for row in rows if row["stage"] == 16},
+            {400_000},
+        )
         self.assertEqual(
             {row["target_total_updates"] for row in rows if row["scientific_checkpoint"]},
-            {200_000, 225_000, 250_000, 275_000, 300_000},
+            {200_000, 300_000, 400_000},
         )
         self.assertEqual({row["training_seed"] for row in rows}, {123})
         self.assertTrue(all(row["fresh_initialization"] for row in rows))
         self.assertTrue(all(row["arch"] == "dit_l16" for row in rows))
-        self.assertTrue(all(row["run_name"].endswith("_fresh300k_seed123") for row in rows))
+        self.assertTrue(all(row["run_name"].endswith("_fresh400k_seed123") for row in rows))
         self.assertTrue(
             all(
-                "nf_generalize_fig2_dit_l16_fresh300k" in row["checkpoint_dir"]
+                "nf_generalize_fig2_dit_l16_fresh400k" in row["checkpoint_dir"]
                 for row in rows
             )
         )
@@ -96,6 +99,9 @@ class FreshDitL16ManifestTests(unittest.TestCase):
                 "nf_generalize_fig2_dit_l16_continue" not in row["checkpoint_dir"]
                 for row in rows
             )
+        )
+        self.assertTrue(
+            all("fresh300k" not in row["checkpoint_dir"] for row in rows)
         )
 
     def test_stage_arithmetic_and_scientific_labels_are_exact(self):
@@ -184,13 +190,13 @@ class FreshDitL16WorkflowSourceTests(unittest.TestCase):
             REPO_ROOT
             / "scripts"
             / "slurm"
-            / "train_nf_generalize_fig2_dit_l16_fresh300k_array.sbatch"
+            / "train_nf_generalize_fig2_dit_l16_fresh400k_array.sbatch"
         ).read_text()
         sample = (
             REPO_ROOT
             / "scripts"
             / "slurm"
-            / "sample_nf_generalize_fig2_dit_l16_fresh300k_array.sbatch"
+            / "sample_nf_generalize_fig2_dit_l16_fresh400k_array.sbatch"
         ).read_text()
 
         self.assertIn("#SBATCH --time=24:00:00", train)
@@ -198,6 +204,8 @@ class FreshDitL16WorkflowSourceTests(unittest.TestCase):
         self.assertIn("run_cosmodiff_train_fresh_seeded.py", train)
         self.assertIn("run_cosmodiff_train_with_dit_resume.py", train)
         self.assertIn("TRAIN_STAGE", train)
+        self.assertIn("1 through 16", train)
+        self.assertIn("stage ${TRAIN_STAGE}/16", train)
         self.assertIn("previous_expected_checkpoint", train)
         self.assertIn("expected_checkpoint", train)
         self.assertNotIn("nf_generalize_fig2_dit_l16_continue", train)
@@ -208,22 +216,27 @@ class FreshDitL16WorkflowSourceTests(unittest.TestCase):
         self.assertIn("SAMPLER_STEPS=${SAMPLER_STEPS:-50}", sample)
         self.assertIn("SEED=${SEED:-123}", sample)
         self.assertIn("scientific_checkpoint", sample)
+        self.assertIn("stage ${SAMPLE_STAGE}/16", sample)
         self.assertNotIn("nf_generalize_fig2_dit_l16_continue", sample)
 
-    def test_submit_chain_reaches_300k_and_is_gated(self):
+    def test_submit_chain_reaches_400k_and_is_gated(self):
         submit = (
             REPO_ROOT
             / "scripts"
             / "slurm"
-            / "submit_nf_generalize_fig2_dit_l16_fresh300k.sh"
+            / "submit_nf_generalize_fig2_dit_l16_fresh400k.sh"
         ).read_text()
-        self.assertIn("for stage in $(seq 1 12)", submit)
+        self.assertIn("for stage in $(seq 1 16)", submit)
         self.assertIn("afterok", submit)
         self.assertIn("--array=0-9%2", submit)
-        self.assertIn("precheck_nf_generalize_fig2_dit_l16_fresh300k.sbatch", submit)
+        self.assertIn("precheck_nf_generalize_fig2_dit_l16_fresh400k.sbatch", submit)
         self.assertIn("dpm50_fresh_${total_k}k", submit)
+        self.assertIn('[[ "${total_k}" != "200"', submit)
+        self.assertIn('&& "${total_k}" != "300"', submit)
+        self.assertIn('&& "${total_k}" != "400"', submit)
         self.assertIn("START_STAGE=${START_STAGE:-1}", submit)
         self.assertIn("REUSE_EXISTING_MANIFEST=${REUSE_EXISTING_MANIFEST:-0}", submit)
+        self.assertNotIn("fresh300k", submit)
 
     def test_result_audit_rejects_duplicate_metric_tags(self):
         module = load_result_audit_module()

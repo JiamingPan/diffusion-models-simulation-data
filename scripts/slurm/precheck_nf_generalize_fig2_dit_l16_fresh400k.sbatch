@@ -7,8 +7,8 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=80gb
 #SBATCH --time=00:30:00
-#SBATCH -o /home/jiamingp/diffusion_models_repo/logs/nf_generalize_fig2_dit_l16_fresh300k/precheck_%j.out
-#SBATCH -e /home/jiamingp/diffusion_models_repo/logs/nf_generalize_fig2_dit_l16_fresh300k/precheck_%j.err
+#SBATCH -o /home/jiamingp/diffusion_models_repo/logs/nf_generalize_fig2_dit_l16_fresh400k/precheck_%j.out
+#SBATCH -e /home/jiamingp/diffusion_models_repo/logs/nf_generalize_fig2_dit_l16_fresh400k/precheck_%j.err
 #SBATCH -A huterer2
 
 set -euo pipefail
@@ -20,11 +20,11 @@ BASE_VENV_PATH=${BASE_VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
 PYTHON_BIN=${PYTHON_BIN:-python}
 REQUIRED_COSMODIFF_BRANCH=${REQUIRED_COSMODIFF_BRANCH:-main}
 REQUIRE_EMPTY=${REQUIRE_EMPTY:-0}
-PREPARE_SCRIPT=scripts/prepare_nf_generalize_fig2_dit_l16_fresh300k_configs.py
-MANIFEST_PATH=${PROJECT_DIR}/local/nf_generalize_fig2_dit_l16_fresh300k/manifest.json
+PREPARE_SCRIPT=scripts/prepare_nf_generalize_fig2_dit_l16_fresh400k_configs.py
+MANIFEST_PATH=${PROJECT_DIR}/local/nf_generalize_fig2_dit_l16_fresh400k/manifest.json
 
 cd "${PROJECT_DIR}"
-mkdir -p logs/nf_generalize_fig2_dit_l16_fresh300k
+mkdir -p logs/nf_generalize_fig2_dit_l16_fresh400k
 if [[ -f "${VENV_PATH}/bin/activate" ]]; then
   source "${VENV_PATH}/bin/activate"
 fi
@@ -39,7 +39,7 @@ audit_args=(--manifest "${MANIFEST_PATH}")
 if [[ "${REQUIRE_EMPTY}" == "1" ]]; then
   audit_args+=(--require-empty)
 fi
-"${PYTHON_BIN}" scripts/check_nf_generalize_fig2_dit_l16_fresh300k.py "${audit_args[@]}"
+"${PYTHON_BIN}" scripts/check_nf_generalize_fig2_dit_l16_fresh400k.py "${audit_args[@]}"
 
 RUN_NAME=$(
   "${PYTHON_BIN}" "${PREPARE_SCRIPT}" \
@@ -88,4 +88,4 @@ PATCH_LOCK="${COSMODIFF_DIR}/.codex_dit_patches.lock"
   --source-samples-per-file 1 \
   --batch-size 1 \
   --device cuda
-echo "Fresh DiT-L16 300k GPU precheck PASS."
+echo "Fresh DiT-L16 400k GPU precheck PASS."

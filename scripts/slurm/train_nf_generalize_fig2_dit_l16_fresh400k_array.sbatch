@@ -8,23 +8,23 @@
 #SBATCH --mem=80gb
 #SBATCH --time=24:00:00
 #SBATCH --array=0-9%2
-#SBATCH -o /home/jiamingp/diffusion_models_repo/logs/nf_generalize_fig2_dit_l16_fresh300k/train_stage%a_%A_%a.out
-#SBATCH -e /home/jiamingp/diffusion_models_repo/logs/nf_generalize_fig2_dit_l16_fresh300k/train_stage%a_%A_%a.err
+#SBATCH -o /home/jiamingp/diffusion_models_repo/logs/nf_generalize_fig2_dit_l16_fresh400k/train_stage%a_%A_%a.out
+#SBATCH -e /home/jiamingp/diffusion_models_repo/logs/nf_generalize_fig2_dit_l16_fresh400k/train_stage%a_%A_%a.err
 #SBATCH -A huterer2
 
 set -euo pipefail
 
 PROJECT_DIR=${PROJECT_DIR:-/home/jiamingp/diffusion_models_repo}
-TRAIN_STAGE=${TRAIN_STAGE:?Set TRAIN_STAGE to a value from 1 through 12}
+TRAIN_STAGE=${TRAIN_STAGE:?Set TRAIN_STAGE to a value from 1 through 16}
 COSMODIFF_DIR=${COSMODIFF_DIR_OVERRIDE:-/home/jiamingp/Diffusion_model/cosmo_diffusion_main}
 VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf_class}
 BASE_VENV_PATH=${BASE_VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
 PYTHON_BIN=${PYTHON_BIN:-python}
 REQUIRED_COSMODIFF_BRANCH=${REQUIRED_COSMODIFF_BRANCH:-main}
-PREPARE_SCRIPT=scripts/prepare_nf_generalize_fig2_dit_l16_fresh300k_configs.py
+PREPARE_SCRIPT=scripts/prepare_nf_generalize_fig2_dit_l16_fresh400k_configs.py
 
 cd "${PROJECT_DIR}"
-mkdir -p logs/nf_generalize_fig2_dit_l16_fresh300k
+mkdir -p logs/nf_generalize_fig2_dit_l16_fresh400k
 if [[ -f "${VENV_PATH}/bin/activate" ]]; then
   source "${VENV_PATH}/bin/activate"
 fi
@@ -102,7 +102,7 @@ PATCH_LOCK="${COSMODIFF_DIR}/.codex_dit_patches.lock"
   "${PYTHON_BIN}" "${PROJECT_DIR}/scripts/patch_cosmodiff_dit_class_labels.py" "${COSMODIFF_DIR}"
 ) 9>"${PATCH_LOCK}"
 
-echo "Fresh DiT-L16 ${RUN_NAME}, stage ${TRAIN_STAGE}/12"
+echo "Fresh DiT-L16 ${RUN_NAME}, stage ${TRAIN_STAGE}/16"
 echo "  checkpoint directory: ${CHECKPOINT_DIR}"
 echo "  exact stage target:    ${expected_checkpoint}"
 echo "  walltime:              24 hours"
@@ -136,4 +136,4 @@ if [[ ! -d "${expected_checkpoint}" ]]; then
   echo "A recovery checkpoint may exist. Re-submit this same stage to resume it." >&2
   exit 1
 fi
-echo "Completed stage ${TRAIN_STAGE}/12: ${expected_checkpoint}"
+echo "Completed stage ${TRAIN_STAGE}/16: ${expected_checkpoint}"

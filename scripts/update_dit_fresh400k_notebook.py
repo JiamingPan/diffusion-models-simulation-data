@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Insert the audited fresh DiT-L16 300k analysis into the results notebook."""
+"""Insert the audited fresh DiT-L16 400k analysis into the results notebook."""
 
 from __future__ import annotations
 
@@ -9,7 +9,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 NOTEBOOK_PATH = REPO_ROOT / "notebooks" / "nf_generalize_fig2_dit_results.ipynb"
-SECTION_HEADING = "## Fresh DiT-L16 sweep through 300k updates"
+SECTION_HEADING = "## Fresh DiT-L16 sweep through 400k updates"
+LEGACY_SECTION_HEADING = "## Fresh DiT-L16 sweep through 300k updates"
 
 
 def markdown_cell(source: str) -> dict:
@@ -30,31 +31,32 @@ def code_cell(source: str) -> dict:
     }
 
 
-INTRO = r"""## Fresh DiT-L16 sweep through 300k updates
+INTRO = r"""## Fresh DiT-L16 sweep through 400k updates
 
 This is the clean replacement for the legacy continuation diagnostic. Ten DiT-L16
 models are initialized from scratch with seed 123, one for every training-set size
-from $2^6$ through $2^{15}$, and trained continuously to 300k optimizer updates.
+from $2^6$ through $2^{15}$, and trained continuously to 400k optimizer updates.
 
 - **200k is the equal-budget comparison** with DiT-L8 and DiT-L12/base.
-- **300k is the final L16 curve** and includes all ten data sizes.
-- The 225k, 250k, and 275k checkpoints show how the L16 transition evolves.
+- **300k is the intermediate L16 curve** and includes all ten data sizes.
+- **400k is the final L16 curve** and includes all ten data sizes.
 - **No legacy continuation fallback** is allowed in this section.
 - A q95 novelty score measures distance from training examples. **q95 novelty does not guarantee physical fidelity**; read it with the image, one-point, and power-spectrum checks.
 """
 
 
-AUDIT_CODE = r"""FRESH_SWEEP_NAME = 'nf_generalize_fig2_dit_l16_fresh300k'
+AUDIT_CODE = r"""FRESH_SWEEP_NAME = 'nf_generalize_fig2_dit_l16_fresh400k'
 FRESH_RESULT_DIR = PROJECT_DIR / 'results' / FRESH_SWEEP_NAME
 FRESH_SAMPLE_DIR = FRESH_RESULT_DIR / 'samples'
 FRESH_MANIFEST_PATH = PROJECT_DIR / 'local' / FRESH_SWEEP_NAME / 'manifest.json'
 FRESH_ANALYSIS_MANIFEST_PATH = PROJECT_DIR / 'local' / FRESH_SWEEP_NAME / 'analysis_manifest.json'
-FRESH_UPDATES_K = [200, 225, 250, 275, 300]
+FRESH_UPDATES_K = [200, 300, 400]
 FRESH_EXPECTED_POWERS = list(range(6, 16))
 FRESH_EXPECTED_TAGS = [f'd2p{power:02d}' for power in FRESH_EXPECTED_POWERS]
 FRESH_EXPECTED_SIZES = [2 ** power for power in FRESH_EXPECTED_POWERS]
 fresh_equal_budget_updates_k = 200
-fresh_final_updates_k = 300
+fresh_intermediate_updates_k = 300
+fresh_final_updates_k = 400
 
 
 def fresh_metric_path(feature: str, updates_k: int) -> Path:
@@ -125,8 +127,15 @@ fresh_table_audit_df = pd.DataFrame(fresh_audit_rows)
 display(Markdown('### Fresh exact-checkpoint table audit'))
 display(fresh_table_audit_df)
 
-fresh_300k_rows = fresh_table_audit_df[
+fresh_400k_rows = fresh_table_audit_df[
     fresh_table_audit_df['updates_k'] == fresh_final_updates_k
+]
+fresh_400k_complete = (
+    len(fresh_400k_rows) == 2
+    and bool(fresh_400k_rows['complete'].all())
+)
+fresh_300k_rows = fresh_table_audit_df[
+    fresh_table_audit_df['updates_k'] == fresh_intermediate_updates_k
 ]
 fresh_300k_complete = (
     len(fresh_300k_rows) == 2
@@ -140,14 +149,14 @@ fresh_200k_complete = (
     and bool(fresh_200k_rows['complete'].all())
 )
 
-if fresh_300k_complete:
+if fresh_400k_complete:
     display(Markdown(
-        '**Fresh 300k audit passed.** All ten data sizes '
+        '**Fresh 400k audit passed.** All ten data sizes '
         r'$2^6,\ldots,2^{15}$ are present in both PCA and SSCD.'
     ))
 else:
     display(Markdown(
-        '**Fresh 300k audit incomplete: not drawing the fresh final curve.** '
+        '**Fresh 400k audit incomplete: not drawing the fresh final curve.** '
         'All ten data sizes must be present in both PCA and SSCD. '
         'No legacy continuation fallback will be used.'
     ))
@@ -255,13 +264,13 @@ fresh_equal_budget_outputs = []
 if fresh_200k_complete:
     fresh_equal_budget_outputs.append(plot_fresh_depth_comparison(
         l16_updates_k=fresh_equal_budget_updates_k,
-        output_name='nf_generalize_fig2_dit_l16_fresh300k_equal_budget_200k_full.png',
+        output_name='nf_generalize_fig2_dit_l16_fresh400k_equal_budget_200k_full.png',
         heading='Fresh DiT depth sweep at a fixed 200k-update budget',
         subtitle='L8, L12, and fresh L16 use the same optimizer-update budget.',
     ))
     fresh_equal_budget_outputs.append(plot_fresh_depth_comparison(
         l16_updates_k=fresh_equal_budget_updates_k,
-        output_name='nf_generalize_fig2_dit_l16_fresh300k_equal_budget_200k_zoom.png',
+        output_name='nf_generalize_fig2_dit_l16_fresh400k_equal_budget_200k_zoom.png',
         heading='Fresh DiT depth sweep at 200k: transition region',
         subtitle=r'Zoomed to $2^6$--$2^{11}$; all ten sizes are still required by the audit.',
         zoom_max_power=11,
@@ -272,19 +281,35 @@ else:
         'must each contain all ten data sizes.'
     ))
 
-fresh_final_outputs = []
+fresh_intermediate_outputs = []
 if fresh_300k_complete:
+    fresh_intermediate_outputs.append(plot_fresh_depth_comparison(
+        l16_updates_k=fresh_intermediate_updates_k,
+        output_name='nf_generalize_fig2_dit_l16_fresh400k_intermediate_300k_full.png',
+        heading='Intermediate fresh DiT-L16 result at 300k updates',
+        subtitle='L8 and L12 use 200k updates; L16 uses 300k. This is not an equal-compute comparison.',
+    ))
+    fresh_intermediate_outputs.append(plot_fresh_depth_comparison(
+        l16_updates_k=fresh_intermediate_updates_k,
+        output_name='nf_generalize_fig2_dit_l16_fresh400k_intermediate_300k_zoom.png',
+        heading='Intermediate fresh DiT-L16 result: transition region',
+        subtitle=r'Zoomed to $2^6$--$2^{11}$; L16 uses 300k updates.',
+        zoom_max_power=11,
+    ))
+
+fresh_final_outputs = []
+if fresh_400k_complete:
     fresh_final_outputs.append(plot_fresh_depth_comparison(
         l16_updates_k=fresh_final_updates_k,
-        output_name='nf_generalize_fig2_dit_l16_fresh300k_final_outcome_full.png',
-        heading='Final fresh DiT-L16 result through 300k updates',
-        subtitle='L8 and L12 use 200k updates; L16 uses 300k. This is not an equal-compute comparison.',
+        output_name='nf_generalize_fig2_dit_l16_fresh400k_final_outcome_full.png',
+        heading='Final fresh DiT-L16 result through 400k updates',
+        subtitle='L8 and L12 use 200k updates; L16 uses 400k. This is not an equal-compute comparison.',
     ))
     fresh_final_outputs.append(plot_fresh_depth_comparison(
         l16_updates_k=fresh_final_updates_k,
-        output_name='nf_generalize_fig2_dit_l16_fresh300k_final_outcome_zoom.png',
+        output_name='nf_generalize_fig2_dit_l16_fresh400k_final_outcome_zoom.png',
         heading='Final fresh DiT-L16 result: transition region',
-        subtitle=r'Zoomed to $2^6$--$2^{11}$; L16 uses 300k updates.',
+        subtitle=r'Zoomed to $2^6$--$2^{11}$; L16 uses 400k updates.',
         zoom_max_power=11,
     ))
 """
@@ -345,7 +370,7 @@ TRAJECTORY_CODE = r"""def plot_fresh_l16_checkpoint_trajectories() -> Path | Non
         color='0.35',
         fontsize=12.5,
     )
-    out = QUICKCHECK_DIR / 'nf_generalize_fig2_dit_l16_fresh300k_checkpoint_trajectories_full.png'
+    out = QUICKCHECK_DIR / 'nf_generalize_fig2_dit_l16_fresh400k_checkpoint_trajectories_full.png'
     fig.savefig(out, bbox_inches='tight', dpi=300)
     plt.show()
     print('wrote', out)
@@ -360,7 +385,9 @@ INTERPRETATION = r"""### How to read the fresh sweep
 
 The fixed-200k figure is the fair depth comparison. The final figure answers a
 different question: what does the L16 transition look like after allowing it to
-train through 300k updates? A rightward shift relative to L12 would be evidence
+train through 400k updates? The DiT-L16 400k curve is the final longer-training
+result; the 300k curve is an intermediate checkpoint. A rightward shift relative
+to L12 would be evidence
 consistent with a depth-dependent data requirement, but the code does not assume
 or enforce that result. If the fresh L16 curve remains nonmonotonic, the next step
 is to inspect generated maps, one-point distributions, power spectra, and
@@ -401,21 +428,21 @@ lines.append(
     '- Fixed-budget comparison: DiT-L8, DiT-L12/base, and fresh DiT-L16 '
     'are compared at 200k optimizer updates across all ten data sizes.'
 )
-if fresh_300k_complete:
+if fresh_400k_complete:
     lines.append(
-        '- **Fresh 300k status: complete.** The final longer-training L16 diagnostic '
+        '- **Fresh 400k status: complete.** The final longer-training L16 diagnostic '
         'uses all ten data sizes from $2^6$ through $2^{15}$ in '
         'both PCA and SSCD.'
     )
 else:
     lines.append(
-        '- **Fresh 300k status: incomplete.** The final longer-training L16 diagnostic '
+        '- **Fresh 400k status: incomplete.** The final longer-training L16 diagnostic '
         'is withheld until all ten data sizes are present in both '
         'PCA and SSCD; no legacy result is substituted.'
     )
 lines.append(
     '- **Legacy continuation:** retained only as a failure-analysis record. '
-    'It is not used for the fresh 300k curve or for a depth-scaling claim.'
+    'It is not used for the fresh 400k curve or for a depth-scaling claim.'
 )
 if sample_ok is not None:
     lines.append(f'- Original fixed-200k sample audit: {sample_ok}/{sample_total} files found.')
@@ -442,7 +469,7 @@ def update_notebook(path: Path = NOTEBOOK_PATH) -> None:
     skipping = False
     for cell in cells:
         source = "".join(cell.get("source", []))
-        if source.startswith(SECTION_HEADING):
+        if source.startswith((SECTION_HEADING, LEGACY_SECTION_HEADING)):
             skipping = True
             continue
         if skipping and source.startswith("## Takeaways"):

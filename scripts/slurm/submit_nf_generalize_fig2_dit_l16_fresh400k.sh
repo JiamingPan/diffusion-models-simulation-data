@@ -1,5 +1,5 @@
 #!/bin/bash
-# Submit ten fresh DiT-L16 runs through 300k, with exact milestone evaluation.
+# Submit ten fresh DiT-L16 runs through 400k, with exact milestone evaluation.
 
 set -euo pipefail
 
@@ -10,14 +10,14 @@ OVERWRITE=${OVERWRITE:-0}
 SUBMIT_ANALYSIS=${SUBMIT_ANALYSIS:-1}
 START_STAGE=${START_STAGE:-1}
 REUSE_EXISTING_MANIFEST=${REUSE_EXISTING_MANIFEST:-0}
-PREPARE_SCRIPT=scripts/prepare_nf_generalize_fig2_dit_l16_fresh300k_configs.py
-MANIFEST_DIR=${PROJECT_DIR}/local/nf_generalize_fig2_dit_l16_fresh300k
+PREPARE_SCRIPT=scripts/prepare_nf_generalize_fig2_dit_l16_fresh400k_configs.py
+MANIFEST_DIR=${PROJECT_DIR}/local/nf_generalize_fig2_dit_l16_fresh400k
 ANALYSIS_MANIFEST=${MANIFEST_DIR}/analysis_manifest.json
 
 cd "${PROJECT_DIR}"
 
-if (( START_STAGE < 1 || START_STAGE > 12 )); then
-  echo "START_STAGE must be between 1 and 12; got ${START_STAGE}" >&2
+if (( START_STAGE < 1 || START_STAGE > 16 )); then
+  echo "START_STAGE must be between 1 and 16; got ${START_STAGE}" >&2
   exit 1
 fi
 if [[ "${REUSE_EXISTING_MANIFEST}" == "1" ]]; then
@@ -43,15 +43,15 @@ if [[ "${START_STAGE}" == "1" && "${REUSE_EXISTING_MANIFEST}" != "1" ]]; then
 fi
 precheck=$(
   REQUIRE_EMPTY="${require_empty}" sbatch -A "${ACCOUNT}" --parsable \
-    scripts/slurm/precheck_nf_generalize_fig2_dit_l16_fresh300k.sbatch
+    scripts/slurm/precheck_nf_generalize_fig2_dit_l16_fresh400k.sbatch
 )
 precheck=${precheck%%;*}
-echo "fresh 300k precheck: ${precheck}"
+echo "fresh 400k precheck: ${precheck}"
 
 previous_job=${precheck}
-echo "Submitting 12 sequential 25k stages for all ten data sizes."
+echo "Submitting 16 sequential 25k stages for all ten data sizes."
 echo "Each training and sampling array is limited to two GPUs."
-for stage in $(seq 1 12); do
+for stage in $(seq 1 16); do
   if (( stage < START_STAGE )); then
     continue
   fi
@@ -59,14 +59,16 @@ for stage in $(seq 1 12); do
   train_job=$(
     TRAIN_STAGE="${stage}" sbatch -A "${ACCOUNT}" --array=0-9%2 --parsable \
       --dependency="afterok:${previous_job}" \
-      scripts/slurm/train_nf_generalize_fig2_dit_l16_fresh300k_array.sbatch
+      scripts/slurm/train_nf_generalize_fig2_dit_l16_fresh400k_array.sbatch
   )
   train_job=${train_job%%;*}
   previous_job=${train_job}
   total_k=$((25 * stage))
-  echo "stage ${stage}/12 (${total_k}k): train=${train_job}"
+  echo "stage ${stage}/16 (${total_k}k): train=${train_job}"
 
-  if (( total_k < 200 )); then
+  if [[ "${total_k}" != "200" \
+    && "${total_k}" != "300" \
+    && "${total_k}" != "400" ]]; then
     continue
   fi
 
@@ -75,14 +77,14 @@ for stage in $(seq 1 12); do
     SAMPLE_STAGE="${stage}" OVERWRITE="${OVERWRITE}" \
       sbatch -A "${ACCOUNT}" --array=0-9%2 --parsable \
       --dependency="afterok:${train_job}" \
-      scripts/slurm/sample_nf_generalize_fig2_dit_l16_fresh300k_array.sbatch
+      scripts/slurm/sample_nf_generalize_fig2_dit_l16_fresh400k_array.sbatch
   )
   sample_job=${sample_job%%;*}
   previous_job=${sample_job}
   echo "                   sample=${sample_job} label=${sample_label}"
 
   if [[ "${SUBMIT_ANALYSIS}" == "1" ]]; then
-    prefix="nf_generalize_fig2_dit_l16_fresh300k_${total_k}k"
+    prefix="nf_generalize_fig2_dit_l16_fresh400k_${total_k}k"
     pca_job=$(
       MANIFEST_PATH="${ANALYSIS_MANIFEST}" \
       SAMPLE_LABEL="${sample_label}" \
@@ -108,7 +110,7 @@ for stage in $(seq 1 12); do
       AUDIT_UPDATES="$((total_k * 1000))" \
         sbatch -A "${ACCOUNT}" --parsable \
         --dependency="afterok:${pca_job}:${sscd_job}" \
-        scripts/slurm/audit_nf_generalize_fig2_dit_l16_fresh300k.sbatch
+        scripts/slurm/audit_nf_generalize_fig2_dit_l16_fresh400k.sbatch
     )
     audit_job=${audit_job%%;*}
     previous_job=${audit_job}
@@ -116,7 +118,7 @@ for stage in $(seq 1 12); do
   fi
 done
 
-echo "Fresh DiT-L16 plan targets 300k updates for every data size 2^6 through 2^15."
-echo "The 200k result is an intermediate equal-budget comparison; 300k is the final curve."
+echo "Fresh DiT-L16 plan targets 400k updates for every data size 2^6 through 2^15."
+echo "The 200k result is the equal-budget comparison, 300k is intermediate, and 400k is final."
 echo "To restart from a failed stage:"
-echo "  START_STAGE=<stage> REUSE_EXISTING_MANIFEST=1 bash scripts/slurm/submit_nf_generalize_fig2_dit_l16_fresh300k.sh"
+echo "  START_STAGE=<stage> REUSE_EXISTING_MANIFEST=1 bash scripts/slurm/submit_nf_generalize_fig2_dit_l16_fresh400k.sh"
