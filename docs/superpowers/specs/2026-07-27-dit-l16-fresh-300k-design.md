@@ -8,6 +8,12 @@ the legacy 225k--300k continuation outputs. Its purpose is to determine whether
 the unusual low-data DiT-L16 behavior persists when all training sizes are
 trained reproducibly with complete training-state recovery.
 
+**Every one of the ten fresh DiT-L16 runs trains from initialization through
+300,000 requested optimizer updates. The sweep does not stop at 200k.** The
+200k checkpoint is retained as an intermediate matched-budget comparison with
+the existing L8 and L12 runs; 300k is the final checkpoint of the new L16
+experiment.
+
 The experiment tests a hypothesis; it does not tune the implementation until
 the DiT-L16 curve appears to the right of DiT-L12. A high nearest-neighbor
 novelty score is not accepted as generalization unless the generated maps also
@@ -204,13 +210,15 @@ Update `notebooks/nf_generalize_fig2_dit_results.ipynb` to provide:
 3. complete DiT-L16 novelty curves at each analyzed checkpoint,
 4. a separate L16 optimization comparison using 200k, 225k, 250k, 275k, and
    300k, without presenting it as a fixed-capacity scaling plot,
-5. a full-range `2^6`--`2^15` panel,
-6. a transition-region zoom panel that still shows every available point,
-7. a companion transition-location plot showing the interpolated q95
+5. a final-outcome comparison showing DiT-L8 200k, DiT-L12 200k, and fresh
+   DiT-L16 300k, explicitly labeled as an unequal-update comparison,
+6. a full-range `2^6`--`2^15` panel,
+7. a transition-region zoom panel that still shows every available point,
+8. a companion transition-location plot showing the interpolated q95
    `N_50` against DiT depth and trainable parameter count for L8, L12, and
    fresh L16 at 200k,
-8. map grids and physical-statistics panels for the five L16 checkpoints,
-9. checkpoint trajectories for each dataset size.
+9. map grids and physical-statistics panels for the five L16 checkpoints,
+10. checkpoint trajectories for each dataset size.
 
 The fixed-budget depth figure is the primary scaling diagnostic. It uses one
 line per DiT depth, common axes, distinct colors and markers, a visible 0.5
