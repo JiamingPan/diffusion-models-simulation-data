@@ -66,7 +66,7 @@ def audit(args: argparse.Namespace) -> dict:
 
     expected_tags = {row["dataset_tag"] for row in rows}
     sample_label = f"dpm50_fresh_{args.updates // 1000}k"
-    sample_root = project_dir / "results" / "nf_generalize_fig2_dit_l16_fresh300k" / "samples"
+    sample_root = project_dir / "results" / "nf_generalize_fig2_dit_l16_fresh400k" / "samples"
     expected_sample_shape = (512, 1, 128, 128)
     sample_summaries = []
     for row in rows:
@@ -116,7 +116,7 @@ def audit(args: argparse.Namespace) -> dict:
             )
 
     table_dir = project_dir / "results" / "nf_generalize_fig2_dit" / "tables"
-    prefix = f"nf_generalize_fig2_dit_l16_fresh300k_{args.updates // 1000}k"
+    prefix = f"nf_generalize_fig2_dit_l16_fresh400k_{args.updates // 1000}k"
     pca_summary = audit_metrics(
         table_dir / f"{prefix}_pca_full_nn_metrics.csv", expected_tags
     )
@@ -139,7 +139,7 @@ def audit(args: argparse.Namespace) -> dict:
         summary_output = (
             project_dir
             / "results"
-            / "nf_generalize_fig2_dit_l16_fresh300k"
+            / "nf_generalize_fig2_dit_l16_fresh400k"
             / "audits"
             / f"fresh_l16_{args.updates // 1000}k_audit.json"
         )
@@ -163,7 +163,7 @@ def parse_args() -> argparse.Namespace:
         "--updates",
         required=True,
         type=int,
-        choices=(200_000, 225_000, 250_000, 275_000, 300_000),
+        choices=(200_000, 300_000, 400_000),
     )
     return parser.parse_args()
 

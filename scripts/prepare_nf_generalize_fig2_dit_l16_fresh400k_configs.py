@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Prepare a fresh ten-size DiT-L16 sweep through 300k optimizer updates."""
+"""Prepare a fresh ten-size DiT-L16 sweep through 400k optimizer updates."""
 
 from __future__ import annotations
 
@@ -21,20 +21,20 @@ if str(SCRIPT_DIR) not in sys.path:
 import prepare_nf_generalize_fig2_dit_configs as base
 
 
-SWEEP_NAME = "nf_generalize_fig2_dit_l16_fresh300k"
-MANIFEST_VERSION = 1
+SWEEP_NAME = "nf_generalize_fig2_dit_l16_fresh400k"
+MANIFEST_VERSION = 2
 TRAINING_SEED = 123
 DEFAULT_STAGE_UPDATES = 25_000
-DEFAULT_STAGES = 12
+DEFAULT_STAGES = 16
 DEFAULT_SAFETY_CHECKPOINT_UPDATES = 5_000
-SCIENTIFIC_UPDATES = frozenset({200_000, 225_000, 250_000, 275_000, 300_000})
+SCIENTIFIC_UPDATES = frozenset({200_000, 300_000, 400_000})
 DEFAULT_CHECKPOINT_ROOT = Path(
     f"/scratch/huterer_root/huterer0/jiamingp/saved_runs/{SWEEP_NAME}"
 )
 
 
 def fresh_run_name(dataset_tag: str) -> str:
-    return f"nf_fig2_dit_l16_{dataset_tag}_noaug_fresh300k_seed123"
+    return f"nf_fig2_dit_l16_{dataset_tag}_noaug_fresh400k_seed123"
 
 
 def selected_base_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
@@ -59,9 +59,9 @@ def fresh_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
     safety_updates = int(args.safety_checkpoint_updates)
     if stage_updates <= 0 or stages <= 0 or safety_updates <= 0:
         raise ValueError("stage, stage count, and safety checkpoint updates must be positive")
-    if stage_updates * stages != 300_000:
+    if stage_updates * stages != 400_000:
         raise ValueError(
-            f"Fresh DiT-L16 sweep must end at 300000 updates; got {stage_updates * stages}"
+            f"Fresh DiT-L16 sweep must end at 400000 updates; got {stage_updates * stages}"
         )
 
     rows: list[dict[str, Any]] = []
@@ -100,7 +100,7 @@ def fresh_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
                     "sweep_name": SWEEP_NAME,
                     "stage": stage,
                     "arch": "dit_l16",
-                    "arch_label": "DiT-L16 fresh 300k",
+                    "arch_label": "DiT-L16 fresh 400k",
                     "run_name": run_name,
                     "fresh_initialization": True,
                     "training_seed": TRAINING_SEED,
@@ -133,7 +133,7 @@ def fresh_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
                     "config": config_rel,
                     "note": (
                         "Fresh DiT-L16 run from seed 123; all ten dataset sizes "
-                        "train through 300k requested optimizer updates."
+                        "train through 400k requested optimizer updates."
                     ),
                 }
             )
@@ -199,9 +199,9 @@ def load_existing_rows(project_dir: Path) -> list[dict[str, Any]]:
                 f"Frozen manifest version mismatch at row {index}: "
                 f"expected {MANIFEST_VERSION}, got {row.get('manifest_version')!r}"
             )
-    if len(rows) != 120:
+    if len(rows) != 160:
         raise ValueError(
-            f"Frozen fresh-sweep manifest must contain 120 rows; found {len(rows)}"
+            f"Frozen fresh-sweep manifest must contain 160 rows; found {len(rows)}"
         )
     required = {
         "manifest_version",
@@ -339,7 +339,7 @@ def main() -> None:
     print(f"Wrote {path}")
     print(f"Wrote {analysis_manifest_path(project_dir)}")
     print(
-        "Fresh sweep: 10 DiT-L16 runs, seed 123, 12 stages, final target 300000 updates."
+        "Fresh sweep: 10 DiT-L16 runs, seed 123, 16 stages, final target 400000 updates."
     )
 
 

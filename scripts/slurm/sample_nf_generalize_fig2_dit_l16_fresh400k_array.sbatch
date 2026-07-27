@@ -8,8 +8,8 @@
 #SBATCH --mem=80gb
 #SBATCH --time=04:00:00
 #SBATCH --array=0-9%2
-#SBATCH -o /home/jiamingp/diffusion_models_repo/logs/nf_generalize_fig2_dit_l16_fresh300k/sample_stage%a_%A_%a.out
-#SBATCH -e /home/jiamingp/diffusion_models_repo/logs/nf_generalize_fig2_dit_l16_fresh300k/sample_stage%a_%A_%a.err
+#SBATCH -o /home/jiamingp/diffusion_models_repo/logs/nf_generalize_fig2_dit_l16_fresh400k/sample_stage%a_%A_%a.out
+#SBATCH -e /home/jiamingp/diffusion_models_repo/logs/nf_generalize_fig2_dit_l16_fresh400k/sample_stage%a_%A_%a.err
 #SBATCH -A huterer2
 
 set -euo pipefail
@@ -20,8 +20,8 @@ COSMODIFF_DIR=${COSMODIFF_DIR_OVERRIDE:-/home/jiamingp/Diffusion_model/cosmo_dif
 VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf_class}
 BASE_VENV_PATH=${BASE_VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
 PYTHON_BIN=${PYTHON_BIN:-python}
-PREPARE_SCRIPT=scripts/prepare_nf_generalize_fig2_dit_l16_fresh300k_configs.py
-SAMPLE_ROOT=${SAMPLE_ROOT:-${PROJECT_DIR}/results/nf_generalize_fig2_dit_l16_fresh300k/samples}
+PREPARE_SCRIPT=scripts/prepare_nf_generalize_fig2_dit_l16_fresh400k_configs.py
+SAMPLE_ROOT=${SAMPLE_ROOT:-${PROJECT_DIR}/results/nf_generalize_fig2_dit_l16_fresh400k/samples}
 SAMPLER_CLASS=${SAMPLER_CLASS:-DPMSolverMultistepScheduler}
 SAMPLER_STEPS=${SAMPLER_STEPS:-50}
 NUM_SAMPLES=${NUM_SAMPLES:-512}
@@ -32,7 +32,7 @@ CLASS_LABEL=${CLASS_LABEL:-0}
 OVERWRITE=${OVERWRITE:-0}
 
 cd "${PROJECT_DIR}"
-mkdir -p logs/nf_generalize_fig2_dit_l16_fresh300k "${SAMPLE_ROOT}"
+mkdir -p logs/nf_generalize_fig2_dit_l16_fresh400k "${SAMPLE_ROOT}"
 if [[ -f "${VENV_PATH}/bin/activate" ]]; then
   source "${VENV_PATH}/bin/activate"
 fi
@@ -90,7 +90,7 @@ export TORCHDYNAMO_DISABLE=1
 export PYTHONPATH="${STUB_ROOT}:${COSMODIFF_DIR}:${PROJECT_DIR}:${PYTHONPATH:-}"
 export COSMODIFF_DIR
 
-echo "Sampling ${RUN_NAME}, fresh stage ${SAMPLE_STAGE}/12"
+echo "Sampling ${RUN_NAME}, fresh stage ${SAMPLE_STAGE}/16"
 echo "  exact checkpoint: ${CHECKPOINT_PATH}"
 echo "  sample label:     ${SAMPLE_LABEL}"
 echo "  output:           ${OUTPUT_PATH}"

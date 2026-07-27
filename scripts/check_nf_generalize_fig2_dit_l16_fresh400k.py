@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Audit the frozen fresh DiT-L16 300k manifest before Slurm submission."""
+"""Audit the frozen fresh DiT-L16 400k manifest before Slurm submission."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from pathlib import Path
 
 
 EXPECTED_TAGS = [f"d2p{power:02d}" for power in range(6, 16)]
-EXPECTED_STAGES = list(range(1, 13))
-SCIENTIFIC_UPDATES = [200_000, 225_000, 250_000, 275_000, 300_000]
+EXPECTED_STAGES = list(range(1, 17))
+SCIENTIFIC_UPDATES = [200_000, 300_000, 400_000]
 
 
 def load_rows(path: Path) -> list[dict]:
@@ -21,16 +21,16 @@ def load_rows(path: Path) -> list[dict]:
 
 
 def audit(rows: list[dict], *, require_empty: bool) -> None:
-    if len(rows) != 120:
-        raise ValueError(f"Expected 120 stage rows, found {len(rows)}")
+    if len(rows) != 160:
+        raise ValueError(f"Expected 160 stage rows, found {len(rows)}")
     if sorted({row["dataset_tag"] for row in rows}) != EXPECTED_TAGS:
         raise ValueError("Manifest does not contain exactly d2p06 through d2p15")
     if sorted({int(row["stage"]) for row in rows}) != EXPECTED_STAGES:
-        raise ValueError("Manifest does not contain exactly stages 1 through 12")
-    if {int(row["target_total_updates"]) for row in rows if row["stage"] == 12} != {
-        300_000
+        raise ValueError("Manifest does not contain exactly stages 1 through 16")
+    if {int(row["target_total_updates"]) for row in rows if row["stage"] == 16} != {
+        400_000
     }:
-        raise ValueError("Every final-stage run must target 300000 updates")
+        raise ValueError("Every final-stage run must target 400000 updates")
     if sorted(
         {
             int(row["target_total_updates"])
@@ -38,7 +38,7 @@ def audit(rows: list[dict], *, require_empty: bool) -> None:
             if row["scientific_checkpoint"]
         }
     ) != SCIENTIFIC_UPDATES:
-        raise ValueError("Scientific milestones do not match the frozen five-checkpoint plan")
+        raise ValueError("Scientific milestones do not match the frozen three-checkpoint plan")
 
     checkpoint_dirs = {Path(row["checkpoint_dir"]) for row in rows}
     if len(checkpoint_dirs) != 10:
@@ -46,10 +46,12 @@ def audit(rows: list[dict], *, require_empty: bool) -> None:
     for row in rows:
         if not row["fresh_initialization"] or int(row["training_seed"]) != 123:
             raise ValueError("Every run must be a seed-123 fresh initialization")
-        if "fresh300k" not in row["run_name"]:
+        if "fresh400k" not in row["run_name"]:
             raise ValueError(f"Non-fresh run name in manifest: {row['run_name']}")
         if "nf_generalize_fig2_dit_l16_continue" in row["checkpoint_dir"]:
             raise ValueError(f"Legacy continuation path in manifest: {row['checkpoint_dir']}")
+        if "fresh300k" in row["checkpoint_dir"]:
+            raise ValueError(f"Superseded fresh300k path in manifest: {row['checkpoint_dir']}")
 
     if require_empty:
         nonempty = []
@@ -74,7 +76,7 @@ def main() -> None:
     args = parse_args()
     audit(load_rows(args.manifest), require_empty=args.require_empty)
     mode = "empty fresh start" if args.require_empty else "restart-safe"
-    print(f"Fresh DiT-L16 300k manifest audit PASS ({mode}).")
+    print(f"Fresh DiT-L16 400k manifest audit PASS ({mode}).")
 
 
 if __name__ == "__main__":
