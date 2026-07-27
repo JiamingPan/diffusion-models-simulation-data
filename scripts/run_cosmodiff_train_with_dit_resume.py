@@ -9,6 +9,7 @@ import inspect
 import json
 import os
 import pickle
+import random
 import re
 import runpy
 import sys
@@ -19,6 +20,47 @@ import yaml
 
 
 CHECKPOINT_RE = re.compile(r"checkpoint-epoch-(\d+)$")
+
+
+def restore_random_states(checkpoint_dir: Path) -> tuple[str, ...]:
+    """Restore the saved Python, NumPy, torch CPU, and torch CUDA RNG states."""
+    import numpy as np
+    import torch
+
+    path = checkpoint_dir / "random_states_0.pkl"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"A scientific continuation requires saved RNG state: {path}"
+        )
+    try:
+        state = torch.load(path, map_location="cpu", weights_only=False)
+    except TypeError:
+        state = torch.load(path, map_location="cpu")
+    if not isinstance(state, dict):
+        raise ValueError(f"Saved RNG state is not a mapping: {path}")
+
+    required = ("random_state", "numpy_random_seed", "torch_manual_seed")
+    missing = [key for key in required if key not in state]
+    if missing:
+        raise ValueError(f"Saved RNG state {path} is missing keys: {', '.join(missing)}")
+
+    random.setstate(state["random_state"])
+    np.random.set_state(state["numpy_random_seed"])
+    torch.set_rng_state(state["torch_manual_seed"].cpu())
+    restored = ["python", "numpy", "torch_cpu"]
+
+    cuda_state = state.get("torch_cuda_manual_seed")
+    if cuda_state and torch.cuda.is_available():
+        if isinstance(cuda_state, torch.Tensor):
+            cuda_state = [cuda_state]
+        torch.cuda.set_rng_state_all([item.cpu() for item in cuda_state])
+        restored.append("torch_cuda")
+
+    print(
+        f"Restored RNG state from {path}: {', '.join(restored)}",
+        flush=True,
+    )
+    return tuple(restored)
 
 
 def checkpoint_epoch(path: Path) -> int | None:
@@ -268,6 +310,7 @@ def load_checkpoint_preserving_class(ckpt_path: str):
         model,
         checkpoint_dir,
     )
+    restore_random_states(checkpoint_dir)
 
     augmentations_path = os.path.join(ckpt_path, "augmentations.pkl")
     if os.path.exists(augmentations_path):
