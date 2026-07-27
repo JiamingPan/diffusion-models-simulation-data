@@ -199,13 +199,32 @@ For every scientific checkpoint, compute:
 Update `notebooks/nf_generalize_fig2_dit_results.ipynb` to provide:
 
 1. a file and provenance audit,
-2. complete DiT-L16 novelty curves at each analyzed checkpoint,
-3. a final comparison using DiT-L8 200k, DiT-L12 200k, DiT-L16 200k, and
-   DiT-L16 300k,
-4. a full-range `2^6`--`2^15` panel,
-5. a transition-region zoom panel that still shows every available point,
-6. map grids and physical-statistics panels for the five L16 checkpoints,
-7. checkpoint trajectories for each dataset size.
+2. a primary fixed-budget depth comparison using DiT-L8 200k, DiT-L12 200k,
+   and the fresh DiT-L16 200k checkpoint across all ten data sizes,
+3. complete DiT-L16 novelty curves at each analyzed checkpoint,
+4. a separate L16 optimization comparison using 200k, 225k, 250k, 275k, and
+   300k, without presenting it as a fixed-capacity scaling plot,
+5. a full-range `2^6`--`2^15` panel,
+6. a transition-region zoom panel that still shows every available point,
+7. a companion transition-location plot showing the interpolated q95
+   `N_50` against DiT depth and trainable parameter count for L8, L12, and
+   fresh L16 at 200k,
+8. map grids and physical-statistics panels for the five L16 checkpoints,
+9. checkpoint trajectories for each dataset size.
+
+The fixed-budget depth figure is the primary scaling diagnostic. It uses one
+line per DiT depth, common axes, distinct colors and markers, a visible 0.5
+reference, and separate PCA and SSCD panels. The figure caption states that all
+depths use the same 200k-update budget and that high novelty alone does not
+establish physical validity. The full-range and zoom views use the same data;
+the zoom changes only the displayed x range.
+
+Before treating the L8/L12/L16 comparison as controlled, the notebook audits
+that architecture depth is the intended difference and that data allocation,
+optimizer, scheduler, noise schedule, batch size, gradient accumulation, EMA,
+sampling configuration, and update budget match. If the historical L8 or L12
+training seed is not recoverable, the figure is labeled an exploratory
+fixed-budget comparison rather than a precise scaling-law measurement.
 
 The notebook must refuse to label a curve complete unless all ten dataset sizes
 are present for both PCA and SSCD. It must not splice old and fresh DiT-L16
@@ -217,6 +236,7 @@ explicitly invalid-results audit.
 The result supports a capacity-dependent transition only if:
 
 - the full ten-point L16 curve is available,
+- the fixed-budget L8/L12/fresh-L16 comparison passes its configuration audit,
 - the transition location is stable in both PCA and SSCD,
 - maps around the transition remain physically plausible,
 - one-point and power-spectrum checks do not identify off-distribution noise,
@@ -225,7 +245,8 @@ The result supports a capacity-dependent transition only if:
 If 300k low-data runs remain physically poor, the result is reported as an
 optimization or model failure, not as successful generalization. If the L16
 transition does not move right of L12, that result is retained rather than
-retuned away.
+retuned away. With only three DiT depths, the transition-location plot is a
+capacity diagnostic, not evidence for a universal scaling law.
 
 ## Verification
 
