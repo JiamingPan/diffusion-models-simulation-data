@@ -332,7 +332,7 @@ def main() -> None:
     parser.add_argument("--config", required=True)
     parser.add_argument("--cosmodiff-train", required=True, type=Path)
     parser.add_argument("--checkpoint-dir", required=True, type=Path)
-    parser.add_argument("--minimum-checkpoint", required=True, type=Path)
+    parser.add_argument("--minimum-checkpoint", type=Path)
     parser.add_argument("--target-checkpoint", required=True, type=Path)
     args, extra_args = parser.parse_known_args()
 

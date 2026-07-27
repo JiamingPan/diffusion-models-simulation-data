@@ -16,6 +16,11 @@ PREPARE_PATH = (
     / "prepare_nf_generalize_fig2_dit_l16_fresh300k_configs.py"
 )
 FRESH_WRAPPER_PATH = REPO_ROOT / "scripts" / "run_cosmodiff_train_fresh_seeded.py"
+RESULT_AUDIT_PATH = (
+    REPO_ROOT
+    / "scripts"
+    / "audit_nf_generalize_fig2_dit_l16_fresh300k_results.py"
+)
 
 
 def load_prepare_module():
@@ -29,6 +34,16 @@ def load_prepare_module():
 def load_fresh_wrapper_module():
     spec = importlib.util.spec_from_file_location(
         "fresh_l16_wrapper_for_test", FRESH_WRAPPER_PATH
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_result_audit_module():
+    spec = importlib.util.spec_from_file_location(
+        "fresh_l16_result_audit_for_test", RESULT_AUDIT_PATH
     )
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
@@ -209,6 +224,25 @@ class FreshDitL16WorkflowSourceTests(unittest.TestCase):
         self.assertIn("dpm50_fresh_${total_k}k", submit)
         self.assertIn("START_STAGE=${START_STAGE:-1}", submit)
         self.assertIn("REUSE_EXISTING_MANIFEST=${REUSE_EXISTING_MANIFEST:-0}", submit)
+
+    def test_result_audit_rejects_duplicate_metric_tags(self):
+        module = load_result_audit_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "metrics.csv"
+            path.write_text(
+                "dataset_tag,gen_gl_q95\n"
+                "d2p06,0.1\n"
+                "d2p06,0.2\n"
+            )
+            with self.assertRaisesRegex(ValueError, "duplicate"):
+                module.audit_metrics(path, {"d2p06"})
+
+    def test_result_audit_checks_sample_contract_and_writes_summary(self):
+        source = RESULT_AUDIT_PATH.read_text()
+        self.assertIn("DPMSolverMultistepScheduler", source)
+        self.assertIn("expected_sample_shape", source)
+        self.assertIn("np.isfinite", source)
+        self.assertIn("summary_output", source)
 
 
 if __name__ == "__main__":
