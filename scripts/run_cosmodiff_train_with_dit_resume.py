@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import ast
-import importlib
 import inspect
 import json
 import os
@@ -189,16 +188,51 @@ def install_exact_target_adapter(optim, *, expected_start_epoch: int, target_epo
     return semantics
 
 
-def import_class(qualified_name: str):
-    module_name, class_name = qualified_name.rsplit(".", 1)
-    return getattr(importlib.import_module(module_name), class_name)
+def restore_optimizer_and_lr_scheduler(model, checkpoint_dir: Path):
+    """Restore optimizer moments and scheduler progress onto ``model``."""
+    optimizer_path = checkpoint_dir / "optimizer.pkl"
+    scheduler_path = checkpoint_dir / "lr_scheduler.pkl"
+    missing = [
+        str(path)
+        for path in (optimizer_path, scheduler_path)
+        if not path.exists()
+    ]
+    if missing:
+        raise FileNotFoundError(
+            "A scientific continuation must preserve optimizer and scheduler state; "
+            f"missing checkpoint files: {', '.join(missing)}"
+        )
+
+    with optimizer_path.open("rb") as handle:
+        saved_optimizer = pickle.load(handle)
+    with scheduler_path.open("rb") as handle:
+        lr_scheduler = pickle.load(handle)
+
+    optimizer_cls = type(saved_optimizer)
+    optimizer_signature = inspect.signature(optimizer_cls.__init__)
+    optimizer_parameters = optimizer_signature.parameters
+    accepts_kwargs = any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in optimizer_parameters.values()
+    )
+    optimizer_kwargs = {
+        key: value
+        for key, value in saved_optimizer.defaults.items()
+        if accepts_kwargs or key in optimizer_parameters
+    }
+    optimizer = optimizer_cls(model.parameters(), **optimizer_kwargs)
+    optimizer.load_state_dict(saved_optimizer.state_dict())
+    if hasattr(lr_scheduler, "optimizer"):
+        lr_scheduler.optimizer = optimizer
+    return optimizer, lr_scheduler
 
 
 def load_checkpoint_preserving_class(ckpt_path: str):
-    """Reconstruct exactly the diffusers class recorded in ``config.json``."""
+    """Restore a class-safe model and the complete saved training state."""
     import diffusers
 
-    config_path = os.path.join(ckpt_path, "config.json")
+    checkpoint_dir = Path(ckpt_path)
+    config_path = checkpoint_dir / "config.json"
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"Missing diffusers config: {config_path}")
     with open(config_path) as handle:
@@ -222,18 +256,17 @@ def load_checkpoint_preserving_class(ckpt_path: str):
             f"Checkpoint {ckpt_path!r} left meta parameters after loading: {meta_parameters[:8]}"
         )
 
-    checkpoint_config_path = os.path.join(ckpt_path, "checkpoint_config.yaml")
-    with open(checkpoint_config_path) as handle:
-        checkpoint_config = yaml.safe_load(handle)
-
-    scheduler_cls = import_class(checkpoint_config["noise_scheduler"]["class"])
-    noise_scheduler = scheduler_cls.from_pretrained(ckpt_path)
-    optimizer_cls = import_class(checkpoint_config["optimizer"]["class"])
-    optimizer = optimizer_cls(model.parameters())
-    lr_scheduler_cls = import_class(checkpoint_config["lr_scheduler"]["class"])
-    lr_scheduler = lr_scheduler_cls(
-        optimizer,
-        **checkpoint_config["lr_scheduler"].get("kwargs", {}),
+    noise_scheduler_path = checkpoint_dir / "noise_scheduler.pkl"
+    if not noise_scheduler_path.exists():
+        raise FileNotFoundError(
+            "A scientific continuation must preserve the saved noise scheduler; "
+            f"missing checkpoint file: {noise_scheduler_path}"
+        )
+    with noise_scheduler_path.open("rb") as handle:
+        noise_scheduler = pickle.load(handle)
+    optimizer, lr_scheduler = restore_optimizer_and_lr_scheduler(
+        model,
+        checkpoint_dir,
     )
 
     augmentations_path = os.path.join(ckpt_path, "augmentations.pkl")
@@ -245,7 +278,7 @@ def load_checkpoint_preserving_class(ckpt_path: str):
 
     print(
         f"Class-safe resume loader reconstructed {type(model).__name__} "
-        f"from {ckpt_path}",
+        f"and restored optimizer/scheduler state from {ckpt_path}",
         flush=True,
     )
     return model, noise_scheduler, optimizer, lr_scheduler, augmentations

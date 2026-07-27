@@ -33,3 +33,19 @@ def test_l16_audit_flags_novel_but_physically_invalid_samples():
     assert "novel_but_physically_invalid" in source
     assert "configuration_ok" in source
     assert "max_abs_pk_ratio_minus_1" in source
+
+
+def test_continuation_is_not_presented_as_a_depth_scaling_curve():
+    source = notebook_source()
+
+    assert "Complete 200k-update depth comparison" in source
+    assert "Low-data DiT-L16 checkpoint diagnostic (not a scaling curve)" in source
+    assert "DiT depth comparison with continued L16 checkpoints" not in source
+    assert "optimizer and learning-rate scheduler state" in source
+
+
+def test_continuation_image_grid_uses_multiple_samples_per_checkpoint():
+    source = notebook_source()
+
+    assert "generated[:4, 0]" in source
+    assert "four generated maps per checkpoint" in source
