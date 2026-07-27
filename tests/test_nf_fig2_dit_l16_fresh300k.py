@@ -1,10 +1,13 @@
 import importlib.util
 import json
+import random
 import tempfile
 import unittest
 from argparse import Namespace
 from pathlib import Path
 
+import numpy as np
+import torch
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PREPARE_PATH = (
@@ -12,10 +15,21 @@ PREPARE_PATH = (
     / "scripts"
     / "prepare_nf_generalize_fig2_dit_l16_fresh300k_configs.py"
 )
+FRESH_WRAPPER_PATH = REPO_ROOT / "scripts" / "run_cosmodiff_train_fresh_seeded.py"
 
 
 def load_prepare_module():
     spec = importlib.util.spec_from_file_location("fresh_l16_prepare_for_test", PREPARE_PATH)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_fresh_wrapper_module():
+    spec = importlib.util.spec_from_file_location(
+        "fresh_l16_wrapper_for_test", FRESH_WRAPPER_PATH
+    )
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
@@ -134,6 +148,22 @@ class FreshDitL16ManifestTests(unittest.TestCase):
 
 
 class FreshDitL16WorkflowSourceTests(unittest.TestCase):
+    def test_fresh_wrapper_seeds_all_cpu_rngs(self):
+        module = load_fresh_wrapper_module()
+        module.seed_everything(123)
+        values_a = (random.random(), float(np.random.random()), float(torch.rand(1)))
+        module.seed_everything(123)
+        values_b = (random.random(), float(np.random.random()), float(torch.rand(1)))
+        self.assertEqual(values_a, values_b)
+
+    def test_fresh_wrapper_rejects_nonempty_checkpoint_directory(self):
+        module = load_fresh_wrapper_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_dir = Path(tmpdir)
+            (checkpoint_dir / "checkpoint-epoch-0001").mkdir()
+            with self.assertRaisesRegex(ValueError, "fresh checkpoint directory"):
+                module.validate_fresh_checkpoint_dir(checkpoint_dir)
+
     def test_training_and_sampling_contract(self):
         train = (
             REPO_ROOT

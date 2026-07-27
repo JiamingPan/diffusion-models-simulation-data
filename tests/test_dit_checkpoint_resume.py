@@ -1,10 +1,12 @@
 import importlib.util
 import pickle
+import random
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import torch
 
 
@@ -60,6 +62,46 @@ def legacy_resume_train(
 
 
 class DitCheckpointResumeTests(unittest.TestCase):
+    def test_resume_restores_python_numpy_and_torch_rng_state(self):
+        module = load_wrapper_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_dir = Path(tmpdir)
+            random.seed(123)
+            np.random.seed(123)
+            torch.manual_seed(123)
+            state = {
+                "random_state": random.getstate(),
+                "numpy_random_seed": np.random.get_state(),
+                "torch_manual_seed": torch.get_rng_state(),
+                "torch_cuda_manual_seed": (
+                    torch.cuda.get_rng_state_all() if torch.cuda.is_available() else []
+                ),
+            }
+            torch.save(state, checkpoint_dir / "random_states_0.pkl")
+
+            expected_python = random.random()
+            expected_numpy = float(np.random.random())
+            expected_torch = float(torch.rand(1))
+            for _ in range(20):
+                random.random()
+                np.random.random()
+                torch.rand(1)
+
+            restored = module.restore_random_states(checkpoint_dir)
+
+            self.assertIn("python", restored)
+            self.assertIn("numpy", restored)
+            self.assertIn("torch_cpu", restored)
+            self.assertEqual(random.random(), expected_python)
+            self.assertEqual(float(np.random.random()), expected_numpy)
+            self.assertEqual(float(torch.rand(1)), expected_torch)
+
+    def test_resume_requires_saved_rng_state(self):
+        module = load_wrapper_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertRaisesRegex(FileNotFoundError, "random_states_0.pkl"):
+                module.restore_random_states(Path(tmpdir))
+
     def test_resume_loader_restores_optimizer_and_scheduler_state(self):
         module = load_wrapper_module()
         with tempfile.TemporaryDirectory() as tmpdir:
