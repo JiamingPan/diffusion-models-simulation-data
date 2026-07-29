@@ -96,6 +96,20 @@ class FreshDitL16V2WorkflowSourceTests(unittest.TestCase):
         self.assertIn("--array=0-9%2", submit)
         self.assertNotIn("for stage in", submit)
 
+    def test_submit_creates_slurm_log_directory_before_first_job(self):
+        submit = (
+            REPO_ROOT
+            / "scripts"
+            / "slurm"
+            / "submit_nf_generalize_fig2_dit_l16_fresh300k_v2.sh"
+        ).read_text()
+
+        mkdir_index = submit.index(
+            'mkdir -p "${PROJECT_DIR}/logs/nf_generalize_fig2_dit_l16_fresh300k_v2"'
+        )
+        first_sbatch_index = submit.index("sbatch")
+        self.assertLess(mkdir_index, first_sbatch_index)
+
     def test_gpu_precheck_trains_saves_loads_and_resumes(self):
         precheck = (
             REPO_ROOT
