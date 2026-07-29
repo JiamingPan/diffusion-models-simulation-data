@@ -68,14 +68,49 @@ def checkpoint_epoch(path: Path) -> int | None:
     return int(match.group(1)) if match else None
 
 
+REQUIRED_RESUME_FILES = (
+    "config.json",
+    "optimizer.pkl",
+    "noise_scheduler.pkl",
+    "lr_scheduler.pkl",
+    "random_states_0.pkl",
+)
+MODEL_WEIGHT_FILES = (
+    "diffusion_pytorch_model.safetensors",
+    "diffusion_pytorch_model.bin",
+    "model.safetensors",
+    "pytorch_model.bin",
+)
+
+
+def checkpoint_missing_files(path: Path) -> tuple[str, ...]:
+    missing = [name for name in REQUIRED_RESUME_FILES if not (path / name).is_file()]
+    if not any((path / name).is_file() for name in MODEL_WEIGHT_FILES):
+        missing.append("model weights")
+    return tuple(missing)
+
+
+def checkpoint_is_complete(path: Path) -> bool:
+    return path.is_dir() and not checkpoint_missing_files(path)
+
+
 def latest_checkpoint(checkpoint_dir: Path) -> tuple[Path, int]:
-    candidates = [
+    all_candidates = [
         (path, epoch)
         for path in checkpoint_dir.glob("checkpoint-epoch-*")
         if path.is_dir() and (epoch := checkpoint_epoch(path)) is not None
     ]
+    candidates = [
+        (path, epoch)
+        for path, epoch in all_candidates
+        if checkpoint_is_complete(path)
+    ]
     if not candidates:
-        raise FileNotFoundError(f"No checkpoint-epoch-* directories under {checkpoint_dir}")
+        partial = sorted(path.name for path, _epoch in all_candidates)
+        detail = f"; incomplete candidates: {partial}" if partial else ""
+        raise FileNotFoundError(
+            f"No complete checkpoint-epoch-* directories under {checkpoint_dir}{detail}"
+        )
     return max(candidates, key=lambda item: item[1])
 
 
@@ -113,9 +148,10 @@ def validate_resume_target(
                 f"Latest clean checkpoint epoch {current_epoch} is behind required stage start "
                 f"epoch {minimum_epoch}"
             )
-        if not minimum_checkpoint.is_dir():
+        if not checkpoint_is_complete(minimum_checkpoint):
             raise FileNotFoundError(
-                f"Required exact stage-start checkpoint is missing: {minimum_checkpoint}"
+                "Required exact stage-start checkpoint is missing or incomplete: "
+                f"{minimum_checkpoint}"
             )
     if current_epoch > target_epoch:
         raise ValueError(
@@ -372,9 +408,10 @@ def main() -> None:
     )
     sys.argv = [str(train_script), "--config", args.config, *extra_args]
     runpy.run_path(str(train_script), run_name="__main__")
-    if not target_checkpoint.is_dir():
+    if not checkpoint_is_complete(target_checkpoint):
         raise RuntimeError(
-            f"External trainer exited without exact target checkpoint: {target_checkpoint}"
+            "External trainer exited without a complete exact target checkpoint: "
+            f"{target_checkpoint}; missing={checkpoint_missing_files(target_checkpoint)}"
         )
 
 

@@ -12,11 +12,22 @@ import torch
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PATCH_PATH = REPO_ROOT / "scripts" / "patch_cosmodiff_dit_class_labels.py"
+STATE_PATCH_PATH = REPO_ROOT / "scripts" / "patch_cosmodiff_checkpoint_state.py"
 WRAPPER_PATH = REPO_ROOT / "scripts" / "run_cosmodiff_train_with_dit_resume.py"
 
 
 def load_patch_module():
     spec = importlib.util.spec_from_file_location("dit_resume_patch_for_test", PATCH_PATH)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_state_patch_module():
+    spec = importlib.util.spec_from_file_location(
+        "dit_checkpoint_state_patch_for_test", STATE_PATCH_PATH
+    )
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
@@ -61,7 +72,47 @@ def legacy_resume_train(
     return start_epoch, num_epochs, final_epoch
 
 
+def make_complete_checkpoint(path: Path) -> Path:
+    path.mkdir()
+    for name in (
+        "config.json",
+        "diffusion_pytorch_model.safetensors",
+        "optimizer.pkl",
+        "noise_scheduler.pkl",
+        "lr_scheduler.pkl",
+        "random_states_0.pkl",
+    ):
+        (path / name).write_bytes(b"test")
+    return path
+
+
 class DitCheckpointResumeTests(unittest.TestCase):
+    def test_checkpoint_state_patch_writes_complete_resume_state(self):
+        module = load_state_patch_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            optim_path = Path(tmpdir) / "optim.py"
+            optim_path.write_text(
+                "from accelerate import Accelerator\n"
+                "\n"
+                "def train(model, optimizer, lr_scheduler, noise_scheduler, output_dir):\n"
+                "    accelerator = Accelerator()\n"
+                "    ckpt_save_path = output_dir\n"
+                "    accelerator.save_state(ckpt_save_path)\n"
+                "    accelerator.unwrap_model(model).save_pretrained(ckpt_save_path)\n"
+            )
+
+            changed = module.patch_checkpoint_state(optim_path)
+            source = optim_path.read_text()
+
+            self.assertTrue(changed)
+            self.assertIn(module.MARKER, source)
+            self.assertIn('os.path.join(ckpt_save_path, "optimizer.pkl")', source)
+            self.assertIn('os.path.join(ckpt_save_path, "noise_scheduler.pkl")', source)
+            self.assertIn('os.path.join(ckpt_save_path, "lr_scheduler.pkl")', source)
+            self.assertIn('getattr(optimizer, "optimizer", optimizer)', source)
+            self.assertIn('getattr(lr_scheduler, "scheduler", lr_scheduler)', source)
+            self.assertFalse(module.patch_checkpoint_state(optim_path))
+
     def test_resume_restores_python_numpy_and_torch_rng_state(self):
         module = load_wrapper_module()
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -190,8 +241,8 @@ class DitCheckpointResumeTests(unittest.TestCase):
         module = load_wrapper_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             checkpoint_dir = Path(tmpdir)
-            (checkpoint_dir / "checkpoint-epoch-12499").mkdir()
-            (checkpoint_dir / "checkpoint-epoch-12791").mkdir()
+            make_complete_checkpoint(checkpoint_dir / "checkpoint-epoch-12499")
+            make_complete_checkpoint(checkpoint_dir / "checkpoint-epoch-12791")
             target = checkpoint_dir / "checkpoint-epoch-14062"
 
             current, current_epoch, target_epoch = module.validate_resume_target(
@@ -201,16 +252,36 @@ class DitCheckpointResumeTests(unittest.TestCase):
             self.assertEqual(current_epoch, 12_791)
             self.assertEqual(target_epoch, 14_062)
 
-            (checkpoint_dir / "checkpoint-epoch-14063").mkdir()
+            make_complete_checkpoint(checkpoint_dir / "checkpoint-epoch-14063")
             with self.assertRaisesRegex(ValueError, "beyond exact target"):
                 module.validate_resume_target(checkpoint_dir, target)
+
+    def test_resume_ignores_a_newer_half_written_checkpoint(self):
+        module = load_wrapper_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_dir = Path(tmpdir)
+            complete = make_complete_checkpoint(
+                checkpoint_dir / "checkpoint-epoch-12791"
+            )
+            partial = checkpoint_dir / "checkpoint-epoch-13000"
+            partial.mkdir()
+            (partial / "config.json").write_text("{}")
+            target = checkpoint_dir / "checkpoint-epoch-14062"
+
+            current, current_epoch, _target_epoch = module.validate_resume_target(
+                checkpoint_dir, target
+            )
+
+            self.assertEqual(current.resolve(), complete.resolve())
+            self.assertEqual(current_epoch, 12_791)
 
     def test_resume_state_allows_exact_target_noop(self):
         module = load_wrapper_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             checkpoint_dir = Path(tmpdir)
-            target = checkpoint_dir / "checkpoint-epoch-14062"
-            target.mkdir()
+            target = make_complete_checkpoint(
+                checkpoint_dir / "checkpoint-epoch-14062"
+            )
 
             current, current_epoch, target_epoch = module.validate_resume_target(
                 checkpoint_dir, target
@@ -225,7 +296,7 @@ class DitCheckpointResumeTests(unittest.TestCase):
             base = checkpoint_dir / "checkpoint-epoch-12499"
             minimum = checkpoint_dir / "checkpoint-epoch-14062"
             target = checkpoint_dir / "checkpoint-epoch-15624"
-            base.mkdir()
+            make_complete_checkpoint(base)
 
             with self.assertRaisesRegex(ValueError, "behind required stage start"):
                 module.validate_resume_target(

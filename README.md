@@ -123,7 +123,7 @@ Representative entry points:
 - [SSCD nearest-neighbor analysis](scripts/compute_nf_generalize_sscd_full_nn.py)
 - [Conditional parameter-recovery evaluation](scripts/evaluate_nf_conditional_bias_probe.py)
 - [Staged DiT continuation workflow](scripts/slurm/submit_nf_generalize_fig2_dit_l16_continue.sh)
-- [Fresh DiT-L16 400k sweep](scripts/slurm/submit_nf_generalize_fig2_dit_l16_fresh400k.sh)
+- [Fresh DiT-L16 300k sweep](scripts/slurm/submit_nf_generalize_fig2_dit_l16_fresh300k_v2.sh)
 
 More detailed command references are available in
 [`scripts/README.md`](scripts/README.md),
