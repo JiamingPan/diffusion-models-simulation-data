@@ -15,9 +15,8 @@ REQUIRED_FILENAMES = (
     "noise_scheduler.pkl",
     "lr_scheduler.pkl",
 )
-SAVE_MODEL_PATTERN = re.compile(
-    r"^(?P<indent>[ \t]*)accelerator\.unwrap_model\(model\)"
-    r"\.save_pretrained\(ckpt_save_path\)[ \t]*$",
+SAVE_STATE_PATTERN = re.compile(
+    r"^(?P<indent>[ \t]*)accelerator\.save_state\(ckpt_save_path\)[ \t]*$",
     flags=re.MULTILINE,
 )
 
@@ -52,10 +51,10 @@ def patch_checkpoint_state(optim_path: Path) -> bool:
             f"({', '.join(present)}); inspect it before patching."
         )
 
-    match = SAVE_MODEL_PATTERN.search(source)
+    match = SAVE_STATE_PATTERN.search(source)
     if match is None:
         raise RuntimeError(
-            "Could not find the model checkpoint save call in "
+            "Could not find the Accelerate checkpoint save call in "
             f"{optim_path}; inspect the cosmodiff checkpoint block."
         )
 

@@ -113,6 +113,43 @@ class DitCheckpointResumeTests(unittest.TestCase):
             self.assertIn('getattr(lr_scheduler, "scheduler", lr_scheduler)', source)
             self.assertFalse(module.patch_checkpoint_state(optim_path))
 
+    def test_checkpoint_state_patch_supports_accelerate_save_hook_layout(self):
+        module = load_state_patch_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            optim_path = Path(tmpdir) / "optim.py"
+            optim_path.write_text(
+                "from accelerate import Accelerator\n"
+                "\n"
+                "def train(model, optimizer, lr_scheduler, noise_scheduler, output_dir):\n"
+                "    accelerator = Accelerator()\n"
+                "\n"
+                "    def _save_model_hook(models, weights, output_dir):\n"
+                "        if accelerator.is_main_process:\n"
+                "            for saved_model in models:\n"
+                "                saved_model.save_pretrained(output_dir)\n"
+                "            weights.clear()\n"
+                "\n"
+                "    accelerator.register_save_state_pre_hook(_save_model_hook)\n"
+                "    if accelerator.is_main_process:\n"
+                "        ckpt_save_path = output_dir\n"
+                "        noise_scheduler.save_pretrained(ckpt_save_path)\n"
+                "        accelerator.save_state(ckpt_save_path)\n"
+            )
+
+            changed = module.patch_checkpoint_state(optim_path)
+            source = optim_path.read_text()
+
+            self.assertTrue(changed)
+            self.assertIn(module.MARKER, source)
+            self.assertIn('os.path.join(ckpt_save_path, "optimizer.pkl")', source)
+            self.assertIn('os.path.join(ckpt_save_path, "noise_scheduler.pkl")', source)
+            self.assertIn('os.path.join(ckpt_save_path, "lr_scheduler.pkl")', source)
+            self.assertGreater(
+                source.index(module.MARKER),
+                source.index("accelerator.save_state(ckpt_save_path)"),
+            )
+            self.assertFalse(module.patch_checkpoint_state(optim_path))
+
     def test_resume_restores_python_numpy_and_torch_rng_state(self):
         module = load_wrapper_module()
         with tempfile.TemporaryDirectory() as tmpdir:
