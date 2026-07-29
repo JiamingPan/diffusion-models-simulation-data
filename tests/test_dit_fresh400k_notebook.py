@@ -16,53 +16,40 @@ class FreshDitL16NotebookTests(unittest.TestCase):
             for cell in cls.notebook.get("cells", [])
         )
 
-    def test_fresh_400k_section_uses_frozen_manifest_and_all_ten_sizes(self):
-        self.assertIn("## Fresh DiT-L16 sweep through 400k updates", self.source)
-        self.assertIn("nf_generalize_fig2_dit_l16_fresh400k", self.source)
+    def test_fresh_300k_v2_section_uses_all_ten_sizes(self):
+        self.assertIn("## Fresh DiT-L16 300k replacement sweep", self.source)
+        self.assertIn("nf_generalize_fig2_dit_l16_fresh300k_v2", self.source)
         self.assertIn("FRESH_EXPECTED_POWERS = list(range(6, 16))", self.source)
         self.assertIn("FRESH_EXPECTED_TAGS", self.source)
-        self.assertIn("fresh_400k_complete", self.source)
+        self.assertIn("fresh_300k_v2_complete", self.source)
         self.assertIn("All ten data sizes", self.source)
 
-    def test_fresh_400k_is_primary_300k_is_intermediate_and_200k_is_equal_budget(self):
-        self.assertIn("200k is the equal-budget comparison", self.source)
-        self.assertIn("300k is the intermediate L16 curve", self.source)
-        self.assertIn("400k is the final L16 curve", self.source)
-        self.assertIn("fresh_intermediate_updates_k = 300", self.source)
-        self.assertIn("fresh_final_updates_k = 400", self.source)
-        self.assertIn("fresh_equal_budget_updates_k = 200", self.source)
-        self.assertIn("L16 400k", self.source)
+    def test_depth_plot_labels_unequal_training_budgets(self):
+        self.assertIn("DiT-L8 and DiT-L12 use their original 200k runs", self.source)
+        self.assertIn("clean 300k", self.source)
+        self.assertIn("replacement sweep", self.source)
+        self.assertIn("DiT-L16 300k", self.source)
+        self.assertIn("DiT-L12 / base 200k", self.source)
+        self.assertIn("DiT-L8 200k", self.source)
 
-    def test_notebook_refuses_legacy_continuation_fallback(self):
-        self.assertIn("No legacy continuation fallback", self.source)
-        self.assertIn("fresh_metrics_by_update", self.source)
-        self.assertIn("fresh_400k_complete", self.source)
-        self.assertIn("not drawing the fresh final curve", self.source)
+    def test_notebook_refuses_old_l16_fallback(self):
+        self.assertIn("No failed continuation or old L16", self.source)
+        self.assertIn("table is substituted", self.source)
+        self.assertIn("fresh_300k_v2_complete", self.source)
+        self.assertIn("not drawing the replacement L16", self.source)
 
     def test_full_range_and_transition_zoom_outputs_are_distinct(self):
-        self.assertIn("fresh400k_equal_budget_200k_full.png", self.source)
-        self.assertIn("fresh400k_equal_budget_200k_zoom.png", self.source)
-        self.assertIn("fresh400k_intermediate_300k_full.png", self.source)
-        self.assertIn("fresh400k_intermediate_300k_zoom.png", self.source)
-        self.assertIn("fresh400k_final_outcome_full.png", self.source)
-        self.assertIn("fresh400k_final_outcome_zoom.png", self.source)
+        self.assertIn("fresh300k_v2_depth_comparison_full.png", self.source)
+        self.assertIn("fresh300k_v2_depth_comparison_zoom.png", self.source)
         self.assertIn("zoom_max_power=11", self.source)
 
-    def test_novelty_caveat_and_milestone_trajectory_are_explicit(self):
+    def test_novelty_caveat_is_explicit(self):
         self.assertIn("q95 novelty does not guarantee physical fidelity", self.source)
-        self.assertIn("FRESH_UPDATES_K = [200, 300, 400]", self.source)
-        self.assertIn("fresh400k_checkpoint_trajectories_full.png", self.source)
 
-    def test_takeaways_make_fresh_400k_the_primary_final_l16_result(self):
-        self.assertIn("Fresh 400k status:", self.source)
-        self.assertIn("final longer-training L16 diagnostic", self.source)
+    def test_takeaways_make_fresh_300k_v2_the_only_l16_depth_curve(self):
+        self.assertIn("Fresh 300k v2 status:", self.source)
         self.assertIn("all ten data sizes", self.source)
-        self.assertIn("Legacy continuation:", self.source)
-        self.assertNotIn("nf_generalize_fig2_dit_l16_fresh300k", self.source)
-        self.assertNotIn(
-            "The partial DiT-L16 continuation is a separate low-data diagnostic",
-            self.source,
-        )
+        self.assertIn("The plotted L16 line comes only from the clean replacement sweep", self.source)
 
 
 if __name__ == "__main__":

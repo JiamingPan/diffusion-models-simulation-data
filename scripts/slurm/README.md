@@ -7,29 +7,36 @@ cluster project identifiers. Copy a template into `local/` and edit it there.
 
 `local/` is ignored by git.
 
-## Fresh DiT-L16 400k sweep
+## Fresh DiT-L16 300k sweep
 
-`submit_nf_generalize_fig2_dit_l16_fresh400k.sh` trains ten DiT-L16 models
-from fresh seed-123 initialization, one for every training-set size from
-`2^6` through `2^15`. It runs sixteen sequential 25k-update stages, for a final
-budget of 400k optimizer updates per model. At most two GPU tasks run at once.
+`submit_nf_generalize_fig2_dit_l16_fresh300k_v2.sh` trains ten independent
+DiT-L16 models from seed 123, one for every training-set size from `2^6`
+through `2^15`. Each Slurm task trains directly to about 300k optimizer
+updates, has a 48-hour walltime, and can resume from its latest complete
+recovery checkpoint. The array runs at most two GPU tasks at once.
 
-The workflow samples and analyzes the 200k checkpoint for a fixed-budget
-comparison with DiT-L8 and DiT-L12. The 300k checkpoint is an intermediate
-result and 400k is the final longer-training DiT-L16 result. Exact checkpoint,
-sample-provenance, PCA, and SSCD audits gate later stages so incomplete data
-cannot silently enter the final curve.
+The GPU precheck performs a real save, strict load, and resume before the full
+array can start. Recovery checkpoints include model, optimizer, scheduler,
+noise-scheduler, and RNG state. Only the newest two complete checkpoints are
+kept during training, and the exact final checkpoint is required before
+sampling. PCA and SSCD analyses run only after all ten samples finish.
 
 Run it on Great Lakes from the repository root:
 
 ```bash
-bash scripts/slurm/submit_nf_generalize_fig2_dit_l16_fresh400k.sh
+bash scripts/slurm/submit_nf_generalize_fig2_dit_l16_fresh300k_v2.sh
 ```
 
-If a stage is interrupted after writing a recovery checkpoint, resume that
-stage without regenerating the frozen manifest:
+If one or more training tasks time out, submit the same frozen sweep again:
 
 ```bash
-START_STAGE=<stage> REUSE_EXISTING_MANIFEST=1 \
-  bash scripts/slurm/submit_nf_generalize_fig2_dit_l16_fresh400k.sh
+REUSE_EXISTING_MANIFEST=1 \
+  bash scripts/slurm/submit_nf_generalize_fig2_dit_l16_fresh300k_v2.sh
 ```
+
+Tasks that already reached the exact target exit without retraining. Other
+tasks resume from their latest complete checkpoint.
+
+The older `fresh400k` staged workflow is retained only for provenance. Do not
+use it for new runs: its external checkpoint writer did not save every state
+file required by the strict resume path.
