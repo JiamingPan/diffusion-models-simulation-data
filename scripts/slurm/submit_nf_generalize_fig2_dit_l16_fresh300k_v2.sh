@@ -17,6 +17,7 @@ SAMPLE_LABEL=dpm50_fresh300k_v2
 OUT_PREFIX=nf_generalize_fig2_dit_l16_fresh300k_v2
 
 cd "${PROJECT_DIR}"
+mkdir -p "${PROJECT_DIR}/logs/nf_generalize_fig2_dit_l16_fresh300k_v2"
 
 if [[ "${REUSE_EXISTING_MANIFEST}" == "1" ]]; then
   test -f "${MANIFEST_PATH}"
