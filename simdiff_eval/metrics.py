@@ -135,6 +135,154 @@ def nearest_neighbor_distances(
     }
 
 
+def nearest_training_matches(
+    generated: np.ndarray,
+    training: np.ndarray,
+    *,
+    max_generated: int | None = 8,
+    max_training: int | None = None,
+    training_chunk: int = 256,
+) -> dict[str, np.ndarray]:
+    """Match generated images to their nearest training images in pixel MSE.
+
+    The training set is scanned in chunks so the comparison does not allocate
+    the full generated-by-training distance matrix.
+    """
+    generated_arr = np.asarray(generated, dtype=np.float32)
+    training_arr = np.asarray(training, dtype=np.float32)
+    if generated_arr.ndim == 3:
+        generated_arr = generated_arr[:, None]
+    if training_arr.ndim == 3:
+        training_arr = training_arr[:, None]
+    if generated_arr.ndim != 4 or training_arr.ndim != 4:
+        raise ValueError(
+            "Expected generated and training arrays shaped (N,C,H,W) or (N,H,W)."
+        )
+    if generated_arr.shape[1:] != training_arr.shape[1:]:
+        raise ValueError(
+            f"Generated shape {generated_arr.shape[1:]} does not match "
+            f"training shape {training_arr.shape[1:]}."
+        )
+    if len(generated_arr) == 0:
+        raise ValueError("generated sample set is empty")
+    if len(training_arr) == 0:
+        raise ValueError("training reference is empty")
+    if int(training_chunk) < 1:
+        raise ValueError("training_chunk must be >= 1")
+
+    n_generated = len(generated_arr) if max_generated is None else min(len(generated_arr), int(max_generated))
+    n_training = len(training_arr) if max_training is None else min(len(training_arr), int(max_training))
+    if n_generated < 1:
+        raise ValueError("max_generated must retain at least one sample")
+    if n_training < 1:
+        raise ValueError("max_training must retain at least one training image")
+
+    generated_flat = generated_arr[:n_generated].reshape(n_generated, -1)
+    training_flat = training_arr[:n_training].reshape(n_training, -1)
+    generated_norm = np.linalg.norm(generated_flat, axis=1)
+    training_norm = np.linalg.norm(training_flat, axis=1)
+
+    nearest_index = np.full(n_generated, -1, dtype=np.int64)
+    nearest_mse = np.full(n_generated, np.inf, dtype=np.float64)
+    nearest_cosine = np.full(n_generated, np.nan, dtype=np.float64)
+    for generated_index, generated_image in enumerate(generated_flat):
+        for start in range(0, n_training, int(training_chunk)):
+            chunk = training_flat[start : start + int(training_chunk)]
+            difference = chunk - generated_image[None]
+            mse = np.mean(difference * difference, axis=1)
+            local_index = int(np.argmin(mse))
+            if float(mse[local_index]) < nearest_mse[generated_index]:
+                nearest_mse[generated_index] = float(mse[local_index])
+                nearest_index[generated_index] = start + local_index
+
+        match_index = int(nearest_index[generated_index])
+        denominator = float(generated_norm[generated_index] * training_norm[match_index])
+        nearest_cosine[generated_index] = (
+            float(np.dot(generated_image, training_flat[match_index]) / denominator)
+            if denominator > 0
+            else 0.0
+        )
+
+    return {
+        "generated_index": np.arange(n_generated, dtype=np.int64),
+        "nearest_training_index": nearest_index,
+        "nearest_mse": nearest_mse,
+        "nearest_rmse": np.sqrt(nearest_mse),
+        "nearest_cosine": nearest_cosine,
+    }
+
+
+def _feature_matrix(features: np.ndarray, name: str) -> np.ndarray:
+    matrix = np.asarray(features, dtype=np.float64)
+    if matrix.ndim != 2:
+        raise ValueError(f"{name} must have shape (n_samples, n_features), got {matrix.shape}")
+    if matrix.shape[0] < 2:
+        raise ValueError(f"{name} must contain at least two samples")
+    if matrix.shape[1] < 1:
+        raise ValueError(f"{name} must contain at least one feature")
+    if not np.isfinite(matrix).all():
+        raise ValueError(f"{name} contains non-finite values")
+    return matrix
+
+
+def _positive_semidefinite_sqrt(matrix: np.ndarray) -> np.ndarray:
+    symmetric = 0.5 * (matrix + matrix.T)
+    eigenvalues, eigenvectors = np.linalg.eigh(symmetric)
+    eigenvalues = np.clip(eigenvalues, 0.0, None)
+    return (eigenvectors * np.sqrt(eigenvalues)) @ eigenvectors.T
+
+
+def frechet_feature_distance(first: np.ndarray, second: np.ndarray) -> float:
+    """Compute a stable Fréchet distance between two feature distributions.
+
+    This is the Gaussian two-Wasserstein distance used by FID, but it accepts
+    any domain-relevant feature representation rather than requiring ImageNet
+    Inception features.
+    """
+    first_matrix = _feature_matrix(first, "first")
+    second_matrix = _feature_matrix(second, "second")
+    if first_matrix.shape[1] != second_matrix.shape[1]:
+        raise ValueError(
+            "first and second feature dimensions must match, got "
+            f"{first_matrix.shape[1]} and {second_matrix.shape[1]}"
+        )
+
+    first_mean = first_matrix.mean(axis=0)
+    second_mean = second_matrix.mean(axis=0)
+    first_covariance = np.atleast_2d(np.cov(first_matrix, rowvar=False))
+    second_covariance = np.atleast_2d(np.cov(second_matrix, rowvar=False))
+
+    first_sqrt = _positive_semidefinite_sqrt(first_covariance)
+    covariance_product = first_sqrt @ second_covariance @ first_sqrt
+    covariance_product_sqrt = _positive_semidefinite_sqrt(covariance_product)
+
+    mean_term = float(np.dot(first_mean - second_mean, first_mean - second_mean))
+    covariance_term = float(
+        np.trace(first_covariance)
+        + np.trace(second_covariance)
+        - 2.0 * np.trace(covariance_product_sqrt)
+    )
+    return max(0.0, mean_term + covariance_term)
+
+
+def real_split_frechet_baseline(features: np.ndarray, seed: int = 0) -> dict[str, float | int]:
+    """Estimate finite-sample Fréchet noise by comparing two real-data halves."""
+    matrix = _feature_matrix(features, "features")
+    half = len(matrix) // 2
+    if half < 2:
+        raise ValueError("features must contain at least four samples for a split baseline")
+
+    indices = np.random.default_rng(seed).permutation(len(matrix))[: 2 * half]
+    first = matrix[indices[:half]]
+    second = matrix[indices[half:]]
+    return {
+        "distance": frechet_feature_distance(first, second),
+        "n_first": int(len(first)),
+        "n_second": int(len(second)),
+        "seed": int(seed),
+    }
+
+
 @dataclass
 class ReproducibilityPair:
     """Pairwise comparison between two generated sample sets."""

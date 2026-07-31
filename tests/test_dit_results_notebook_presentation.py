@@ -49,3 +49,27 @@ def test_continuation_image_grid_uses_multiple_samples_per_checkpoint():
 
     assert "generated[:4, 0]" in source
     assert "four generated maps per checkpoint" in source
+
+
+def test_dit_notebook_plots_generated_samples_against_exact_training_subset():
+    source = notebook_source()
+
+    assert "Generated Samples Versus Nearest Training Slices" in source
+    assert "nearest_training_matches" in source
+    assert "nearest-training search requires the complete configured subset" in source
+    assert "'dit_l8,dit_base,dit_l16'" in source
+    assert "nf_generalize_fig2_{arch}_generated_vs_nearest_training.png" in source
+    assert "nf_generalize_fig2_{arch}_{audit_tag}_nearest_training_audit.png" in source
+
+
+def test_dit_notebook_tracks_nick_review_requests_and_distribution_distance():
+    source = notebook_source()
+
+    assert "Nick review checklist" in source
+    assert "exact training subset used by that model" in source
+    assert "SSCD Fréchet distance" in source
+    assert "real-vs-real split baseline" in source
+    assert "frechet_feature_distance" in source
+    assert "real_split_frechet_baseline" in source
+    assert "generated_to_heldout_over_real_split" in source
+    assert "literal ImageNet Inception" in source
