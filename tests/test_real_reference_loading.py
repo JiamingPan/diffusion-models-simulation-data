@@ -11,10 +11,50 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from simdiff_eval.io import load_real_from_config, load_real_reference_from_config
+from simdiff_eval.io import (
+    configured_training_reference_info,
+    load_real_from_config,
+    load_real_reference_from_config,
+)
 
 
 class RealReferenceLoadingTests(unittest.TestCase):
+    def test_configured_reference_info_counts_the_model_specific_slice_subset(self):
+        first = np.zeros((4, 4, 3, 3), dtype=np.float32)
+        second = np.zeros((6, 4, 3, 3), dtype=np.float32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            first_path = root / "first.npy"
+            second_path = root / "second.npy"
+            config_path = root / "config.yaml"
+            np.save(first_path, first)
+            np.save(second_path, second)
+            config_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "data": {
+                            "img_path": [str(first_path), str(second_path)],
+                            "img_read_fn": "npy_read_fn",
+                            "n_samples": [2, 3],
+                            "seed": [None, 7],
+                            "reshape": "2d",
+                            "zthin": 2,
+                            "normalization": None,
+                        }
+                    }
+                )
+            )
+
+            info = configured_training_reference_info(config_path)
+
+        self.assertEqual(info["n_sources"], 2)
+        self.assertEqual(info["configured_raw_samples"], 5)
+        self.assertEqual(info["configured_slices"], 10)
+        self.assertEqual(info["source_raw_samples"], [2, 3])
+        self.assertEqual(info["source_slices"], [4, 6])
+        self.assertEqual(info["selection"], "mixed first/seeded configured subsets")
+
     def test_reference_is_normalized_with_full_training_set_before_limiting(self):
         cubes = np.array(
             [

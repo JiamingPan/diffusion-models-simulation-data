@@ -107,6 +107,20 @@ class ContinuationSamplingGuardTests(unittest.TestCase):
             self.assertIn("normalized from complete configured training set", source, notebook_name)
             self.assertNotIn("max_raw_samples=raw_cap", source, notebook_name)
 
+    def test_unet_one_point_plot_discloses_model_subset_and_plotting_cap(self):
+        notebook_path = REPO_ROOT / "notebooks" / "nf_generalize_fig2_partial_quickcheck.ipynb"
+        notebook = json.loads(notebook_path.read_text())
+        source = "\n".join(
+            "".join(cell.get("source", []))
+            for cell in notebook["cells"]
+        )
+
+        self.assertIn("configured_training_reference_info", source)
+        self.assertIn("reference_matches_manifest", source)
+        self.assertIn("model training subset", source)
+        self.assertIn("n_real_used_for_plot", source)
+        self.assertIn("not all available CAMELS maps", source)
+
 
 if __name__ == "__main__":
     unittest.main()
