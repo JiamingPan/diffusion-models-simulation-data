@@ -13,9 +13,7 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT = REPO_ROOT / "notebooks" / "nf_generalize_fig2_dit_results.ipynb"
-DEFAULT_OUTPUT = (
-    REPO_ROOT / "notebooks" / "nf_generalize_fig2_dit_results_explained.ipynb"
-)
+DEFAULT_OUTPUT = DEFAULT_INPUT
 
 
 def cell_source(cell: dict[str, Any]) -> str:
@@ -38,11 +36,35 @@ def find_cell(notebook: dict[str, Any], needle: str) -> dict[str, Any]:
     return matches[0]
 
 
+def find_cell_any(notebook: dict[str, Any], needles: tuple[str, ...]) -> dict[str, Any]:
+    matches = [
+        cell
+        for cell in notebook["cells"]
+        if any(needle in cell_source(cell) for needle in needles)
+    ]
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"Expected exactly one cell containing one of {needles!r}; found {len(matches)}"
+        )
+    return matches[0]
+
+
 def markdown_cell(text: str, section: str) -> dict[str, Any]:
     return {
         "cell_type": "markdown",
         "id": section.replace("_", "-")[:64],
         "metadata": {"reader_section": section},
+        "source": text.strip().splitlines(keepends=True),
+    }
+
+
+def code_cell(text: str, section: str) -> dict[str, Any]:
+    return {
+        "cell_type": "code",
+        "execution_count": None,
+        "id": section.replace("_", "-")[:64],
+        "metadata": {"reader_section": section},
+        "outputs": [],
         "source": text.strip().splitlines(keepends=True),
     }
 
@@ -297,6 +319,501 @@ fidelity_plot_path = plot_dit_onepoint_pk()
 '''.strip()
 
 
+EXPANDED_IMAGE_CODE = r'''
+def choose_bundles(tags: list[str], arch: str | None = None) -> list[dict[str, Any]]:
+    """Return exact requested bundles in tag order, without silent fallback."""
+    requested = list(dict.fromkeys(str(tag) for tag in tags))
+    by_tag = {
+        str(bundle['spec'].get('dataset_tag')): bundle
+        for bundle in loaded.values()
+        if arch is None or str(bundle['spec'].get('arch')) == arch
+    }
+    missing = [tag for tag in requested if tag not in by_tag]
+    if missing:
+        display(Markdown(
+            f"`{arch_label(arch) if arch else 'all architectures'}` requested tags are missing: "
+            + ', '.join(f'`{tag}`' for tag in missing)
+        ))
+    return [by_tag[tag] for tag in requested if tag in by_tag]
+
+
+def plot_dit_image_grid(
+    sample_index: int = 0,
+    tags: list[str] = IMAGE_TAGS,
+    arch: str = IMAGE_ARCH,
+    block_name: str = 'selected',
+) -> Path | None:
+    if not loaded:
+        display(Markdown('No loaded DiT samples available for image grid.'))
+        return None
+    bundles = choose_bundles(tags, arch=arch)
+    if not bundles:
+        display(Markdown(f'No exact bundles available for `{arch_label(arch)}` image grid.'))
+        return None
+
+    values = []
+    for bundle in bundles:
+        gen_idx = min(sample_index, len(bundle['generated']) - 1)
+        values.extend([
+            bundle['generated'][gen_idx, 0].ravel(),
+            bundle['real'][0, 0].ravel(),
+        ])
+    flat = np.concatenate(values)
+    vmin, vmax = np.nanquantile(flat, [0.005, 0.995])
+
+    fig, axes = plt.subplots(
+        2,
+        len(bundles),
+        figsize=(3.05 * len(bundles), 6.2),
+        squeeze=False,
+        constrained_layout=True,
+    )
+    for col, bundle in enumerate(bundles):
+        spec = bundle['spec']
+        gen_idx = min(sample_index, len(bundle['generated']) - 1)
+        axes[0, col].imshow(
+            bundle['generated'][gen_idx, 0], cmap='viridis', vmin=vmin, vmax=vmax
+        )
+        axes[1, col].imshow(
+            bundle['real'][0, 0], cmap='viridis', vmin=vmin, vmax=vmax
+        )
+        axes[0, col].set_title(dataset_size_label(int(spec['dataset_size'])), pad=8)
+        for axis in axes[:, col]:
+            axis.set_xticks([])
+            axis.set_yticks([])
+    axes[0, 0].set_ylabel('generated', fontsize=15, fontweight='bold')
+    axes[1, 0].set_ylabel('training subset', fontsize=15, fontweight='bold')
+    fig.suptitle(
+        f'{arch_label(arch)} generated maps: {block_name.replace("_", " ")}',
+        fontsize=21,
+        fontweight='semibold',
+    )
+    QUICKCHECK_DIR.mkdir(parents=True, exist_ok=True)
+    out = QUICKCHECK_DIR / (
+        f'nf_generalize_fig2_{arch}_{block_name}_generated_image_grid.png'
+    )
+    fig.savefig(out, bbox_inches='tight', dpi=300)
+    plt.show()
+    print('wrote', out)
+    return out
+
+
+image_grid_paths = {}
+for image_arch in DIT_ARCH_ORDER:
+    for image_block_name, image_block_tags in DATA_TAG_BLOCKS.items():
+        image_grid_paths[(image_arch, image_block_name)] = plot_dit_image_grid(
+            sample_index=int(os.environ.get('DIT_IMAGE_SAMPLE_INDEX', '0')),
+            tags=image_block_tags,
+            arch=image_arch,
+            block_name=image_block_name,
+        )
+image_grid_path = image_grid_paths
+'''.strip()
+
+
+EXPANDED_PHYSICAL_CODE = r'''
+PHYSICAL_HIST_EDGES = np.linspace(-1.0, 1.0, 141, dtype=np.float64)
+REAL_REFERENCE_RAW_BATCH_SIZE = int(os.environ.get('DIT_REAL_REFERENCE_RAW_BATCH_SIZE', '4'))
+physical_curve_cache: dict[tuple[str, str], dict[str, Any]] = {}
+real_physical_cache: dict[str, dict[str, Any]] = {}
+
+
+def _radial_power_geometry(shape: tuple[int, int], nbins: int) -> tuple[np.ndarray, list[np.ndarray]]:
+    height, width = shape
+    ky = np.fft.fftfreq(height) * height
+    kx = np.fft.fftfreq(width) * width
+    kkx, kky = np.meshgrid(kx, ky)
+    kvals = np.sqrt(kkx**2 + kky**2)
+    valid = kvals > 0
+    edges = np.linspace(kvals[valid].min(), kvals[valid].max(), nbins + 1)
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    masks = [
+        (kvals >= edges[index]) & (kvals < edges[index + 1])
+        for index in range(nbins)
+    ]
+    return centers, masks
+
+
+def _aggregate_physical_batches(batches, *, nbins: int) -> dict[str, Any]:
+    """Aggregate a PDF and mean P(k) without materializing every image."""
+    histogram_counts = np.zeros(len(PHYSICAL_HIST_EDGES) - 1, dtype=np.int64)
+    power_sum = np.zeros(nbins, dtype=np.float64)
+    image_count = 0
+    pixel_count = 0
+    kbins = None
+    masks = None
+    for batch in batches:
+        batch = as_nchw(np.asarray(batch, dtype=np.float32))
+        if not len(batch):
+            continue
+        fields = np.asarray(batch[:, 0], dtype=np.float64)
+        histogram_counts += np.histogram(fields.ravel(), bins=PHYSICAL_HIST_EDGES)[0]
+        pixel_count += int(fields.size)
+        if masks is None:
+            kbins, masks = _radial_power_geometry(tuple(fields.shape[-2:]), nbins)
+        centered = fields - fields.mean(axis=(-2, -1), keepdims=True)
+        fft = np.fft.fftn(centered, axes=(-2, -1))
+        power = (fft * fft.conj()).real / (fields.shape[-2] * fields.shape[-1])
+        for index, mask in enumerate(masks):
+            if mask.any():
+                power_sum[index] += float(np.sum(np.mean(power[:, mask], axis=1)))
+        image_count += len(fields)
+    if image_count == 0 or kbins is None:
+        raise RuntimeError('No images were available for physical-statistics aggregation.')
+    widths = np.diff(PHYSICAL_HIST_EDGES)
+    in_range = int(histogram_counts.sum())
+    density = histogram_counts / np.clip(in_range * widths, 1, None)
+    return {
+        'hist': density,
+        'hist_counts': histogram_counts,
+        'hist_edges': PHYSICAL_HIST_EDGES.copy(),
+        'kbins': kbins,
+        'mean_pk': power_sum / image_count,
+        'n_images': int(image_count),
+        'pixel_coverage': float(in_range / pixel_count),
+    }
+
+
+def _band_log_error(ratio: np.ndarray, start: float, stop: float) -> float:
+    ratio = np.asarray(ratio, dtype=np.float64)
+    finite_indices = np.flatnonzero(np.isfinite(ratio) & (ratio > 0))
+    if not len(finite_indices):
+        return np.nan
+    lo = int(np.floor(start * len(finite_indices)))
+    hi = int(np.floor(stop * len(finite_indices)))
+    if stop >= 1.0:
+        hi = len(finite_indices)
+    selected = finite_indices[lo:max(lo + 1, hi)]
+    return float(np.mean(np.abs(np.log10(ratio[selected]))))
+
+
+def _physical_curve_for_bundle(bundle: dict[str, Any]) -> dict[str, Any]:
+    spec = bundle['spec']
+    arch = str(spec['arch'])
+    tag = str(spec['dataset_tag'])
+    key = (arch, tag)
+    if key in physical_curve_cache:
+        return physical_curve_cache[key]
+
+    reference_key = real_reference_cache_key(bundle['config_path'])
+    if reference_key not in real_physical_cache:
+        real_physical_cache[reference_key] = _aggregate_physical_batches(
+            iter_real_reference_batches_from_config(
+                bundle['config_path'], raw_batch_size=REAL_REFERENCE_RAW_BATCH_SIZE
+            ),
+            nbins=PK_NBINS,
+        )
+    real_stats = real_physical_cache[reference_key]
+    expected_real = int(bundle['reference_info']['configured_slices'])
+    if int(real_stats['n_images']) != expected_real:
+        raise RuntimeError(
+            f"Exact real-reference count mismatch for {spec['run_name']}: "
+            f"aggregated {real_stats['n_images']} but config selects {expected_real}."
+        )
+    generated_stats = _aggregate_physical_batches(
+        [bundle['generated']], nbins=PK_NBINS
+    )
+    ratio = generated_stats['mean_pk'] / np.clip(real_stats['mean_pk'], 1e-30, None)
+    widths = np.diff(real_stats['hist_edges'])
+    curve = {
+        'arch': arch,
+        'arch_label': arch_label(arch),
+        'dataset_tag': tag,
+        'dataset_size': int(spec['dataset_size']),
+        'run_name': str(spec['run_name']),
+        'real_hist': real_stats['hist'],
+        'generated_hist': generated_stats['hist'],
+        'hist_edges': real_stats['hist_edges'],
+        'kbins': real_stats['kbins'],
+        'pk_ratio': ratio,
+        'n_real_exact_model_subset': int(real_stats['n_images']),
+        'n_generated': int(generated_stats['n_images']),
+        'real_pixel_coverage': float(real_stats['pixel_coverage']),
+        'generated_pixel_coverage': float(generated_stats['pixel_coverage']),
+        'onepoint_hist_l1': float(
+            np.sum(np.abs(generated_stats['hist'] - real_stats['hist']) * widths)
+        ),
+        'pk_log_ratio_mae': _band_log_error(ratio, 0.0, 1.0),
+        'pk_low_log_ratio_mae': _band_log_error(ratio, 0.0, 1.0 / 3.0),
+        'pk_mid_log_ratio_mae': _band_log_error(ratio, 1.0 / 3.0, 2.0 / 3.0),
+        'pk_high_log_ratio_mae': _band_log_error(ratio, 2.0 / 3.0, 1.0),
+        'pk_ratio_median': float(np.nanmedian(ratio)),
+        'pk_ratio_min': float(np.nanmin(ratio)),
+        'pk_ratio_max': float(np.nanmax(ratio)),
+        'max_abs_pk_ratio_minus_1': float(np.nanmax(np.abs(ratio - 1.0))),
+        'sample_path': rel(bundle['sample_path']),
+        'config_path': rel(bundle['config_path']),
+    }
+    physical_curve_cache[key] = curve
+    return curve
+
+
+def build_dit_physical_summary() -> pd.DataFrame:
+    rows = []
+    for arch in DIT_ARCH_ORDER:
+        for bundle in choose_bundles(ALL_DATA_TAGS, arch=arch):
+            curve = _physical_curve_for_bundle(bundle)
+            rows.append({
+                name: value for name, value in curve.items()
+                if name not in {
+                    'real_hist', 'generated_hist', 'hist_edges', 'kbins', 'pk_ratio'
+                }
+            })
+    summary = pd.DataFrame(rows)
+    if summary.empty:
+        return summary
+    summary = summary.sort_values(['arch', 'dataset_size']).reset_index(drop=True)
+    TABLE_DIR.mkdir(parents=True, exist_ok=True)
+    summary_path = TABLE_DIR / 'nf_generalize_fig2_dit_physical_summary.csv'
+    summary.to_csv(summary_path, index=False)
+    for arch, sub in summary.groupby('arch', sort=False):
+        sub.to_csv(TABLE_DIR / f'nf_generalize_fig2_{arch}_fidelity_summary.csv', index=False)
+    print('wrote', summary_path)
+    return summary
+
+
+dit_physical_summary_df = build_dit_physical_summary()
+display(dit_physical_summary_df)
+
+
+def plot_dit_onepoint_pk(
+    tags: list[str] = DETAIL_TAGS,
+    arch: str = DETAIL_ARCH,
+    block_name: str = 'selected',
+) -> dict[str, Path] | None:
+    bundles = choose_bundles(tags, arch=arch)
+    if not bundles:
+        return None
+    curves = [_physical_curve_for_bundle(bundle) for bundle in bundles]
+    color = DIT_ARCH_COLORS[arch]
+    centers = 0.5 * (
+        curves[0]['hist_edges'][:-1] + curves[0]['hist_edges'][1:]
+    )
+
+    fig_pdf, pdf_axes = plt.subplots(
+        1, len(curves), figsize=(3.65 * len(curves), 4.2), squeeze=False
+    )
+    for axis, curve in zip(pdf_axes.ravel(), curves):
+        axis.plot(centers, curve['real_hist'], color='black', lw=2.4)
+        axis.plot(centers, curve['generated_hist'], color=color, lw=2.2)
+        axis.set_yscale('log')
+        axis.set_title(dataset_size_label(curve['dataset_size']), pad=8)
+        axis.set_xlabel('Normalized field value')
+        axis.grid(axis='y', alpha=0.14)
+        axis.spines['top'].set_visible(False)
+        axis.spines['right'].set_visible(False)
+    pdf_axes[0, 0].set_ylabel('Pixel PDF')
+    fig_pdf.suptitle(
+        f'{arch_label(arch)} one-point distributions: {block_name.replace("_", " ")}',
+        fontsize=20,
+        fontweight='semibold',
+        y=0.99,
+    )
+    fig_pdf.legend(
+        handles=[
+            Line2D([0], [0], color='black', lw=2.4, label='exact model training subset'),
+            Line2D([0], [0], color=color, lw=2.2, label='generated'),
+        ],
+        loc='upper center', bbox_to_anchor=(0.5, 0.90), ncol=2, frameon=False,
+    )
+    fig_pdf.subplots_adjust(left=0.07, right=0.99, bottom=0.15, top=0.76, wspace=0.28)
+    QUICKCHECK_DIR.mkdir(parents=True, exist_ok=True)
+    pdf_out = QUICKCHECK_DIR / f'nf_generalize_fig2_{arch}_{block_name}_onepoint.png'
+    fig_pdf.savefig(pdf_out, bbox_inches='tight', dpi=300)
+    plt.show()
+    print('wrote', pdf_out)
+
+    ratios = np.concatenate([
+        curve['pk_ratio'][np.isfinite(curve['pk_ratio'])] for curve in curves
+    ])
+    shared_upper = max(2.0, float(np.nanquantile(ratios, 0.99)) * 1.08)
+    fig_pk, pk_axes = plt.subplots(
+        1, len(curves), figsize=(3.65 * len(curves), 4.2), squeeze=False
+    )
+    for axis, curve in zip(pk_axes.ravel(), curves):
+        axis.plot(curve['kbins'], curve['pk_ratio'], color=color, marker='o', ms=4, lw=2)
+        axis.axhline(1.0, color='black', ls='--', lw=1.4)
+        axis.set_ylim(0, shared_upper)
+        axis.set_title(dataset_size_label(curve['dataset_size']), pad=8)
+        axis.set_xlabel(r'$k$ bin')
+        axis.grid(axis='y', alpha=0.14)
+        axis.spines['top'].set_visible(False)
+        axis.spines['right'].set_visible(False)
+    pk_axes[0, 0].set_ylabel(r'$P_{\rm generated}(k)/P_{\rm real}(k)$')
+    fig_pk.suptitle(
+        f'{arch_label(arch)} power-spectrum ratios: {block_name.replace("_", " ")}',
+        fontsize=20,
+        fontweight='semibold',
+        y=0.99,
+    )
+    fig_pk.text(
+        0.5, 0.89, 'One is exact agreement; every panel uses the same vertical scale.',
+        ha='center', fontsize=12.5, color='0.3',
+    )
+    fig_pk.subplots_adjust(left=0.07, right=0.99, bottom=0.15, top=0.75, wspace=0.28)
+    pk_out = QUICKCHECK_DIR / f'nf_generalize_fig2_{arch}_{block_name}_pk_ratio.png'
+    fig_pk.savefig(pk_out, bbox_inches='tight', dpi=300)
+    plt.show()
+    print('wrote', pk_out)
+
+    outputs = {'onepoint': pdf_out, 'pk_ratio': pk_out}
+    if block_name == 'high_data':
+        fig_zoom, zoom_axes = plt.subplots(
+            1, len(curves), figsize=(3.65 * len(curves), 4.0), squeeze=False
+        )
+        for axis, curve in zip(zoom_axes.ravel(), curves):
+            axis.plot(curve['kbins'], curve['pk_ratio'], color=color, marker='o', ms=4, lw=2)
+            axis.axhline(1.0, color='black', ls='--', lw=1.4)
+            axis.set_ylim(0.75, 1.25)
+            axis.set_title(dataset_size_label(curve['dataset_size']), pad=8)
+            axis.set_xlabel(r'$k$ bin')
+            axis.grid(axis='y', alpha=0.14)
+            axis.spines['top'].set_visible(False)
+            axis.spines['right'].set_visible(False)
+        zoom_axes[0, 0].set_ylabel(r'$P_{\rm generated}(k)/P_{\rm real}(k)$')
+        fig_zoom.suptitle(
+            f'{arch_label(arch)} high-data power-spectrum ratio (zoom)',
+            fontsize=20, fontweight='semibold', y=0.98,
+        )
+        fig_zoom.subplots_adjust(left=0.07, right=0.99, bottom=0.16, top=0.78, wspace=0.28)
+        zoom_out = QUICKCHECK_DIR / f'nf_generalize_fig2_{arch}_high_data_pk_ratio_zoom.png'
+        fig_zoom.savefig(zoom_out, bbox_inches='tight', dpi=300)
+        plt.show()
+        print('wrote', zoom_out)
+        outputs['pk_ratio_zoom'] = zoom_out
+    return outputs
+
+
+fidelity_plot_paths = {}
+for fidelity_arch in DIT_ARCH_ORDER:
+    for fidelity_block_name, fidelity_block_tags in DATA_TAG_BLOCKS.items():
+        fidelity_plot_paths[(fidelity_arch, fidelity_block_name)] = plot_dit_onepoint_pk(
+            tags=fidelity_block_tags,
+            arch=fidelity_arch,
+            block_name=fidelity_block_name,
+        )
+fidelity_plot_path = fidelity_plot_paths
+
+
+def plot_physical_error_summaries(summary: pd.DataFrame) -> dict[str, Path] | None:
+    if summary.empty:
+        return None
+    outputs = {}
+    fig, axes = plt.subplots(1, 2, figsize=(14.5, 5.3))
+    for arch in DIT_ARCH_ORDER:
+        sub = summary[summary['arch'] == arch].sort_values('dataset_size')
+        x = np.log2(sub['dataset_size']).astype(int)
+        style = dict(
+            color=DIT_ARCH_COLORS[arch], marker=DIT_ARCH_MARKERS[arch], lw=2.5,
+            ms=7, label=arch_label(arch),
+        )
+        axes[0].plot(x, sub['onepoint_hist_l1'], **style)
+        axes[1].plot(x, sub['pk_log_ratio_mae'], **style)
+    for axis, title, ylabel in zip(
+        axes,
+        ['One-point distribution error', 'Power-spectrum error'],
+        [r'$L_1$ distance', r'mean $|\log_{10}(P_{gen}/P_{real})|$'],
+    ):
+        axis.set_xticks(range(6, 16), [rf'$2^{{{i}}}$' for i in range(6, 16)])
+        axis.set_xlabel(r'Training images $N_{2D}$')
+        axis.set_ylabel(ylabel)
+        axis.set_title(title, pad=9)
+        axis.grid(axis='y', alpha=0.16)
+        axis.spines['top'].set_visible(False)
+        axis.spines['right'].set_visible(False)
+    fig.suptitle('Physical-statistics error across all DiT training sizes', fontsize=21, fontweight='semibold')
+    fig.legend(loc='upper center', bbox_to_anchor=(0.5, 0.90), ncol=3, frameon=False)
+    fig.subplots_adjust(left=0.08, right=0.98, bottom=0.15, top=0.75, wspace=0.23)
+    out = QUICKCHECK_DIR / 'nf_generalize_fig2_dit_physical_error_by_data_size.png'
+    fig.savefig(out, bbox_inches='tight', dpi=300)
+    plt.show()
+    outputs['total_error'] = out
+
+    fig_band, band_axes = plt.subplots(1, 3, figsize=(17.2, 5.0), sharey=True)
+    columns = [
+        ('pk_low_log_ratio_mae', 'Low $k$'),
+        ('pk_mid_log_ratio_mae', 'Middle $k$'),
+        ('pk_high_log_ratio_mae', 'High $k$'),
+    ]
+    for axis, (column, title) in zip(band_axes, columns):
+        for arch in DIT_ARCH_ORDER:
+            sub = summary[summary['arch'] == arch].sort_values('dataset_size')
+            axis.plot(
+                np.log2(sub['dataset_size']).astype(int), sub[column],
+                color=DIT_ARCH_COLORS[arch], marker=DIT_ARCH_MARKERS[arch],
+                lw=2.3, ms=7, label=arch_label(arch),
+            )
+        axis.set_xticks(range(6, 16), [rf'$2^{{{i}}}$' for i in range(6, 16)])
+        axis.set_xlabel(r'Training images $N_{2D}$')
+        axis.set_title(title, pad=9)
+        axis.grid(axis='y', alpha=0.16)
+        axis.spines['top'].set_visible(False)
+        axis.spines['right'].set_visible(False)
+    band_axes[0].set_ylabel(r'mean $|\log_{10}(P_{gen}/P_{real})|$')
+    fig_band.suptitle('Power-spectrum error by scale', fontsize=21, fontweight='semibold')
+    fig_band.legend(loc='upper center', bbox_to_anchor=(0.5, 0.89), ncol=3, frameon=False)
+    fig_band.subplots_adjust(left=0.07, right=0.99, bottom=0.16, top=0.73, wspace=0.14)
+    band_out = QUICKCHECK_DIR / 'nf_generalize_fig2_dit_pk_error_by_scale.png'
+    fig_band.savefig(band_out, bbox_inches='tight', dpi=300)
+    plt.show()
+    outputs['scale_error'] = band_out
+    return outputs
+
+
+physical_error_plot_paths = plot_physical_error_summaries(dit_physical_summary_df)
+
+
+def build_novelty_physical_table(summary: pd.DataFrame) -> pd.DataFrame:
+    frames = []
+    for feature, metrics in [('PCA', pca_metrics), ('SSCD', sscd_metrics)]:
+        if metrics.empty or 'gen_gl_q95' not in metrics.columns:
+            continue
+        metric_rows = ensure_arch_columns(metrics)[
+            ['arch', 'dataset_tag', 'dataset_size', 'gen_gl_q95']
+        ].drop_duplicates(['arch', 'dataset_tag'])
+        joined = summary.merge(
+            metric_rows, on=['arch', 'dataset_tag', 'dataset_size'], how='inner'
+        )
+        joined['feature'] = feature
+        frames.append(joined)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+novelty_physical_df = build_novelty_physical_table(dit_physical_summary_df)
+if not novelty_physical_df.empty:
+    fig_joint, joint_axes = plt.subplots(1, 2, figsize=(14.5, 5.5), sharey=True)
+    for axis, feature in zip(joint_axes, ['PCA', 'SSCD']):
+        sub_feature = novelty_physical_df[novelty_physical_df['feature'] == feature]
+        for arch in DIT_ARCH_ORDER:
+            sub = sub_feature[sub_feature['arch'] == arch]
+            axis.scatter(
+                sub['gen_gl_q95'], sub['pk_log_ratio_mae'],
+                color=DIT_ARCH_COLORS[arch], marker=DIT_ARCH_MARKERS[arch],
+                s=75, label=arch_label(arch), alpha=0.9,
+            )
+        axis.axvline(0.5, color='0.4', ls=':', lw=1.4)
+        axis.set_xlabel(f'{feature} q95 novelty score')
+        axis.set_title(f'{feature} embedding', pad=9)
+        axis.grid(alpha=0.15)
+        axis.spines['top'].set_visible(False)
+        axis.spines['right'].set_visible(False)
+    joint_axes[0].set_ylabel(r'mean $|\log_{10}(P_{gen}/P_{real})|$')
+    fig_joint.suptitle('DiT novelty versus physical-statistics error', fontsize=21, fontweight='semibold')
+    fig_joint.text(
+        0.5, 0.89,
+        'Useful samples lie toward high novelty and low physical error; novelty alone is insufficient.',
+        ha='center', fontsize=12.5, color='0.3',
+    )
+    handles, labels = joint_axes[0].get_legend_handles_labels()
+    fig_joint.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, 0.82), ncol=3, frameon=False)
+    fig_joint.subplots_adjust(left=0.08, right=0.98, bottom=0.14, top=0.70, wspace=0.16)
+    novelty_physical_out = QUICKCHECK_DIR / 'nf_generalize_fig2_dit_novelty_vs_physical_error.png'
+    fig_joint.savefig(novelty_physical_out, bbox_inches='tight', dpi=300)
+    plt.show()
+    print('wrote', novelty_physical_out)
+'''.strip()
+
+
 VALIDITY_SCATTER = r'''
 
 if not l16_validity_audit.empty:
@@ -498,10 +1015,250 @@ else:
 '''.strip()
 
 
+CONDITIONAL_AUDIT_MARKDOWN = r'''
+## Appendix: Conditional Calibration Input Audit
+
+The DiT depth sweep above is **unconditional**: it measures memorization,
+novelty, and physical statistics while changing architecture and training-set
+size. This appendix audits a separate **conditional UNet** experiment used for
+the cosmological-parameter recovery figure.
+
+The conditional generator is given the complete six-dimensional CAMELS
+parameter vector
+$(\Omega_m,\sigma_8,A_{\rm SN1},A_{\rm AGN1},A_{\rm SN2},A_{\rm AGN2})$.
+The code below verifies that both normalized and raw vectors have all six
+columns and that every held-out condition has the requested number of generated
+seeds. The poster's $\Omega_m$ panel is one projection of this full-vector
+experiment; it is not evidence that the model was conditioned on $\Omega_m$
+alone.
+
+The 16th-to-84th percentile bars summarize variation across generated seeds at
+a fixed requested condition. Their inclusion fraction is labeled
+**seed-interval inclusion; not posterior coverage** because the seeds are not
+samples from a Bayesian posterior over cosmological parameters.
+'''.strip()
+
+
+CONDITIONAL_AUDIT_CODE = r'''
+expected_parameter_count = 6
+conditional_parameter_names = [
+    'Omega_m', 'sigma_8', 'A_SN1', 'A_AGN1', 'A_SN2', 'A_AGN2'
+]
+conditional_root = PROJECT_DIR / 'results' / 'nf_conditional_bias_probe'
+conditional_sample_root = conditional_root / 'samples'
+conditional_manifest_path = PROJECT_DIR / 'local' / 'nf_conditional_bias_probe' / 'manifest.json'
+
+conditional_manifest_rows = []
+if conditional_manifest_path.exists():
+    conditional_manifest_rows = json.loads(conditional_manifest_path.read_text())
+manifest_by_run = {
+    str(row.get('run_name')): row for row in conditional_manifest_rows
+}
+
+conditional_audit_rows = []
+conditional_sample_paths = sorted(conditional_sample_root.glob('*.npz'))
+for sample_path in conditional_sample_paths:
+    try:
+        with np.load(sample_path, allow_pickle=True) as payload:
+            files = set(payload.files)
+            required = {'samples', 'theta_norm_repeated', 'theta_raw', 'heldout_indices', 'samples_per_cosmology'}
+            missing_keys = sorted(required - files)
+            if missing_keys:
+                raise KeyError('missing arrays: ' + ', '.join(missing_keys))
+            samples = np.asarray(payload['samples'])
+            theta_norm_repeated = np.asarray(payload['theta_norm_repeated'])
+            theta_raw = np.asarray(payload['theta_raw'])
+            heldout_indices = np.atleast_1d(np.asarray(payload['heldout_indices']))
+            samples_per_cosmology = int(np.asarray(payload['samples_per_cosmology']).item())
+            run_name_value = payload['run_name'].item() if 'run_name' in files else sample_path.stem
+            run_name = str(run_name_value)
+        manifest_row = manifest_by_run.get(run_name, {})
+        heldout_manifest_ok = False
+        training_heldout_disjoint = False
+        if manifest_row:
+            heldout_path = Path(str(manifest_row.get('heldout_indices_path', '')))
+            pairs_path = Path(str(manifest_row.get('selected_pairs_path', '')))
+            if not heldout_path.is_absolute():
+                heldout_path = PROJECT_DIR / heldout_path
+            if not pairs_path.is_absolute():
+                pairs_path = PROJECT_DIR / pairs_path
+            if heldout_path.exists() and pairs_path.exists():
+                manifest_heldout = np.atleast_1d(np.loadtxt(heldout_path, dtype=np.int64))
+                training_pairs = pd.read_csv(pairs_path)
+                training_simulations = set(training_pairs['simulation_index'].astype(int))
+                heldout_manifest_ok = bool(np.array_equal(heldout_indices, manifest_heldout))
+                training_heldout_disjoint = bool(
+                    training_simulations.isdisjoint(set(manifest_heldout.astype(int)))
+                )
+        norm_shape_ok = bool(
+            theta_norm_repeated.ndim == 2
+            and theta_norm_repeated.shape[1] == expected_parameter_count
+        )
+        raw_shape_ok = bool(
+            theta_raw.ndim == 2
+            and theta_raw.shape[1] == expected_parameter_count
+        )
+        condition_count_ok = bool(
+            len(theta_norm_repeated) == len(theta_raw) == len(heldout_indices)
+        )
+        repetition_ok = bool(
+            len(samples) == len(theta_raw) * samples_per_cosmology
+        )
+        manifest_order = manifest_row.get('param_names', [])
+        order_ok = bool(
+            not manifest_order or list(manifest_order) == conditional_parameter_names
+        )
+        conditional_audit_rows.append({
+            'run_name': run_name,
+            'sample_path': rel(sample_path),
+            'theta_norm_shape': tuple(theta_norm_repeated.shape),
+            'theta_raw_shape': tuple(theta_raw.shape),
+            'n_heldout_conditions': len(theta_raw),
+            'samples_per_condition': samples_per_cosmology,
+            'n_generated': len(samples),
+            'six_normalized_parameters': norm_shape_ok,
+            'six_raw_parameters': raw_shape_ok,
+            'heldout_alignment_ok': condition_count_ok,
+            'sample_repetition_ok': repetition_ok,
+            'parameter_order_ok': order_ok,
+            'heldout_indices_match_manifest': heldout_manifest_ok,
+            'training_and_heldout_simulations_disjoint': training_heldout_disjoint,
+            'full_vector_audit_pass': bool(
+                norm_shape_ok and raw_shape_ok and condition_count_ok
+                and repetition_ok and order_ok and heldout_manifest_ok
+                and training_heldout_disjoint
+            ),
+        })
+    except Exception as exc:
+        conditional_audit_rows.append({
+            'run_name': sample_path.stem,
+            'sample_path': rel(sample_path),
+            'full_vector_audit_pass': False,
+            'error': repr(exc),
+        })
+
+conditional_input_audit_df = pd.DataFrame(conditional_audit_rows)
+if conditional_input_audit_df.empty:
+    display(Markdown(
+        'Conditional sample files are not present in this checkout. '
+        'Run the conditional pipeline on Great Lakes, then rerun this appendix.'
+    ))
+else:
+    display(conditional_input_audit_df)
+    if not conditional_input_audit_df['full_vector_audit_pass'].fillna(False).all():
+        display(Markdown('**Conditional input audit failed for at least one file; do not use its calibration result.**'))
+
+calibration_candidates = sorted(
+    conditional_root.glob('**/bias_probe_per_cosmology_points.csv'),
+    key=lambda path: path.stat().st_mtime if path.exists() else 0,
+    reverse=True,
+)
+conditional_calibration_points = pd.DataFrame()
+conditional_calibration_path = None
+for candidate in calibration_candidates:
+    candidate_df = pd.read_csv(candidate)
+    required_columns = {
+        'parameter', 'theta_in', 'theta_rec_median', 'theta_rec_q16', 'theta_rec_q84'
+    }
+    if required_columns.issubset(candidate_df.columns):
+        available_parameters = set(candidate_df['parameter'].astype(str))
+        if set(conditional_parameter_names).issubset(available_parameters):
+            conditional_calibration_points = candidate_df
+            conditional_calibration_path = candidate
+            break
+
+if conditional_calibration_points.empty:
+    display(Markdown(
+        'No six-parameter calibration table is available yet. The provenance '
+        'audit above remains valid, but no recovery panel is drawn.'
+    ))
+else:
+    display(Markdown(f'Calibration source: `{rel(conditional_calibration_path)}`'))
+    fig_conditional, conditional_axes = plt.subplots(2, 3, figsize=(15.6, 9.3))
+    inclusion_rows = []
+    regime_values = list(dict.fromkeys(
+        conditional_calibration_points.get(
+            'regime', pd.Series(['all'] * len(conditional_calibration_points))
+        ).astype(str)
+    ))
+    regime_colors = {
+        regime: color for regime, color in zip(
+            regime_values, ['#D55E00', '#0072B2', '#009E73', '#CC79A7']
+        )
+    }
+    for axis, parameter in zip(conditional_axes.ravel(), conditional_parameter_names):
+        parameter_rows = conditional_calibration_points[
+            conditional_calibration_points['parameter'].astype(str) == parameter
+        ].copy()
+        for regime, regime_rows in parameter_rows.groupby(
+            parameter_rows.get('regime', pd.Series('all', index=parameter_rows.index)).astype(str),
+            sort=False,
+        ):
+            x = regime_rows['theta_in'].to_numpy(dtype=float)
+            median = regime_rows['theta_rec_median'].to_numpy(dtype=float)
+            q16 = regime_rows['theta_rec_q16'].to_numpy(dtype=float)
+            q84 = regime_rows['theta_rec_q84'].to_numpy(dtype=float)
+            order = np.argsort(x)
+            axis.errorbar(
+                x[order], median[order],
+                yerr=np.vstack([median[order] - q16[order], q84[order] - median[order]]),
+                fmt='o', ms=4.5, capsize=2.5, color=regime_colors.get(regime, '0.3'),
+                alpha=0.82, label=regime,
+            )
+            included = (x >= q16) & (x <= q84)
+            inclusion_rows.append({
+                'parameter': parameter,
+                'regime': regime,
+                'seed_interval_inclusion_fraction': float(np.mean(included)),
+                'n_conditions': int(len(included)),
+                'diagnostic': 'seed-interval inclusion; not posterior coverage',
+            })
+        if not parameter_rows.empty:
+            limits = np.nanmin(parameter_rows[['theta_in', 'theta_rec_q16']].to_numpy()), np.nanmax(
+                parameter_rows[['theta_in', 'theta_rec_q84']].to_numpy()
+            )
+            axis.plot(limits, limits, color='0.25', ls='--', lw=1.4)
+            axis.set_xlim(limits)
+            axis.set_ylim(limits)
+        axis.set_title(parameter, pad=8)
+        axis.set_xlabel('requested value')
+        axis.set_ylabel('recovered value')
+        axis.grid(alpha=0.15)
+        axis.spines['top'].set_visible(False)
+        axis.spines['right'].set_visible(False)
+    handles, labels = conditional_axes[0, 0].get_legend_handles_labels()
+    if handles:
+        fig_conditional.legend(
+            handles, labels, loc='upper center', bbox_to_anchor=(0.5, 0.93),
+            ncol=max(1, len(labels)), frameon=False,
+        )
+    fig_conditional.suptitle(
+        'Conditional recovery uses the full six-parameter input vector',
+        fontsize=21, fontweight='semibold', y=0.985,
+    )
+    fig_conditional.subplots_adjust(
+        left=0.07, right=0.98, bottom=0.08, top=0.84, hspace=0.38, wspace=0.28
+    )
+    conditional_plot_path = QUICKCHECK_DIR / 'nf_conditional_bias_probe_six_parameter_calibration.png'
+    fig_conditional.savefig(conditional_plot_path, bbox_inches='tight', dpi=300)
+    plt.show()
+    print('wrote', conditional_plot_path)
+    seed_interval_inclusion_df = pd.DataFrame(inclusion_rows)
+    display(Markdown('### Seed-interval inclusion; not posterior coverage'))
+    display(seed_interval_inclusion_df)
+'''.strip()
+
+
 def update_notebook(input_path: Path, output_path: Path) -> None:
     notebook = json.loads(input_path.read_text())
 
-    title = find_cell(notebook, "# DiT Fig.2 Generalization Sweep")
+    title = find_cell_any(
+        notebook,
+        (
+            "# DiT Fig.2 Generalization Sweep",
+            "# DiT Generalization and Physical-Validity Diagnostics",
+        ),
+    )
     set_source(
         title,
         """# DiT Generalization and Physical-Validity Diagnostics
@@ -527,6 +1284,22 @@ A model is useful only when all three checks are interpreted together.
 - Training loss alone does not resolve this: DiT-L16 can fit the denoising objective well while generating statistically incorrect fields.
 - The black one-point and power-spectrum references come from the **exact training subset configured for each model**, not the full CAMELS collection.
 - The clean DiT-L16 300k sweep is the appropriate replacement experiment. Until it is complete, the notebook does not claim a depth-capacity scaling law.
+""",
+        clear_output=False,
+    )
+
+    nick_checklist = find_cell(notebook, "## Nick review checklist")
+    set_source(
+        nick_checklist,
+        """## Nick review checklist
+
+This notebook answers the requested review questions directly:
+
+1. **Nearest training examples:** generated maps are compared with nearest slices from the complete training subset configured for each model, in both pixel and SSCD spaces.
+2. **Black physical-statistics reference:** every one-point and $P(k)$ black curve is rebuilt from every slice in that model's exact training subset. It is not the full CAMELS collection and is not capped for plotting.
+3. **In-distribution check:** SSCD Fréchet distance is normalized by a real-vs-real split baseline, so novel but out-of-distribution samples can be separated from useful generalization. This is an FID-style distribution check in domain-relevant SSCD features, not literal ImageNet Inception FID.
+4. **Full data-size coverage:** generated maps, one-point PDFs, and $P(k)$ errors are shown for $2^6$ through $2^{15}$ for DiT-L8, DiT-L12, and DiT-L16.
+5. **Conditional-input provenance:** the calibration appendix verifies all six CAMELS parameters, held-out manifest alignment, and disjoint training/test simulation indices before displaying recovery results.
 """,
         clear_output=False,
     )
@@ -579,25 +1352,54 @@ The notebook therefore reads from **optimization**, to **visual copy checks**, t
 
     setup = find_cell(notebook, "plt.rcParams.update")
     setup_source = cell_source(setup)
+    tag_block = """ALL_DATA_TAGS = [f'd2p{i:02d}' for i in range(6, 16)]
+LOW_DATA_TAGS = ALL_DATA_TAGS[:5]
+HIGH_DATA_TAGS = ALL_DATA_TAGS[5:]
+DATA_TAG_BLOCKS = {
+    'low_transition': LOW_DATA_TAGS,
+    'high_data': HIGH_DATA_TAGS,
+}
+"""
+    if "ALL_DATA_TAGS = [f'd2p{i:02d}' for i in range(6, 16)]" not in setup_source:
+        setup_source = setup_source.replace(
+            "SEED = int(os.environ.get('SEED', '123'))\n",
+            "SEED = int(os.environ.get('SEED', '123'))\n\n" + tag_block,
+        )
     setup_source = setup_source.replace(
-        "'figure.dpi': 130,",
-        "'figure.dpi': 130,\n"
-        "    'figure.facecolor': 'white',\n"
-        "    'axes.facecolor': 'white',\n"
-        "    'font.family': 'sans-serif',\n"
-        "    'font.sans-serif': ['DejaVu Sans'],\n"
-        "    'mathtext.fontset': 'dejavusans',",
+        "as_nchw, configured_training_reference_info, load_real_from_config,\n"
+        "        load_real_reference_from_config,",
+        "as_nchw, configured_training_reference_info, iter_real_reference_batches_from_config,\n"
+        "        load_real_from_config, load_real_reference_from_config,",
     )
+    if "'figure.facecolor': 'white'" not in setup_source:
+        setup_source = setup_source.replace(
+            "'figure.dpi': 130,",
+            "'figure.dpi': 130,\n"
+            "    'figure.facecolor': 'white',\n"
+            "    'axes.facecolor': 'white',\n"
+            "    'font.family': 'sans-serif',\n"
+            "    'font.sans-serif': ['DejaVu Sans'],\n"
+            "    'mathtext.fontset': 'dejavusans',",
+        )
     set_source(setup, setup_source)
 
-    onepoint_markdown = find_cell(notebook, "## One-point and P(k)")
+    image_code = find_cell(notebook, "def choose_bundles")
+    set_source(image_code, EXPANDED_IMAGE_CODE)
+
+    onepoint_markdown = find_cell_any(
+        notebook,
+        (
+            "## One-point and P(k)",
+            "## One-point Distribution and Power-Spectrum Agreement",
+        ),
+    )
     set_source(
         onepoint_markdown,
         """## One-point Distribution and Power-Spectrum Agreement
 
 These figures test physical agreement, not memorization.
 
-- The **black curve is computed from the exact training subset used by that model**. It is not built from the complete CAMELS dataset.
+- The **black curve is computed from every slice in the exact training subset used by that model**. It is not built from the complete CAMELS dataset and is not a capped plotting sample. The calculation streams batches from disk so the $2^{15}$ reference remains exact without exhausting notebook memory.
 - The one-point distribution compares pixel values but ignores where those values occur.
 - The power-spectrum ratio tests spatial structure. A ratio of one is exact agreement; values above or below one mean too much or too little power at that scale.
 
@@ -606,7 +1408,7 @@ The PDF and $P(k)$ panels are separated into larger figures so their labels and 
         clear_output=False,
     )
     onepoint_code = find_cell(notebook, "def plot_dit_onepoint_pk")
-    set_source(onepoint_code, ONEPOINT_CODE)
+    set_source(onepoint_code, EXPANDED_PHYSICAL_CODE)
 
     validity_code = find_cell(notebook, "l16_validity_audit = build_l16_validity_audit()")
     validity_source = cell_source(validity_code)
@@ -614,7 +1416,10 @@ The PDF and $P(k)$ panels are separated into larger figures so their labels and 
         validity_source = validity_source.rstrip() + "\n" + VALIDITY_SCATTER + "\n"
     set_source(validity_code, validity_source)
 
-    capacity_markdown = find_cell(notebook, "## Fixed-Budget Capacity Check")
+    capacity_markdown = find_cell_any(
+        notebook,
+        ("## Fixed-Budget Capacity Check", "## Appendix: Exploratory Capacity Check"),
+    )
     set_source(
         capacity_markdown,
         """## Appendix: Exploratory Capacity Check
@@ -635,7 +1440,10 @@ The points are deliberately **not connected or fit with a line**. DiT-L16 has ph
     )
     set_source(capacity_code, capacity_source)
 
-    quickcheck_markdown = find_cell(notebook, "## Existing Quickcheck Figures")
+    quickcheck_markdown = find_cell_any(
+        notebook,
+        ("## Existing Quickcheck Figures", "## Appendix: Saved Diagnostic Inventory"),
+    )
     set_source(
         quickcheck_markdown,
         """## Appendix: Saved Diagnostic Inventory
@@ -644,7 +1452,10 @@ The notebook already creates the main figures above. Re-displaying every saved P
 """,
         clear_output=False,
     )
-    quickcheck_code = find_cell(notebook, "def show_existing_figure")
+    quickcheck_code = find_cell_any(
+        notebook,
+        ("def show_existing_figure", "saved_diagnostic_specs = ["),
+    )
     set_source(quickcheck_code, FIGURE_INVENTORY_CODE)
 
     legacy_continuation_needle = (
@@ -685,6 +1496,23 @@ The notebook already creates the main figures above. Re-displaying every saved P
         )
         set_source(continuation_code, continuation_source)
 
+    notebook["cells"] = [
+        cell
+        for cell in notebook["cells"]
+        if cell.get("metadata", {}).get("reader_section")
+        not in {"conditional_audit_intro", "conditional_audit_code"}
+    ]
+    rerun_cell = find_cell(notebook, "## Great Lakes Rerun Command")
+    rerun_index = notebook["cells"].index(rerun_cell)
+    notebook["cells"].insert(
+        rerun_index,
+        markdown_cell(CONDITIONAL_AUDIT_MARKDOWN, "conditional_audit_intro"),
+    )
+    notebook["cells"].insert(
+        rerun_index + 1,
+        code_cell(CONDITIONAL_AUDIT_CODE, "conditional_audit_code"),
+    )
+
     explanations = [
         (
             "loss_reading",
@@ -699,7 +1527,7 @@ The notebook already creates the main figures above. Re-displaying every saved P
         ),
         (
             "image_grid_reading",
-            "image_grid_path = plot_dit_image_grid",
+            "image_grid_path = image_grid_paths",
             """### Reading the generated-map grid
 
 Read columns as increasing training-set size. The top row is one generated example and the bottom row is one real reference displayed with the same color limits.
@@ -731,7 +1559,7 @@ This is the FID-style check requested in the project discussion, using SSCD feat
         ),
         (
             "onepoint_reading",
-            "fidelity_plot_path = plot_dit_onepoint_pk",
+            "fidelity_plot_path = fidelity_plot_paths",
             """### Reading the physical-statistics figures
 
 For the one-point PDF, overlap with the black curve means the marginal pixel distribution is correct. For $P(k)$, agreement means the ratio stays close to one across all $k$ bins. Departures at high $k$ indicate incorrect small-scale structure even when the one-point distribution looks convincing.
