@@ -23,7 +23,8 @@ def test_batch_loss_axis_accounts_for_gradient_accumulation():
     source = notebook_source()
 
     assert "gradient_accumulation_steps" in source
-    assert source.count("micro_updates / grad_accum") >= 2
+    assert "x = micro_updates / grad_accum" in source
+    assert "0.5 * (window - 1) / grad_accum" in source
 
 
 def test_l16_audit_flags_novel_but_physically_invalid_samples():
@@ -33,3 +34,63 @@ def test_l16_audit_flags_novel_but_physically_invalid_samples():
     assert "novel_but_physically_invalid" in source
     assert "configuration_ok" in source
     assert "max_abs_pk_ratio_minus_1" in source
+
+
+def test_dit_notebook_plots_generated_samples_against_exact_training_subset():
+    source = notebook_source()
+
+    assert "Generated Samples Versus Nearest Training Slices" in source
+    assert "nearest_training_matches" in source
+    assert "nearest-training search requires the complete configured subset" in source
+    assert "'dit_l8,dit_base,dit_l16'" in source
+    assert "nf_generalize_fig2_{arch}_generated_vs_nearest_training.png" in source
+    assert "nf_generalize_fig2_{arch}_{audit_tag}_nearest_training_audit.png" in source
+
+
+def test_dit_notebook_tracks_nick_review_requests_and_distribution_distance():
+    source = notebook_source()
+
+    assert "Nick review checklist" in source
+    assert "answers the requested review questions directly" in source
+    assert "not capped for plotting" in source
+    assert "reports any plotting cap" not in source
+    assert "exact training subset used by that model" in source
+    assert "SSCD Fréchet distance" in source
+    assert "real-vs-real split baseline" in source
+    assert "frechet_feature_distance" in source
+    assert "real_split_frechet_baseline" in source
+    assert "generated_to_heldout_over_real_split" in source
+    assert "literal ImageNet Inception" in source
+
+
+def test_dit_notebook_covers_all_training_sizes_in_readable_blocks():
+    source = notebook_source()
+
+    assert "ALL_DATA_TAGS = [f'd2p{i:02d}' for i in range(6, 16)]" in source
+    assert "LOW_DATA_TAGS = ALL_DATA_TAGS[:5]" in source
+    assert "HIGH_DATA_TAGS = ALL_DATA_TAGS[5:]" in source
+    assert "requested tags are missing" in source
+    assert "max_count=5" not in source
+
+
+def test_dit_notebook_summarizes_physical_error_for_all_depths():
+    source = notebook_source()
+
+    assert "onepoint_hist_l1" in source
+    assert "pk_log_ratio_mae" in source
+    assert "pk_low_log_ratio_mae" in source
+    assert "pk_mid_log_ratio_mae" in source
+    assert "pk_high_log_ratio_mae" in source
+    assert "novelty versus physical-statistics error" in source
+
+
+def test_conditional_appendix_audits_full_parameter_vector_without_claiming_coverage():
+    source = notebook_source()
+
+    assert "Conditional Calibration Input Audit" in source
+    assert "expected_parameter_count = 6" in source
+    assert "theta_norm_repeated" in source
+    assert "theta_raw" in source
+    assert "heldout_indices_match_manifest" in source
+    assert "training_and_heldout_simulations_disjoint" in source
+    assert "seed-interval inclusion; not posterior coverage" in source
