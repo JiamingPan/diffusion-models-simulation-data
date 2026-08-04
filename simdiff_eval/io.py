@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import numpy as np
 
@@ -114,6 +114,46 @@ def load_real_reference_from_config(
             return full_reference
         indices = np.linspace(0, len(full_reference) - 1, int(max_slices), dtype=np.int64)
         return np.asarray(full_reference[indices], dtype=np.float32).copy()
+
+
+def iter_real_reference_batches_from_config(
+    config_path: str | Path,
+    raw_batch_size: int = 4,
+) -> Iterator[np.ndarray]:
+    """Yield the complete normalized training subset in bounded batches."""
+    import yaml
+
+    raw_batch_size = int(raw_batch_size)
+    if raw_batch_size < 1:
+        raise ValueError("raw_batch_size must be >= 1")
+
+    with open(config_path) as handle:
+        config: dict[str, Any] = yaml.safe_load(handle)
+    data_cfg = config["data"]
+    specs = _streaming_source_specs(data_cfg)
+    center, xmax = _full_normalization_stats(specs, data_cfg)
+
+    reshape = data_cfg.get("reshape")
+    two_dim = data_cfg.get("two_dim", True if reshape is None else reshape == "2d")
+    if not (two_dim or reshape == "2d"):
+        raise NotImplementedError("streaming reference batches support 2D slice configs only")
+    zthin = int(data_cfg.get("zthin", 1))
+    if zthin < 1:
+        raise ValueError("data.zthin must be >= 1")
+
+    for spec in specs:
+        selected = spec["selected"]
+        array = spec["array"]
+        for start in range(0, len(selected), raw_batch_size):
+            indices = selected[start : start + raw_batch_size]
+            raw = np.asarray(array[indices], dtype=np.float32)
+            if raw.ndim == 4:
+                images = raw[:, ::zthin].reshape(-1, *raw.shape[-2:])
+            elif raw.ndim == 3:
+                images = raw
+            else:
+                raise ValueError(f"Expected raw .npy data with 3 or 4 dimensions, got {raw.shape}")
+            yield _normalize_reference_slices(images, data_cfg, center, xmax)
 
 
 def configured_training_reference_info(config_path: str | Path) -> dict[str, Any]:

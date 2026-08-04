@@ -13,6 +13,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from simdiff_eval.io import (
     configured_training_reference_info,
+    iter_real_reference_batches_from_config,
     load_real_from_config,
     load_real_reference_from_config,
 )
@@ -207,6 +208,55 @@ class RealReferenceLoadingTests(unittest.TestCase):
 
         expected_indices = np.linspace(0, len(full) - 1, 7, dtype=np.int64)
         np.testing.assert_allclose(limited, full[expected_indices], rtol=1e-6, atol=1e-6)
+
+    def test_reference_batch_iterator_covers_exact_configured_subset(self):
+        cubes = np.arange(5 * 4 * 3 * 3, dtype=np.float32).reshape(5, 4, 3, 3) + 1.0
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            data_path = root / "fields.npy"
+            config_path = root / "config.yaml"
+            np.save(data_path, cubes)
+            config_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "data": {
+                            "img_path": str(data_path),
+                            "img_read_fn": "npy_read_fn",
+                            "n_samples": 4,
+                            "seed": 9,
+                            "reshape": "2d",
+                            "zthin": 2,
+                            "transform": ["log"],
+                            "normalization": "tanh",
+                            "norm_kwargs": {
+                                "center": None,
+                                "xmax": None,
+                                "alpha": 0.8,
+                                "beta": 10.0,
+                                "gamma": 1.0,
+                                "delta": 1.0,
+                                "sigma": 1.5,
+                            },
+                        }
+                    }
+                )
+            )
+
+            expected = load_real_from_config(config_path)
+            batches = list(
+                iter_real_reference_batches_from_config(
+                    config_path,
+                    raw_batch_size=3,
+                )
+            )
+
+        self.assertEqual([len(batch) for batch in batches], [6, 2])
+        np.testing.assert_allclose(
+            np.concatenate(batches, axis=0),
+            expected,
+            rtol=1e-6,
+            atol=1e-6,
+        )
 
 
 if __name__ == "__main__":
