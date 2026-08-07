@@ -210,3 +210,35 @@ def test_notebook_physics_sections_cover_all_ten_sizes_without_old_l16():
                         "d2p11", "d2p12", "d2p13", "d2p14", "d2p15"):
         assert dataset_tag in source
     assert "dpm50_cont_" not in source
+
+
+def test_notebook_sampler_audit_is_same_checkpoint_and_four_method_only():
+    source = code_source()
+    required = (
+        "DPM50",
+        "DPM100",
+        "DPM200",
+        "DDPM500",
+        "dpm50_fresh300k_v2",
+        "dpm100_fresh300k_v2",
+        "dpm200_fresh300k_v2",
+        "ddpm500_fresh300k_v2",
+        "validate_sample_archive_metadata",
+        "dit_l16_fresh300k_sampler_archive_audit.csv",
+        "dit_l16_fresh300k_sampler_physics_summary.csv",
+        "dit_l16_fresh300k_sampler_physics_summary.png",
+        "dit_l16_fresh300k_sampler_images_d2p08.png",
+        "submit_nf_generalize_fig2_dit_l16_fresh300k_v2_sampler_audit.sh",
+    )
+    for text in required:
+        assert text in source
+
+
+def test_notebook_sampler_audit_does_not_silently_compare_incomplete_archives():
+    source = code_source()
+    assert "controlled_comparison_complete" in source
+    assert "same_checkpoint" in source
+    assert "same_config" in source
+    assert "same_seed" in source
+    assert "same_sample_count" in source
+    assert "No controlled sampler comparison is drawn" in source
