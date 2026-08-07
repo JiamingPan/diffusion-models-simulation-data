@@ -40,3 +40,19 @@ tasks resume from their latest complete checkpoint.
 The older `fresh400k` staged workflow is retained only for provenance. Do not
 use it for new runs: its external checkpoint writer did not save every state
 file required by the strict resume path.
+
+### Same-checkpoint sampler audit
+
+The focused DiT notebook uses the completed DPM50 archives as its baseline.
+To test whether the fresh L16 results depend on solver length, submit the
+non-destructive sampler audit:
+
+```bash
+bash scripts/slurm/submit_nf_generalize_fig2_dit_l16_fresh300k_v2_sampler_audit.sh
+```
+
+This creates DPM100, DPM200, and DDPM500 archives for all ten exact fresh 300k
+checkpoints. The 30-task array runs at most two one-GPU tasks concurrently;
+each task has 24 hours. Existing archives are skipped by default. The notebook
+validates checkpoint, config, scheduler, step count, seed, and sample count
+before drawing any four-sampler comparison.
