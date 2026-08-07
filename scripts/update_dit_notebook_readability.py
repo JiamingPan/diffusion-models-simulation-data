@@ -1264,6 +1264,10 @@ checkpoint does not by itself establish a sampler failure. The final audit
 searches for alternate samples from the same checkpoint. A controlled sampler
 test requires the same checkpoint and initial noise with DPM50, higher-step
 DPM, and DDPM500.
+
+In the generated-map grid, rows labeled **generated draw 1--4** are archive indices 0 through 3 from one seeded sampling run.
+They use the same trained checkpoint, scheduler, and data-size configuration; they are not independently trained models.
+The four rows follow different initial diffusion-noise draws from the sampler's seeded random-number stream.
 '''.strip()
 
 
@@ -1437,7 +1441,7 @@ def plot_fresh_300k_generated_full_sweep(samples_per_size: int = 4) -> Path:
                     )
         for sample_index in range(samples_per_size):
             axes[block * samples_per_size + sample_index, 0].set_ylabel(
-                f'sample {sample_index + 1}',
+                f'generated draw {sample_index + 1}',
                 fontsize=12.5,
                 fontweight='semibold',
             )
@@ -1447,7 +1451,8 @@ def plot_fresh_300k_generated_full_sweep(samples_per_size: int = 4) -> Path:
         fontweight='semibold',
     )
     fig.text(
-        0.5, 0.94, 'All panels: DPM-Solver, 50 steps, seed 123',
+        0.5, 0.94,
+        'Rows are distinct noise draws from one checkpoint; DPM-Solver, 50 steps, archive seed 123',
         ha='center', fontsize=13, color='0.3',
     )
     out = QUICKCHECK_DIR / 'nf_generalize_fig2_dit_l16_fresh300k_v2_generated_full_sweep.png'
@@ -1891,6 +1896,118 @@ The PDF and $P(k)$ panels are separated into larger figures so their labels and 
     onepoint_code = find_cell(notebook, "def plot_dit_onepoint_pk")
     set_source(onepoint_code, EXPANDED_PHYSICAL_CODE)
 
+    comparison_intro = find_cell_any(
+        notebook,
+        (
+            "This is the main architecture comparison.",
+            "This is the main architecture comparison used for the current results.",
+        ),
+    )
+    set_source(
+        comparison_intro,
+        """## Mixed-budget depth comparison
+
+This is the main architecture comparison used for the current results. The UNet references and DiT-L8/L12 curves retain their historical 200k optimizer-update budget. The old DiT-L16 200k curve is removed and replaced by the complete, independently trained fresh 300k sweep over $2^6$ through $2^{15}$.
+
+Because the L16 budget differs, this figure tests the location and shape of the observed novelty transitions; it is not an equal-compute architecture benchmark. The title, subtitle, legend, and saved filename keep that distinction explicit.
+""",
+        clear_output=False,
+    )
+
+    architecture_code = find_cell(
+        notebook,
+        "combined_dit_unet_comparison = plot_dit_vs_unet_combined",
+    )
+    architecture_source = cell_source(architecture_code)
+    if "build_mixed_dit_metric_table" not in architecture_source:
+        architecture_source = architecture_source.replace(
+            "UNET_RESULTS_DIR = PROJECT_DIR / 'results' / 'nf_generalize_fig2'\n",
+            "from scripts.dit_300k_scaling_analysis import build_mixed_dit_metric_table\n\n"
+            "UNET_RESULTS_DIR = PROJECT_DIR / 'results' / 'nf_generalize_fig2'\n",
+            1,
+        )
+        fresh_tables = """
+
+FRESH_L16_300K_METRIC_PATHS = {
+    'PCA': TABLE_DIR / 'nf_generalize_fig2_dit_l16_fresh300k_v2_pca_full_nn_metrics.csv',
+    'SSCD': TABLE_DIR / 'nf_generalize_fig2_dit_l16_fresh300k_v2_sscd_full_nn_metrics.csv',
+}
+fresh_l16_300k_pca = add_generalization_columns(
+    read_csv_if_exists(FRESH_L16_300K_METRIC_PATHS['PCA'])
+)
+fresh_l16_300k_sscd = add_generalization_columns(
+    read_csv_if_exists(FRESH_L16_300K_METRIC_PATHS['SSCD'])
+)
+mixed_dit_pca = build_mixed_dit_metric_table(
+    pca_metrics,
+    fresh_l16_300k_pca,
+    feature='PCA',
+    score_column='gen_gl_q95',
+)
+mixed_dit_sscd = build_mixed_dit_metric_table(
+    sscd_metrics,
+    fresh_l16_300k_sscd,
+    feature='SSCD',
+    score_column='gen_gl_q95',
+)
+"""
+        table_anchor = (
+            "unet_sscd = add_generalization_columns(read_csv_if_exists(UNET_TABLE_DIR / "
+            "'nf_generalize_fig2_sscd_full_nn_metrics.csv'))\n"
+        )
+        if table_anchor not in architecture_source:
+            raise RuntimeError("Could not locate the UNet SSCD table load")
+        architecture_source = architecture_source.replace(
+            table_anchor,
+            table_anchor + fresh_tables,
+            1,
+        )
+
+    if "dit_legend_labels =" not in architecture_source:
+        architecture_source = architecture_source.replace(
+            "    dit_colors = {'dit_l8': '#009E73', 'dit_base': '#0072B2', 'dit_l16': '#CC79A7'}\n",
+            "    dit_colors = {'dit_l8': '#009E73', 'dit_base': '#0072B2', 'dit_l16': '#CC79A7'}\n"
+            "    dit_legend_labels = {\n"
+            "        'dit_l8': 'DiT-L8 (200k)',\n"
+            "        'dit_base': 'DiT-L12 / base (200k)',\n"
+            "        'dit_l16': 'DiT-L16 fresh 300k',\n"
+            "    }\n",
+            1,
+        )
+
+    if "legend_labels.append(dit_legend_labels[arch])" not in architecture_source:
+        legend_token = "            legend_labels.append(arch_label(arch))"
+        legend_index = architecture_source.rfind(legend_token)
+        if legend_index < 0:
+            raise RuntimeError("Could not locate the DiT legend label")
+        architecture_source = (
+            architecture_source[:legend_index]
+            + "            legend_labels.append(dit_legend_labels[arch])"
+            + architecture_source[legend_index + len(legend_token):]
+        )
+
+    architecture_source = architecture_source.replace(
+        "fig.suptitle('DiT depth sweep at fixed 200k updates', fontsize=27, y=0.97, fontweight='semibold')",
+        "fig.suptitle('DiT depth comparison with fresh L16 300k', fontsize=27, y=0.97, fontweight='semibold')",
+    )
+    architecture_source = architecture_source.replace(
+        "'UNet references and all DiT depths use 200k optimizer updates. High novelty does not guarantee physical fidelity.'",
+        "'UNet and DiT-L8/L12: 200k updates; fresh DiT-L16: 300k updates.'",
+    )
+    architecture_source = architecture_source.replace(
+        "nf_generalize_fig2_dit_depth_vs_unet_pca_sscd_{quantile}.png",
+        "nf_generalize_fig2_dit_depth_vs_unet_mixed_budget_pca_sscd_{quantile}.png",
+    )
+    architecture_source = architecture_source.replace(
+        "f'nf_generalize_fig2_dit_depth_vs_unet_mixed_budget_pca_sscd_{quantile}.png'",
+        "'nf_generalize_fig2_dit_depth_vs_unet_mixed_budget_pca_sscd_q95.png'",
+    )
+    architecture_source = architecture_source.replace(
+        "{'PCA': pca_metrics, 'SSCD': sscd_metrics},",
+        "{'PCA': mixed_dit_pca, 'SSCD': mixed_dit_sscd},",
+    )
+    set_source(architecture_code, architecture_source)
+
     validity_code = find_cell(notebook, "l16_validity_audit = build_l16_validity_audit()")
     validity_source = cell_source(validity_code)
     if "nf_generalize_fig2_dit_l16_novelty_vs_pk_error.png" not in validity_source:
@@ -2128,11 +2245,11 @@ L8 and L12 show the expected qualitative transition. The nonmonotonic L16 curve 
         (
             "fixed_budget_reading",
             "combined_dit_unet_comparison = plot_dit_vs_unet_combined",
-            """### Main fixed-budget comparison
+            """### Main mixed-budget comparison
 
-This is the cleanest architecture comparison because every displayed DiT depth uses the same 200k-update budget. The L8-to-L12 shift is qualitatively consistent with a deeper model needing more data before leaving the copy-like regime.
+The UNet references and DiT-L8/L12 curves use 200k optimizer updates. DiT-L16 uses the independent fresh 300k sweep. The old L16 200k curve is intentionally absent.
 
-The L16 points do not extend that trend cleanly because several small-data outputs are physically invalid. The clean 300k L16 rerun is evaluated separately rather than silently replacing points in this fixed-budget figure.
+This unequal-budget view is useful for comparing the observed transition locations after giving L16 more optimization, but it is not an equal-compute capacity benchmark. Read it together with the generated maps, nearest-training matches, SSCD distribution distance, and physical-statistics panels.
 """,
         ),
         (
