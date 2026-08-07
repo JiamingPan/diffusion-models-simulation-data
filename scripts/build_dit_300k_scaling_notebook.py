@@ -1139,6 +1139,306 @@ print('wrote', novelty_physics_path)
 """
 
 
+SAMPLER_AUDIT_CODE = r"""SAMPLER_AUDIT_SPECS = (
+    {
+        'method': 'DPM50',
+        'sample_label': 'dpm50_fresh300k_v2',
+        'scheduler': 'DPMSolverMultistepScheduler',
+        'num_steps': 50,
+    },
+    {
+        'method': 'DPM100',
+        'sample_label': 'dpm100_fresh300k_v2',
+        'scheduler': 'DPMSolverMultistepScheduler',
+        'num_steps': 100,
+    },
+    {
+        'method': 'DPM200',
+        'sample_label': 'dpm200_fresh300k_v2',
+        'scheduler': 'DPMSolverMultistepScheduler',
+        'num_steps': 200,
+    },
+    {
+        'method': 'DDPM500',
+        'sample_label': 'ddpm500_fresh300k_v2',
+        'scheduler': 'DDPMScheduler',
+        'num_steps': 500,
+    },
+)
+SAMPLER_AUDIT_COMMAND = (
+    'bash scripts/slurm/'
+    'submit_nf_generalize_fig2_dit_l16_fresh300k_v2_sampler_audit.sh'
+)
+SAMPLER_EXAMPLE_TAG = 'd2p08'
+SAMPLER_EXAMPLE_COUNT = 4
+sampler_example_indices = evenly_spaced_indices(
+    total=FRESH_SAMPLE_COUNT,
+    count=SAMPLER_EXAMPLE_COUNT,
+)
+
+sampler_audit_rows: list[dict[str, Any]] = []
+sampler_physics_rows: list[dict[str, Any]] = []
+sampler_example_images: dict[str, np.ndarray] = {}
+sampler_example_stats: dict[str, dict[str, Any]] = {}
+
+for row in sorted(fresh_manifest_rows, key=lambda item: int(item['dataset_size'])):
+    tag = str(row['dataset_tag'])
+    dataset_size = int(row['dataset_size'])
+    expected_checkpoint = resolve_repo_path(row['expected_checkpoint'])
+    expected_config = resolve_repo_path(row['config'])
+    for spec in SAMPLER_AUDIT_SPECS:
+        sample_path = (
+            FRESH_SAMPLE_DIR
+            / f'{row["run_name"]}_seed{FRESH_TRAINING_SEED}_{spec["sample_label"]}.npz'
+        )
+        audit = {
+            'dataset_tag': tag,
+            'dataset_size': dataset_size,
+            'method': spec['method'],
+            'sample_label': spec['sample_label'],
+            'scheduler_expected': spec['scheduler'],
+            'num_steps_expected': int(spec['num_steps']),
+            'sample_path': str(sample_path),
+            'exists': sample_path.exists(),
+            'valid_metadata': False,
+            'same_checkpoint': False,
+            'same_config': False,
+            'same_seed': False,
+            'same_sample_count': False,
+            'error': '',
+        }
+        if not sample_path.exists():
+            audit['error'] = 'missing archive'
+            sampler_audit_rows.append(audit)
+            continue
+
+        try:
+            with np.load(sample_path, allow_pickle=False) as payload:
+                archive = {name: np.asarray(payload[name]) for name in payload.files}
+            metadata = validate_sample_archive_metadata(
+                archive,
+                expected_checkpoint=expected_checkpoint,
+                expected_config_path=expected_config,
+                expected_scheduler=str(spec['scheduler']),
+                expected_num_steps=int(spec['num_steps']),
+                expected_seed=FRESH_TRAINING_SEED,
+                expected_samples=FRESH_SAMPLE_COUNT,
+            )
+            audit.update({
+                'valid_metadata': True,
+                'same_checkpoint': metadata['resolved_checkpoint'] == str(expected_checkpoint),
+                'same_config': metadata['config_path'] == str(expected_config),
+                'same_seed': metadata['seed'] == FRESH_TRAINING_SEED,
+                'same_sample_count': metadata['n_generated'] == FRESH_SAMPLE_COUNT,
+            })
+            generated = as_nchw(np.asarray(archive['samples'], dtype=np.float32))
+            generated_stats = aggregate_physical_batches(
+                [generated],
+                hist_edges=PHYSICAL_HIST_EDGES,
+                nbins=PK_NBINS,
+            )
+            errors = per_sample_physical_errors(
+                generated,
+                reference_hist=physical_by_tag[tag]['real']['hist'],
+                hist_edges=PHYSICAL_HIST_EDGES,
+                reference_mean_pk=physical_by_tag[tag]['real']['mean_pk'],
+                nbins=PK_NBINS,
+            )
+            sampler_physics_rows.append({
+                'dataset_tag': tag,
+                'dataset_size': dataset_size,
+                'method': spec['method'],
+                'sample_label': spec['sample_label'],
+                'scheduler': metadata['scheduler'],
+                'num_steps': metadata['num_steps'],
+                'hist_l1_median': float(np.nanmedian(errors['hist_l1'])),
+                'hist_l1_q95': float(np.nanquantile(errors['hist_l1'], 0.95)),
+                'pk_log10_mae_median': float(np.nanmedian(errors['pk_log10_mae'])),
+                'pk_log10_mae_q95': float(np.nanquantile(errors['pk_log10_mae'], 0.95)),
+            })
+            if tag == SAMPLER_EXAMPLE_TAG:
+                sampler_example_images[str(spec['method'])] = generated[
+                    sampler_example_indices, 0
+                ].copy()
+                sampler_example_stats[str(spec['method'])] = generated_stats
+            del generated, archive
+        except Exception as exc:
+            audit['error'] = f'{type(exc).__name__}: {exc}'
+        sampler_audit_rows.append(audit)
+
+sampler_audit = pd.DataFrame(sampler_audit_rows)
+valid_counts = sampler_audit.groupby('dataset_tag')['valid_metadata'].sum()
+complete_tags = tuple(
+    tag for tag in DATASET_TAGS if int(valid_counts.get(tag, 0)) == len(SAMPLER_AUDIT_SPECS)
+)
+sampler_audit['controlled_comparison_complete'] = sampler_audit['dataset_tag'].isin(
+    complete_tags
+)
+sampler_archive_audit_path = (
+    QUICKCHECK_DIR / 'dit_l16_fresh300k_sampler_archive_audit.csv'
+)
+sampler_audit.to_csv(sampler_archive_audit_path, index=False)
+display(sampler_audit)
+print('wrote', sampler_archive_audit_path)
+
+sampler_physics_summary = pd.DataFrame(sampler_physics_rows)
+sampler_physics_summary_path = (
+    QUICKCHECK_DIR / 'dit_l16_fresh300k_sampler_physics_summary.csv'
+)
+sampler_physics_summary.to_csv(sampler_physics_summary_path, index=False)
+display(sampler_physics_summary)
+print('wrote', sampler_physics_summary_path)
+
+if complete_tags:
+    controlled = sampler_physics_summary[
+        sampler_physics_summary['dataset_tag'].isin(complete_tags)
+    ].copy()
+    method_styles = {
+        'DPM50': ('#0072B2', 'o'),
+        'DPM100': ('#009E73', 's'),
+        'DPM200': ('#D55E00', '^'),
+        'DDPM500': ('#CC79A7', 'D'),
+    }
+    fig, axes = plt.subplots(1, 2, figsize=(14.5, 5.5), sharex=True)
+    for method, (color, marker) in method_styles.items():
+        rows = controlled[controlled['method'] == method].sort_values('dataset_size')
+        x = np.log2(rows['dataset_size'].to_numpy(float))
+        axes[0].plot(
+            x,
+            rows['hist_l1_median'],
+            color=color,
+            marker=marker,
+            lw=2.1,
+            label=method,
+        )
+        axes[1].plot(
+            x,
+            rows['pk_log10_mae_median'],
+            color=color,
+            marker=marker,
+            lw=2.1,
+            label=method,
+        )
+    for axis, ylabel in zip(
+        axes,
+        ('Median one-point L1 error', 'Median P(k) log10 MAE'),
+    ):
+        axis.set_xticks(
+            DATASET_POWERS,
+            [rf'$2^{{{power}}}$' for power in DATASET_POWERS],
+        )
+        axis.set_xlabel(r'Training images $N_{2D}$')
+        axis.set_ylabel(ylabel)
+        axis.grid(axis='y', alpha=0.18)
+    axes[1].legend(frameon=False, ncol=2)
+    fig.suptitle(
+        'Same-checkpoint sampler audit: fresh DiT-L16 at 300k updates',
+        fontsize=18,
+        fontweight='semibold',
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.91))
+    sampler_summary_plot = (
+        QUICKCHECK_DIR / 'dit_l16_fresh300k_sampler_physics_summary.png'
+    )
+    fig.savefig(sampler_summary_plot, bbox_inches='tight')
+    plt.show()
+    print('wrote', sampler_summary_plot)
+else:
+    display(Markdown(
+        '**No controlled sampler comparison is drawn.** The DPM100, DPM200, '
+        'and DDPM500 archives are not all present and provenance-valid. Run:\n\n'
+        f'```bash\n{SAMPLER_AUDIT_COMMAND}\n```'
+    ))
+
+if SAMPLER_EXAMPLE_TAG in complete_tags:
+    example_values = np.concatenate([
+        sampler_example_images[str(spec['method'])].reshape(-1)
+        for spec in SAMPLER_AUDIT_SPECS
+    ])
+    sampler_vmin, sampler_vmax = np.quantile(example_values, [0.005, 0.995])
+    fig, axes = plt.subplots(
+        len(SAMPLER_AUDIT_SPECS),
+        SAMPLER_EXAMPLE_COUNT,
+        figsize=(12.5, 12.0),
+        constrained_layout=True,
+    )
+    for row_index, spec in enumerate(SAMPLER_AUDIT_SPECS):
+        method = str(spec['method'])
+        for column, sample_index in enumerate(sampler_example_indices):
+            axis = axes[row_index, column]
+            axis.imshow(
+                sampler_example_images[method][column],
+                cmap='viridis',
+                vmin=sampler_vmin,
+                vmax=sampler_vmax,
+            )
+            axis.set_xticks([])
+            axis.set_yticks([])
+            if row_index == 0:
+                axis.set_title(f'sample {sample_index}')
+            if column == 0:
+                axis.set_ylabel(method, fontweight='semibold')
+    fig.suptitle(
+        r'Fresh DiT-L16 at 300k: same noise seed, different samplers ($N_{2D}=2^8$)',
+        fontsize=17,
+        fontweight='semibold',
+    )
+    sampler_image_path = (
+        QUICKCHECK_DIR / 'dit_l16_fresh300k_sampler_images_d2p08.png'
+    )
+    fig.savefig(sampler_image_path, bbox_inches='tight')
+    plt.show()
+    print('wrote', sampler_image_path)
+
+    fig, axes = plt.subplots(1, 2, figsize=(14.0, 5.4))
+    centers = 0.5 * (PHYSICAL_HIST_EDGES[:-1] + PHYSICAL_HIST_EDGES[1:])
+    axes[0].plot(
+        centers,
+        physical_by_tag[SAMPLER_EXAMPLE_TAG]['real']['hist'],
+        color='black',
+        lw=2.4,
+        label='exact training subset',
+    )
+    for spec in SAMPLER_AUDIT_SPECS:
+        method = str(spec['method'])
+        color = method_styles[method][0]
+        stats = sampler_example_stats[method]
+        axes[0].plot(centers, stats['hist'], color=color, lw=1.8, label=method)
+        ratio = np.divide(
+            stats['mean_pk'],
+            physical_by_tag[SAMPLER_EXAMPLE_TAG]['real']['mean_pk'],
+            out=np.full(PK_NBINS, np.nan),
+            where=physical_by_tag[SAMPLER_EXAMPLE_TAG]['real']['mean_pk'] > 0,
+        )
+        axes[1].plot(stats['kbins'], ratio, color=color, lw=1.8, label=method)
+    axes[0].set_yscale('log')
+    axes[0].set_xlabel('Normalized field value')
+    axes[0].set_ylabel('Pixel PDF')
+    axes[0].legend(frameon=False, fontsize=9)
+    axes[1].axhline(1.0, color='black', ls='--', lw=1.4)
+    axes[1].set_xlabel(r'$k$ bin')
+    axes[1].set_ylabel(r'$P_{generated}(k)/P_{real}(k)$')
+    axes[1].legend(frameon=False, fontsize=9, ncol=2)
+    fig.suptitle(
+        r'Same-checkpoint sampler physics at $N_{2D}=2^8$',
+        fontsize=18,
+        fontweight='semibold',
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.91))
+    sampler_physics_d2p08_path = (
+        QUICKCHECK_DIR / 'dit_l16_fresh300k_sampler_physics_d2p08.png'
+    )
+    fig.savefig(sampler_physics_d2p08_path, bbox_inches='tight')
+    plt.show()
+    print('wrote', sampler_physics_d2p08_path)
+else:
+    display(Markdown(
+        f'No four-sampler image or physics panel is drawn for '
+        f'`{SAMPLER_EXAMPLE_TAG}` until all four controlled archives validate.'
+    ))
+"""
+
+
 SECTION_MARKDOWN = (
     (
         "input-audit",
@@ -1248,6 +1548,7 @@ SECTION_CODE = {
     "one-point": (ONE_POINT_CODE,),
     "power-spectrum": (POWER_SPECTRUM_CODE,),
     "outliers": (OUTLIER_AND_NOVELTY_CODE,),
+    "sampler": (SAMPLER_AUDIT_CODE,),
 }
 
 
