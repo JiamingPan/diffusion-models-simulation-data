@@ -183,6 +183,11 @@ def test_notebook_streams_exact_reference_physics_and_plots_full_sweep():
         "dit_l16_fresh300k_pk_ratio_all_sizes.png",
         "dit_l16_fresh300k_pk_log2_heatmap.png",
         "dit_l16_fresh300k_physics_per_sample.csv",
+        "PHYSICS_METRIC_VERSION",
+        "sample_sha256",
+        "config_sha256",
+        "np.savez_compressed",
+        "physics_cache_hit",
     )
     for text in required:
         assert text in source

@@ -806,40 +806,118 @@ print('wrote', nearest_distribution_path)
 ONE_POINT_CODE = r"""PHYSICAL_HIST_EDGES = np.linspace(-1.0, 1.0, 141, dtype=np.float64)
 PK_NBINS = 30
 PHYSICAL_REAL_RAW_BATCH_SIZE = 4
+PHYSICS_METRIC_VERSION = 'fresh-l16-300k-physical-v1'
+
+
+def sha256_file(path: Path, *, chunk_bytes: int = 8 * 1024 * 1024) -> str:
+    digest = hashlib.sha256()
+    with path.open('rb') as handle:
+        while True:
+            chunk = handle.read(chunk_bytes)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def physics_cache_identity(bundle: dict[str, Any]) -> tuple[Path, str, str]:
+    sample_sha256 = sha256_file(bundle['sample_path'])
+    config_sha256 = sha256_file(bundle['config_path'])
+    digest = hashlib.sha256()
+    digest.update(PHYSICS_METRIC_VERSION.encode())
+    digest.update(sample_sha256.encode())
+    digest.update(config_sha256.encode())
+    digest.update(PHYSICAL_HIST_EDGES.tobytes())
+    digest.update(str(PK_NBINS).encode())
+    cache_path = CACHE_DIR / f'{bundle["manifest"]["dataset_tag"]}_{digest.hexdigest()[:24]}.npz'
+    return cache_path, sample_sha256, config_sha256
 
 physical_by_tag: dict[str, dict[str, Any]] = {}
 physics_rows: list[dict[str, Any]] = []
 physical_audit_rows: list[dict[str, Any]] = []
 for tag in DATASET_TAGS:
     bundle = fresh_sample_bundles[tag]
-    real_stats = aggregate_physical_batches(
-        iter_real_reference_batches_from_config(
-            bundle['config_path'],
-            raw_batch_size=PHYSICAL_REAL_RAW_BATCH_SIZE,
-        ),
-        hist_edges=PHYSICAL_HIST_EDGES,
-        nbins=PK_NBINS,
-    )
     expected_real = int(bundle['reference_info']['configured_slices'])
+    cache_path, sample_sha256, config_sha256 = physics_cache_identity(bundle)
+    physics_cache_hit = cache_path.exists()
+    if physics_cache_hit:
+        with np.load(cache_path, allow_pickle=False) as cached:
+            if str(cached['metric_version'].item()) != PHYSICS_METRIC_VERSION:
+                raise ValueError(f'{tag}: cached physical metric version mismatch')
+            if str(cached['sample_sha256'].item()) != sample_sha256:
+                raise ValueError(f'{tag}: cached sample checksum mismatch')
+            if str(cached['config_sha256'].item()) != config_sha256:
+                raise ValueError(f'{tag}: cached config checksum mismatch')
+            real_stats = {
+                'hist': np.asarray(cached['real_hist']),
+                'hist_edges': np.asarray(cached['hist_edges']),
+                'kbins': np.asarray(cached['kbins']),
+                'mean_pk': np.asarray(cached['real_mean_pk']),
+                'n_images': int(cached['real_n_images'].item()),
+                'n_pixels': int(cached['real_n_pixels'].item()),
+                'pixel_coverage': float(cached['real_pixel_coverage'].item()),
+            }
+            generated_stats = {
+                'hist': np.asarray(cached['generated_hist']),
+                'hist_edges': np.asarray(cached['hist_edges']),
+                'kbins': np.asarray(cached['kbins']),
+                'mean_pk': np.asarray(cached['generated_mean_pk']),
+                'n_images': int(cached['generated_n_images'].item()),
+                'n_pixels': int(cached['generated_n_pixels'].item()),
+                'pixel_coverage': float(cached['generated_pixel_coverage'].item()),
+            }
+            errors = {
+                'hist_l1': np.asarray(cached['hist_l1']),
+                'pk_log10_mae': np.asarray(cached['pk_log10_mae']),
+            }
+    else:
+        real_stats = aggregate_physical_batches(
+            iter_real_reference_batches_from_config(
+                bundle['config_path'],
+                raw_batch_size=PHYSICAL_REAL_RAW_BATCH_SIZE,
+            ),
+            hist_edges=PHYSICAL_HIST_EDGES,
+            nbins=PK_NBINS,
+        )
+        generated = bundle['generated']
+        generated_stats = aggregate_physical_batches(
+            [generated],
+            hist_edges=PHYSICAL_HIST_EDGES,
+            nbins=PK_NBINS,
+        )
+        errors = per_sample_physical_errors(
+            generated,
+            reference_hist=real_stats['hist'],
+            hist_edges=real_stats['hist_edges'],
+            reference_mean_pk=real_stats['mean_pk'],
+            nbins=PK_NBINS,
+        )
+        np.savez_compressed(
+            cache_path,
+            metric_version=np.asarray(PHYSICS_METRIC_VERSION),
+            sample_sha256=np.asarray(sample_sha256),
+            config_sha256=np.asarray(config_sha256),
+            hist_edges=np.asarray(real_stats['hist_edges']),
+            kbins=np.asarray(real_stats['kbins']),
+            real_hist=np.asarray(real_stats['hist']),
+            real_mean_pk=np.asarray(real_stats['mean_pk']),
+            real_n_images=np.asarray(real_stats['n_images']),
+            real_n_pixels=np.asarray(real_stats['n_pixels']),
+            real_pixel_coverage=np.asarray(real_stats['pixel_coverage']),
+            generated_hist=np.asarray(generated_stats['hist']),
+            generated_mean_pk=np.asarray(generated_stats['mean_pk']),
+            generated_n_images=np.asarray(generated_stats['n_images']),
+            generated_n_pixels=np.asarray(generated_stats['n_pixels']),
+            generated_pixel_coverage=np.asarray(generated_stats['pixel_coverage']),
+            hist_l1=np.asarray(errors['hist_l1']),
+            pk_log10_mae=np.asarray(errors['pk_log10_mae']),
+        )
+
     if int(real_stats['n_images']) != expected_real:
         raise ValueError(
             f'{tag}: physical reference streamed {real_stats["n_images"]} images; '
             f'expected configured_slices={expected_real}'
         )
-
-    generated = bundle['generated']
-    generated_stats = aggregate_physical_batches(
-        [generated],
-        hist_edges=PHYSICAL_HIST_EDGES,
-        nbins=PK_NBINS,
-    )
-    errors = per_sample_physical_errors(
-        generated,
-        reference_hist=real_stats['hist'],
-        hist_edges=real_stats['hist_edges'],
-        reference_mean_pk=real_stats['mean_pk'],
-        nbins=PK_NBINS,
-    )
     if not np.allclose(real_stats['kbins'], generated_stats['kbins'], equal_nan=True):
         raise ValueError(f'{tag}: real and generated Fourier bins differ')
 
@@ -859,8 +937,12 @@ for tag in DATASET_TAGS:
         'generated_pixel_coverage': float(generated_stats['pixel_coverage']),
         'histogram_bins': len(PHYSICAL_HIST_EDGES) - 1,
         'pk_bins': PK_NBINS,
+        'physics_cache_hit': physics_cache_hit,
+        'sample_sha256': sample_sha256,
+        'config_sha256': config_sha256,
+        'cache_path': str(cache_path),
     })
-    for generated_index in range(len(generated)):
+    for generated_index in range(len(errors['hist_l1'])):
         physics_rows.append({
             'dataset_tag': tag,
             'dataset_size': int(bundle['manifest']['dataset_size']),
