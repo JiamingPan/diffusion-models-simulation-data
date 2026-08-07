@@ -595,3 +595,211 @@ def streaming_nearest_neighbors(
         "nearest_images": best_images,
         "n_training": int(training_offset),
     }
+
+
+def _as_nchw_float(images: np.ndarray) -> np.ndarray:
+    """Normalize an image batch to finite ``(N, C, H, W)`` float64 data."""
+
+    batch = np.asarray(images, dtype=np.float64)
+    if batch.ndim == 3:
+        batch = batch[:, None, :, :]
+    if batch.ndim != 4 or len(batch) == 0:
+        raise ValueError("images must be a non-empty (N,H,W) or (N,C,H,W) batch")
+    if not np.all(np.isfinite(batch)):
+        raise ValueError("images contain non-finite values")
+    return batch
+
+
+def _radial_power_geometry(
+    image_shape: tuple[int, int],
+    *,
+    nbins: int,
+) -> tuple[np.ndarray, tuple[np.ndarray, ...]]:
+    """Return common radial-bin centers and masks for a 2D Fourier grid."""
+
+    height, width = (int(image_shape[0]), int(image_shape[1]))
+    nbins = int(nbins)
+    if height <= 1 or width <= 1 or nbins <= 0:
+        raise ValueError("image dimensions and nbins must be positive")
+
+    ky = np.fft.fftfreq(height) * height
+    kx = np.fft.fftfreq(width) * width
+    radius = np.sqrt(ky[:, None] ** 2 + kx[None, :] ** 2)
+    positive = radius > 0
+    edges = np.linspace(radius[positive].min(), radius[positive].max(), nbins + 1)
+    masks: list[np.ndarray] = []
+    for index in range(nbins):
+        mask = positive & (radius >= edges[index]) & (radius < edges[index + 1])
+        masks.append(mask)
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    return centers, tuple(masks)
+
+
+def _batch_radial_power(
+    images: np.ndarray,
+    *,
+    nbins: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute one azimuthally averaged power spectrum per image."""
+
+    batch = _as_nchw_float(images)
+    if batch.shape[1] != 1:
+        raise ValueError(f"expected one image channel, found {batch.shape[1]}")
+    height, width = batch.shape[-2:]
+    kbins, masks = _radial_power_geometry((height, width), nbins=nbins)
+
+    centered = batch - batch.mean(axis=(-2, -1), keepdims=True)
+    fourier = np.fft.fft2(centered, axes=(-2, -1))
+    power = np.abs(fourier) ** 2 / float(height * width)
+    power = power[:, 0]
+
+    spectra = np.full((len(batch), len(masks)), np.nan, dtype=np.float64)
+    for index, mask in enumerate(masks):
+        if np.any(mask):
+            spectra[:, index] = power[:, mask].mean(axis=1)
+    return kbins, spectra
+
+
+def _validated_hist_edges(hist_edges: Sequence[float]) -> np.ndarray:
+    edges = np.asarray(hist_edges, dtype=np.float64)
+    if (
+        edges.ndim != 1
+        or len(edges) < 2
+        or not np.all(np.isfinite(edges))
+        or np.any(np.diff(edges) <= 0)
+    ):
+        raise ValueError("hist_edges must be finite, increasing, and one-dimensional")
+    return edges
+
+
+def aggregate_physical_batches(
+    batches: Iterable[np.ndarray],
+    *,
+    hist_edges: Sequence[float],
+    nbins: int,
+) -> dict[str, Any]:
+    """Stream an exact image subset into a pixel PDF and mean radial spectrum.
+
+    Histogram counts and power sums are accumulated before normalization, so
+    the answer is invariant to how the exact subset is partitioned into batches.
+    """
+
+    edges = _validated_hist_edges(hist_edges)
+    expected_shape: tuple[int, ...] | None = None
+    histogram_counts = np.zeros(len(edges) - 1, dtype=np.int64)
+    power_sum = np.zeros(int(nbins), dtype=np.float64)
+    power_count = np.zeros(int(nbins), dtype=np.int64)
+    kbins: np.ndarray | None = None
+    n_images = 0
+    n_pixels = 0
+    in_range_pixels = 0
+
+    for values in batches:
+        batch = _as_nchw_float(values)
+        if expected_shape is None:
+            expected_shape = batch.shape[1:]
+        elif batch.shape[1:] != expected_shape:
+            raise ValueError(
+                f"image shape changed from {expected_shape} to {batch.shape[1:]}"
+            )
+
+        batch_counts, _ = np.histogram(batch.reshape(-1), bins=edges)
+        histogram_counts += batch_counts
+        in_range_pixels += int(batch_counts.sum())
+        n_images += int(len(batch))
+        n_pixels += int(batch.size)
+
+        batch_kbins, spectra = _batch_radial_power(batch, nbins=int(nbins))
+        if kbins is None:
+            kbins = batch_kbins
+        elif not np.allclose(kbins, batch_kbins, rtol=0.0, atol=0.0):
+            raise ValueError("Fourier-bin geometry changed between batches")
+        finite = np.isfinite(spectra)
+        power_sum += np.nansum(spectra, axis=0)
+        power_count += finite.sum(axis=0)
+
+    if n_images == 0 or kbins is None:
+        raise ValueError("no images were provided")
+    if in_range_pixels == 0:
+        raise ValueError("no pixels fall inside hist_edges")
+
+    widths = np.diff(edges)
+    histogram = histogram_counts / (float(in_range_pixels) * widths)
+    mean_pk = np.divide(
+        power_sum,
+        power_count,
+        out=np.full_like(power_sum, np.nan),
+        where=power_count > 0,
+    )
+    return {
+        "hist": histogram,
+        "hist_counts": histogram_counts,
+        "hist_edges": edges,
+        "kbins": kbins,
+        "mean_pk": mean_pk,
+        "n_images": n_images,
+        "n_pixels": n_pixels,
+        "pixel_coverage": in_range_pixels / float(n_pixels),
+    }
+
+
+def per_sample_physical_errors(
+    images: np.ndarray,
+    *,
+    reference_hist: Sequence[float],
+    hist_edges: Sequence[float],
+    reference_mean_pk: Sequence[float],
+    nbins: int,
+) -> dict[str, np.ndarray]:
+    """Retain per-sample PDF and power errors instead of only their means."""
+
+    batch = _as_nchw_float(images)
+    edges = _validated_hist_edges(hist_edges)
+    reference_histogram = np.asarray(reference_hist, dtype=np.float64)
+    if reference_histogram.shape != (len(edges) - 1,):
+        raise ValueError(
+            "reference histogram length must equal len(hist_edges) - 1"
+        )
+    if not np.all(np.isfinite(reference_histogram)):
+        raise ValueError("reference histogram contains non-finite values")
+
+    reference_pk = np.asarray(reference_mean_pk, dtype=np.float64)
+    if reference_pk.shape != (int(nbins),):
+        raise ValueError("reference mean power length must equal nbins")
+
+    widths = np.diff(edges)
+    sample_histograms = np.empty((len(batch), len(edges) - 1), dtype=np.float64)
+    for index, image in enumerate(batch):
+        counts, _ = np.histogram(image.reshape(-1), bins=edges)
+        included = int(counts.sum())
+        if included == 0:
+            sample_histograms[index] = np.nan
+        else:
+            sample_histograms[index] = counts / (float(included) * widths)
+
+    hist_l1 = np.nansum(
+        np.abs(sample_histograms - reference_histogram[None, :]) * widths[None, :],
+        axis=1,
+    )
+    kbins, sample_pk = _batch_radial_power(batch, nbins=int(nbins))
+    valid_reference = np.isfinite(reference_pk) & (reference_pk > 0)
+    pk_ratio = np.divide(
+        sample_pk,
+        reference_pk[None, :],
+        out=np.full_like(sample_pk, np.nan),
+        where=valid_reference[None, :],
+    )
+    valid_ratio = np.isfinite(pk_ratio) & (pk_ratio > 0)
+    log_error = np.full_like(pk_ratio, np.nan)
+    log_error[valid_ratio] = np.abs(np.log10(pk_ratio[valid_ratio]))
+    with np.errstate(invalid="ignore"):
+        pk_log10_mae = np.nanmean(log_error, axis=1)
+
+    return {
+        "hist_l1": hist_l1,
+        "pk_log10_mae": pk_log10_mae,
+        "pk_ratio": pk_ratio,
+        "per_sample_hist": sample_histograms,
+        "per_sample_pk": sample_pk,
+        "kbins": kbins,
+    }

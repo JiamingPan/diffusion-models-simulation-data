@@ -111,11 +111,13 @@ from scripts.dit_300k_scaling_analysis import (
     FRESH_SWEEP_NAME,
     FRESH_TRAINING_SEED,
     MODEL_PARAMETER_COUNTS,
+    aggregate_physical_batches,
     build_historical_unet_metric_table,
     build_mixed_dit_metric_table,
     evenly_spaced_indices,
     interpolate_n50,
     normalize_generalization_table,
+    per_sample_physical_errors,
     prepare_loss_history,
     require_exact_dataset_sweep,
     streaming_nearest_neighbors,
@@ -801,6 +803,342 @@ print('wrote', nearest_distribution_path)
 """
 
 
+ONE_POINT_CODE = r"""PHYSICAL_HIST_EDGES = np.linspace(-1.0, 1.0, 141, dtype=np.float64)
+PK_NBINS = 30
+PHYSICAL_REAL_RAW_BATCH_SIZE = 4
+
+physical_by_tag: dict[str, dict[str, Any]] = {}
+physics_rows: list[dict[str, Any]] = []
+physical_audit_rows: list[dict[str, Any]] = []
+for tag in DATASET_TAGS:
+    bundle = fresh_sample_bundles[tag]
+    real_stats = aggregate_physical_batches(
+        iter_real_reference_batches_from_config(
+            bundle['config_path'],
+            raw_batch_size=PHYSICAL_REAL_RAW_BATCH_SIZE,
+        ),
+        hist_edges=PHYSICAL_HIST_EDGES,
+        nbins=PK_NBINS,
+    )
+    expected_real = int(bundle['reference_info']['configured_slices'])
+    if int(real_stats['n_images']) != expected_real:
+        raise ValueError(
+            f'{tag}: physical reference streamed {real_stats["n_images"]} images; '
+            f'expected configured_slices={expected_real}'
+        )
+
+    generated = bundle['generated']
+    generated_stats = aggregate_physical_batches(
+        [generated],
+        hist_edges=PHYSICAL_HIST_EDGES,
+        nbins=PK_NBINS,
+    )
+    errors = per_sample_physical_errors(
+        generated,
+        reference_hist=real_stats['hist'],
+        hist_edges=real_stats['hist_edges'],
+        reference_mean_pk=real_stats['mean_pk'],
+        nbins=PK_NBINS,
+    )
+    if not np.allclose(real_stats['kbins'], generated_stats['kbins'], equal_nan=True):
+        raise ValueError(f'{tag}: real and generated Fourier bins differ')
+
+    physical_by_tag[tag] = {
+        'real': real_stats,
+        'generated': generated_stats,
+        'errors': errors,
+    }
+    physical_audit_rows.append({
+        'dataset_tag': tag,
+        'dataset_size': int(bundle['manifest']['dataset_size']),
+        'real_reference': 'exact model training subset',
+        'configured_slices': expected_real,
+        'real_images_streamed': int(real_stats['n_images']),
+        'generated_images': int(generated_stats['n_images']),
+        'real_pixel_coverage': float(real_stats['pixel_coverage']),
+        'generated_pixel_coverage': float(generated_stats['pixel_coverage']),
+        'histogram_bins': len(PHYSICAL_HIST_EDGES) - 1,
+        'pk_bins': PK_NBINS,
+    })
+    for generated_index in range(len(generated)):
+        physics_rows.append({
+            'dataset_tag': tag,
+            'dataset_size': int(bundle['manifest']['dataset_size']),
+            'generated_index': generated_index,
+            'hist_l1': float(errors['hist_l1'][generated_index]),
+            'pk_log10_mae': float(errors['pk_log10_mae'][generated_index]),
+        })
+
+physical_audit = pd.DataFrame(physical_audit_rows)
+physics_per_sample = pd.DataFrame(physics_rows)
+physics_audit_path = QUICKCHECK_DIR / 'dit_l16_fresh300k_physics_reference_audit.csv'
+physics_per_sample_path = QUICKCHECK_DIR / 'dit_l16_fresh300k_physics_per_sample.csv'
+physical_audit.to_csv(physics_audit_path, index=False)
+physics_per_sample.to_csv(physics_per_sample_path, index=False)
+display(physical_audit)
+display(physics_per_sample.groupby(['dataset_tag', 'dataset_size']).agg(
+    hist_l1_median=('hist_l1', 'median'),
+    hist_l1_q95=('hist_l1', lambda values: values.quantile(0.95)),
+    pk_log10_mae_median=('pk_log10_mae', 'median'),
+    pk_log10_mae_q95=('pk_log10_mae', lambda values: values.quantile(0.95)),
+).reset_index())
+print('wrote', physics_audit_path)
+print('wrote', physics_per_sample_path)
+
+hist_centers = 0.5 * (PHYSICAL_HIST_EDGES[:-1] + PHYSICAL_HIST_EDGES[1:])
+positive_hist_values = np.concatenate([
+    np.concatenate([
+        physical_by_tag[tag]['real']['hist'],
+        physical_by_tag[tag]['generated']['hist'],
+    ])
+    for tag in DATASET_TAGS
+])
+positive_hist_values = positive_hist_values[
+    np.isfinite(positive_hist_values) & (positive_hist_values > 0)
+]
+hist_ymin = max(float(positive_hist_values.min()) * 0.7, 1e-8)
+hist_ymax = float(positive_hist_values.max()) * 1.45
+
+fig, axes = plt.subplots(2, 5, figsize=(18.0, 7.8), sharex=True, sharey=True)
+for axis, tag, power in zip(axes.flat, DATASET_TAGS, DATASET_POWERS):
+    curves = physical_by_tag[tag]
+    axis.plot(hist_centers, curves['real']['hist'], color='black', lw=2.2)
+    axis.plot(hist_centers, curves['generated']['hist'], color='#B33C86', lw=2.2)
+    axis.set_yscale('log')
+    axis.set_ylim(hist_ymin, hist_ymax)
+    axis.set_xlim(PHYSICAL_HIST_EDGES[0], PHYSICAL_HIST_EDGES[-1])
+    axis.set_title(rf'$N_{{2D}}=2^{{{power}}}$', fontweight='semibold')
+    axis.grid(alpha=0.14)
+for axis in axes[-1, :]:
+    axis.set_xlabel('Normalized field value')
+for axis in axes[:, 0]:
+    axis.set_ylabel('Pixel PDF')
+fig.suptitle(
+    'Fresh DiT-L16 one-point distributions at 300k updates',
+    fontsize=21,
+    fontweight='semibold',
+)
+fig.legend(
+    handles=[
+        Line2D([0], [0], color='black', lw=2.2, label='exact model training subset'),
+        Line2D([0], [0], color='#B33C86', lw=2.2, label='generated (DPM50)'),
+    ],
+    loc='upper center',
+    bbox_to_anchor=(0.5, 0.93),
+    ncol=2,
+    frameon=False,
+)
+fig.subplots_adjust(left=0.07, right=0.99, bottom=0.10, top=0.83, hspace=0.34, wspace=0.14)
+onepoint_path = QUICKCHECK_DIR / 'dit_l16_fresh300k_onepoint_all_sizes.png'
+fig.savefig(onepoint_path, bbox_inches='tight')
+plt.show()
+print('wrote', onepoint_path)
+"""
+
+
+POWER_SPECTRUM_CODE = r"""mean_pk_ratios: dict[str, np.ndarray] = {}
+for tag in DATASET_TAGS:
+    real_pk = physical_by_tag[tag]['real']['mean_pk']
+    generated_pk = physical_by_tag[tag]['generated']['mean_pk']
+    mean_pk_ratios[tag] = np.divide(
+        generated_pk,
+        real_pk,
+        out=np.full_like(generated_pk, np.nan),
+        where=np.isfinite(real_pk) & (real_pk > 0),
+    )
+
+all_finite_ratios = np.concatenate([
+    ratio[np.isfinite(ratio)] for ratio in mean_pk_ratios.values()
+])
+ratio_ymax = max(2.0, 1.08 * float(all_finite_ratios.max()))
+
+fig, axes = plt.subplots(2, 5, figsize=(18.0, 7.8), sharex=True, sharey=True)
+for axis, tag, power in zip(axes.flat, DATASET_TAGS, DATASET_POWERS):
+    kbins = physical_by_tag[tag]['real']['kbins']
+    axis.plot(kbins, mean_pk_ratios[tag], color='#B33C86', marker='o', ms=3.7, lw=2.0)
+    axis.axhline(1.0, color='black', ls='--', lw=1.3)
+    axis.set_ylim(0, ratio_ymax)
+    axis.set_title(rf'$N_{{2D}}=2^{{{power}}}$', fontweight='semibold')
+    axis.grid(alpha=0.14)
+for axis in axes[-1, :]:
+    axis.set_xlabel(r'$k$ bin')
+for axis in axes[:, 0]:
+    axis.set_ylabel(r'$P_{generated}(k)/P_{real}(k)$')
+fig.suptitle(
+    'Fresh DiT-L16 power-spectrum ratios at 300k updates',
+    fontsize=21,
+    fontweight='semibold',
+)
+fig.text(
+    0.5,
+    0.925,
+    'Every denominator is the exact model training subset; every panel uses the full common vertical range.',
+    ha='center',
+    fontsize=12.5,
+    color='0.3',
+)
+fig.subplots_adjust(left=0.07, right=0.99, bottom=0.10, top=0.82, hspace=0.34, wspace=0.14)
+pk_ratio_path = QUICKCHECK_DIR / 'dit_l16_fresh300k_pk_ratio_all_sizes.png'
+fig.savefig(pk_ratio_path, bbox_inches='tight')
+plt.show()
+print('wrote', pk_ratio_path)
+
+pk_ratio_matrix = np.vstack([mean_pk_ratios[tag] for tag in DATASET_TAGS])
+with np.errstate(divide='ignore', invalid='ignore'):
+    pk_log2_matrix = np.log2(pk_ratio_matrix)
+finite_log2 = pk_log2_matrix[np.isfinite(pk_log2_matrix)]
+color_limit = max(0.25, float(np.max(np.abs(finite_log2))))
+
+fig, axis = plt.subplots(figsize=(13.0, 6.1))
+image = axis.imshow(
+    pk_log2_matrix,
+    aspect='auto',
+    origin='lower',
+    cmap='RdBu_r',
+    vmin=-color_limit,
+    vmax=color_limit,
+    interpolation='nearest',
+)
+axis.set_yticks(range(len(DATASET_POWERS)), [rf'$2^{{{power}}}$' for power in DATASET_POWERS])
+axis.set_xlabel(r'$k$ bin')
+axis.set_ylabel(r'Training images $N_{2D}$')
+axis.set_title(
+    r'Scale-resolved power error: $\log_2[P_{generated}(k)/P_{real}(k)]$',
+    fontweight='semibold',
+)
+colorbar = fig.colorbar(image, ax=axis, pad=0.02)
+colorbar.set_label('log2 power ratio (zero is agreement)')
+fig.tight_layout()
+pk_heatmap_path = QUICKCHECK_DIR / 'dit_l16_fresh300k_pk_log2_heatmap.png'
+fig.savefig(pk_heatmap_path, bbox_inches='tight')
+plt.show()
+print('wrote', pk_heatmap_path)
+"""
+
+
+OUTLIER_AND_NOVELTY_CODE = r"""physics_summary_rows = []
+for tag, power in zip(DATASET_TAGS, DATASET_POWERS):
+    rows = physics_per_sample[physics_per_sample['dataset_tag'] == tag]
+    physics_summary_rows.append({
+        'dataset_tag': tag,
+        'dataset_size': 2 ** power,
+        'hist_l1_median': rows['hist_l1'].median(),
+        'hist_l1_q25': rows['hist_l1'].quantile(0.25),
+        'hist_l1_q75': rows['hist_l1'].quantile(0.75),
+        'hist_l1_q95': rows['hist_l1'].quantile(0.95),
+        'hist_l1_max': rows['hist_l1'].max(),
+        'pk_log10_mae_median': rows['pk_log10_mae'].median(),
+        'pk_log10_mae_q25': rows['pk_log10_mae'].quantile(0.25),
+        'pk_log10_mae_q75': rows['pk_log10_mae'].quantile(0.75),
+        'pk_log10_mae_q95': rows['pk_log10_mae'].quantile(0.95),
+        'pk_log10_mae_max': rows['pk_log10_mae'].max(),
+    })
+physics_summary = pd.DataFrame(physics_summary_rows)
+
+fig, axes = plt.subplots(1, 2, figsize=(14.5, 5.5))
+for axis, prefix, label, color in (
+    (axes[0], 'hist_l1', 'Per-sample one-point L1 error', '#D55E00'),
+    (axes[1], 'pk_log10_mae', 'Per-sample P(k) log10 MAE', '#0072B2'),
+):
+    x = np.asarray(DATASET_POWERS, dtype=float)
+    median = physics_summary[f'{prefix}_median'].to_numpy(float)
+    q25 = physics_summary[f'{prefix}_q25'].to_numpy(float)
+    q75 = physics_summary[f'{prefix}_q75'].to_numpy(float)
+    q95 = physics_summary[f'{prefix}_q95'].to_numpy(float)
+    maximum = physics_summary[f'{prefix}_max'].to_numpy(float)
+    axis.fill_between(x, q25, q75, color=color, alpha=0.22, label='interquartile range')
+    axis.plot(x, median, color=color, marker='o', lw=2.3, label='median')
+    axis.plot(x, q95, color=color, marker='^', lw=1.7, ls='--', label='95th percentile')
+    axis.scatter(x, maximum, marker='x', s=54, color='black', label='maximum', zorder=4)
+    axis.set_xticks(x, [rf'$2^{{{power}}}$' for power in DATASET_POWERS])
+    axis.set_xlabel(r'Training images $N_{2D}$')
+    axis.set_ylabel(label)
+    axis.grid(axis='y', alpha=0.18)
+    axis.legend(frameon=False, fontsize=9.5)
+fig.suptitle(
+    'Fresh DiT-L16 physical-error tails at 300k updates (512 generations per size)',
+    fontsize=18,
+    fontweight='semibold',
+)
+fig.tight_layout(rect=(0, 0, 1, 0.91))
+physics_tail_path = QUICKCHECK_DIR / 'dit_l16_fresh300k_physics_error_tails.png'
+fig.savefig(physics_tail_path, bbox_inches='tight')
+plt.show()
+print('wrote', physics_tail_path)
+
+sscd_l16 = mixed_metric_by_feature['SSCD']
+sscd_l16 = sscd_l16[sscd_l16['arch'] == 'dit_l16'][
+    ['dataset_tag', 'dataset_size', 'gen_gl_q95']
+]
+novelty_physics = sscd_l16.merge(
+    physics_summary,
+    on=['dataset_tag', 'dataset_size'],
+    validate='one_to_one',
+)
+
+query_physics = nearest_queries.merge(
+    physics_per_sample,
+    left_on=['dataset_tag', 'dataset_size', 'query_index'],
+    right_on=['dataset_tag', 'dataset_size', 'generated_index'],
+    how='inner',
+    validate='one_to_one',
+)
+if len(query_physics) != len(nearest_queries):
+    raise ValueError('Nearest-query and per-sample physics tables did not match one-to-one')
+query_physics['pixel nearest novelty'] = 1.0 - query_physics['nearest_cosine_similarity']
+
+fig, axes = plt.subplots(1, 3, figsize=(17.0, 5.3))
+for axis, y_column, y_label in (
+    (axes[0], 'hist_l1_median', 'Median one-point L1 error'),
+    (axes[1], 'pk_log10_mae_median', 'Median P(k) log10 MAE'),
+):
+    scatter = axis.scatter(
+        novelty_physics['gen_gl_q95'],
+        novelty_physics[y_column],
+        c=np.log2(novelty_physics['dataset_size']),
+        cmap='viridis',
+        s=82,
+        edgecolor='white',
+        linewidth=0.8,
+    )
+    for _, row in novelty_physics.iterrows():
+        axis.annotate(
+            rf'$2^{{{int(np.log2(row["dataset_size"]))}}}$',
+            (row['gen_gl_q95'], row[y_column]),
+            xytext=(5, 5),
+            textcoords='offset points',
+            fontsize=9,
+        )
+    axis.set_xlabel('SSCD q95 novelty')
+    axis.set_ylabel(y_label)
+    axis.grid(alpha=0.16)
+
+query_scatter = axes[2].scatter(
+    query_physics['pixel nearest novelty'],
+    query_physics['pk_log10_mae'],
+    c=np.log2(query_physics['dataset_size']),
+    cmap='viridis',
+    s=25,
+    alpha=0.64,
+)
+axes[2].set_xlabel('Pixel nearest novelty (1 - nearest cosine)')
+axes[2].set_ylabel('Per-sample P(k) log10 MAE')
+axes[2].grid(alpha=0.16)
+colorbar = fig.colorbar(query_scatter, ax=axes, pad=0.015, fraction=0.025)
+colorbar.set_label(r'$\log_2 N_{2D}$')
+fig.suptitle(
+    'Novelty and physical validity are separate diagnostics',
+    fontsize=19,
+    fontweight='semibold',
+)
+fig.subplots_adjust(left=0.07, right=0.92, bottom=0.16, top=0.84, wspace=0.30)
+novelty_physics_path = QUICKCHECK_DIR / 'dit_l16_fresh300k_novelty_vs_physics.png'
+fig.savefig(novelty_physics_path, bbox_inches='tight')
+plt.show()
+print('wrote', novelty_physics_path)
+"""
+
+
 SECTION_MARKDOWN = (
     (
         "input-audit",
@@ -907,6 +1245,9 @@ SECTION_CODE = {
     "optimization": (OPTIMIZATION_CODE,),
     "generated-fields": (GENERATED_FIELDS_CODE,),
     "nearest-training": (NEAREST_TRAINING_CODE,),
+    "one-point": (ONE_POINT_CODE,),
+    "power-spectrum": (POWER_SPECTRUM_CODE,),
+    "outliers": (OUTLIER_AND_NOVELTY_CODE,),
 }
 
 
