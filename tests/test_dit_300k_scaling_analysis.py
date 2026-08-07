@@ -12,9 +12,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.dit_300k_scaling_analysis import (
+    build_historical_unet_metric_table,
+    build_mixed_dit_metric_table,
     expected_dataset_tags,
     interpolate_n50,
+    normalize_generalization_table,
     require_exact_dataset_sweep,
+    summarize_n50,
     validate_sample_archive_metadata,
 )
 
@@ -102,6 +106,109 @@ def test_interpolate_n50_rejects_ambiguous_nonmonotonic_crossings():
     assert result.status == "ambiguous"
     assert np.isnan(result.n50)
     assert result.crossing_count == 3
+
+
+def test_normalize_generalization_table_derives_score_tag_and_size():
+    table = pd.DataFrame(
+        {
+            "arch": ["dit_l8"],
+            "run_name": ["nf_fig2_dit_l8_d2p06_noaug_200k"],
+            "gen_copy_fraction_q95": [0.75],
+        }
+    )
+
+    result = normalize_generalization_table(table, context="historical")
+
+    assert result.loc[0, "dataset_tag"] == "d2p06"
+    assert result.loc[0, "dataset_size"] == 64
+    assert result.loc[0, "gen_gl_q95"] == pytest.approx(0.25)
+
+
+def test_build_mixed_dit_metric_table_uses_only_fresh_l16_rows():
+    historical = pd.concat(
+        [
+            sweep_table(arch="dit_l8"),
+            sweep_table(arch="dit_base"),
+            sweep_table(arch="dit_l16").assign(gen_gl_q95=0.99),
+        ],
+        ignore_index=True,
+    )
+    fresh = sweep_table(arch="dit_l16").assign(gen_gl_q95=0.42)
+
+    result = build_mixed_dit_metric_table(
+        historical,
+        fresh,
+        feature="PCA",
+    )
+
+    assert len(result) == 30
+    assert set(result["arch"]) == {"dit_l8", "dit_base", "dit_l16"}
+    assert set(result.loc[result["arch"] == "dit_l16", "gen_gl_q95"]) == {0.42}
+    assert set(result.loc[result["arch"] == "dit_l16", "updates_k"]) == {300}
+    assert set(result.loc[result["arch"] != "dit_l16", "updates_k"]) == {200}
+    assert set(result.loc[result["arch"] == "dit_l16", "source"]) == {
+        "fresh independent 300k v2"
+    }
+
+
+def test_build_mixed_dit_metric_table_rejects_incomplete_fresh_l16():
+    historical = pd.concat(
+        [sweep_table(arch="dit_l8"), sweep_table(arch="dit_base")],
+        ignore_index=True,
+    )
+    fresh = sweep_table(arch="dit_l16").iloc[:-1]
+
+    with pytest.raises(ValueError, match="fresh independent L16 300k"):
+        build_mixed_dit_metric_table(historical, fresh, feature="SSCD")
+
+
+def test_build_historical_unet_metric_table_requires_all_models_and_sizes():
+    table = pd.concat(
+        [
+            sweep_table(arch="u64"),
+            sweep_table(arch="u128"),
+            sweep_table(arch="u256"),
+        ],
+        ignore_index=True,
+    )
+
+    result = build_historical_unet_metric_table(table, feature="PCA")
+
+    assert len(result) == 30
+    assert set(result["arch"]) == {"u64", "u128", "u256"}
+    assert set(result["updates_k"]) == {200}
+    assert set(result["source"]) == {"historical fixed 200k"}
+
+
+def test_build_historical_unet_metric_table_rejects_missing_architecture():
+    table = pd.concat(
+        [sweep_table(arch="u64"), sweep_table(arch="u128")], ignore_index=True
+    )
+
+    with pytest.raises(ValueError, match="historical UNet-256"):
+        build_historical_unet_metric_table(table, feature="SSCD")
+
+
+def test_summarize_n50_preserves_censoring_and_mixed_budget_labels():
+    table = pd.concat(
+        [
+            sweep_table(arch="dit_l8").assign(
+                feature="PCA", model_label="DiT-L8 200k", updates_k=200
+            ),
+            sweep_table(arch="dit_l16").assign(
+                feature="PCA", model_label="DiT-L16 fresh 300k", updates_k=300
+            ),
+        ],
+        ignore_index=True,
+    )
+    table.loc[table["arch"] == "dit_l8", "gen_gl_q95"] = 0.9
+    table.loc[table["arch"] == "dit_l16", "gen_gl_q95"] = 0.1
+
+    result = summarize_n50(table)
+
+    statuses = result.set_index("arch")["status"].to_dict()
+    assert statuses == {"dit_l8": "left_censored", "dit_l16": "right_censored"}
+    assert set(result["updates_k"]) == {200, 300}
 
 
 def valid_sample_metadata(tmp_path: Path) -> dict[str, object]:

@@ -87,3 +87,22 @@ def test_notebook_resolves_project_root_and_imports_analysis_helpers():
     assert "FRESH_SWEEP_NAME" in source
     assert "QUICKCHECK_DIR" in source
     assert "CACHE_DIR" in source
+
+
+def test_notebook_builds_fresh_mixed_budget_transition_and_n50_outputs():
+    source = code_source()
+    required = (
+        "build_mixed_dit_metric_table",
+        "normalize_generalization_table",
+        "summarize_n50",
+        "nf_generalize_fig2_dit_l16_fresh300k_v2_pca_full_nn_metrics.csv",
+        "nf_generalize_fig2_dit_l16_fresh300k_v2_sscd_full_nn_metrics.csv",
+        "dit_300k_mixed_budget_transition_full.png",
+        "dit_300k_mixed_budget_transition_zoom.png",
+        "dit_300k_transition_n50.csv",
+        "dit_300k_capacity_n50_diagnostic.png",
+        "build_historical_unet_metric_table",
+        "fresh independent 300k v2",
+    )
+    for text in required:
+        assert text in source

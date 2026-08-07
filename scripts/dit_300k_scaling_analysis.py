@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
@@ -25,6 +26,19 @@ DIT_LABELS = {
     "dit_base": "DiT-L12 / base 200k",
     "dit_l16": "DiT-L16 fresh 300k",
 }
+UNET_LABELS = {
+    "u64": "UNet-64 historical 200k",
+    "u128": "UNet-128 historical 200k",
+    "u256": "UNet-256 historical 200k",
+}
+MODEL_PARAMETER_COUNTS = {
+    "u64": 26_621_057,
+    "dit_l8": 95_000_000,
+    "dit_base": 138_290_000,
+    "u128": 140_539_521,
+    "dit_l16": 182_000_000,
+    "u256": 196_059_905,
+}
 
 FRESH_SWEEP_NAME = "nf_generalize_fig2_dit_l16_fresh300k_v2"
 FRESH_SAMPLE_LABEL = "dpm50_fresh300k_v2"
@@ -38,6 +52,137 @@ def expected_dataset_tags() -> tuple[str, ...]:
     """Return the ordered dataset tags required by every full-sweep figure."""
 
     return DATASET_TAGS
+
+
+def _dataset_tag_from_text(value: Any) -> str | None:
+    match = re.search(r"d2p(\d+)", str(value))
+    if match is None:
+        return None
+    return f"d2p{int(match.group(1)):02d}"
+
+
+def _dataset_size_from_tag(value: Any) -> float:
+    tag = _dataset_tag_from_text(value)
+    return float(2 ** int(tag[-2:])) if tag is not None else float("nan")
+
+
+def normalize_generalization_table(
+    table: pd.DataFrame,
+    *,
+    context: str,
+) -> pd.DataFrame:
+    """Normalize dataset identifiers and generalization-score column names."""
+
+    if table.empty:
+        raise ValueError(f"{context}: table is empty")
+    result = table.copy()
+    if "arch" not in result.columns:
+        raise ValueError(f"{context}: missing columns ['arch']")
+
+    if "dataset_tag" not in result.columns:
+        source_column = "run_name" if "run_name" in result.columns else None
+        if source_column is None:
+            raise ValueError(f"{context}: cannot derive dataset_tag without run_name")
+        result["dataset_tag"] = result[source_column].map(_dataset_tag_from_text)
+    else:
+        result["dataset_tag"] = result["dataset_tag"].map(_dataset_tag_from_text)
+
+    if "dataset_size" not in result.columns:
+        result["dataset_size"] = result["dataset_tag"].map(_dataset_size_from_tag)
+    result["dataset_size"] = pd.to_numeric(result["dataset_size"], errors="coerce")
+
+    for quantile in ("q50", "q68", "q90", "q95", "q99"):
+        score_column = f"gen_gl_{quantile}"
+        copy_column = f"gen_copy_fraction_{quantile}"
+        legacy_copy_column = f"copy_fraction_{quantile}"
+        if score_column not in result.columns and copy_column in result.columns:
+            result[score_column] = 1.0 - pd.to_numeric(
+                result[copy_column], errors="coerce"
+            )
+        if score_column not in result.columns and legacy_copy_column in result.columns:
+            result[score_column] = 1.0 - pd.to_numeric(
+                result[legacy_copy_column], errors="coerce"
+            )
+
+    invalid_tags = sorted(
+        result.loc[result["dataset_tag"].isna()].index.astype(str).tolist()
+    )
+    if invalid_tags:
+        raise ValueError(f"{context}: could not derive dataset tags for rows {invalid_tags}")
+    return result
+
+
+def build_mixed_dit_metric_table(
+    historical_table: pd.DataFrame,
+    fresh_l16_table: pd.DataFrame,
+    *,
+    feature: str,
+    score_column: str = "gen_gl_q95",
+) -> pd.DataFrame:
+    """Build the L8/L12 200k plus independently trained L16 300k table."""
+
+    historical = normalize_generalization_table(
+        historical_table, context=f"historical {feature} DiT"
+    )
+    fresh = normalize_generalization_table(
+        fresh_l16_table, context=f"fresh independent L16 300k {feature}"
+    )
+
+    frames: list[pd.DataFrame] = []
+    for arch in ("dit_l8", "dit_base"):
+        selected = require_exact_dataset_sweep(
+            historical,
+            arch=arch,
+            value_columns=(score_column,),
+            context=f"historical {feature} {DIT_LABELS[arch]}",
+        )
+        selected["updates_k"] = DIT_UPDATE_BUDGETS[arch] // 1_000
+        selected["model_label"] = DIT_LABELS[arch]
+        selected["source"] = "historical fixed 200k"
+        frames.append(selected)
+
+    selected = require_exact_dataset_sweep(
+        fresh,
+        arch="dit_l16",
+        value_columns=(score_column,),
+        context=f"fresh independent L16 300k {feature}",
+    )
+    selected["updates_k"] = DIT_UPDATE_BUDGETS["dit_l16"] // 1_000
+    selected["model_label"] = DIT_LABELS["dit_l16"]
+    selected["source"] = "fresh independent 300k v2"
+    frames.append(selected)
+
+    result = pd.concat(frames, ignore_index=True)
+    result["feature"] = str(feature).upper()
+    return result
+
+
+def build_historical_unet_metric_table(
+    table: pd.DataFrame,
+    *,
+    feature: str,
+    score_column: str = "gen_gl_q95",
+) -> pd.DataFrame:
+    """Build complete historical 200k UNet reference curves."""
+
+    normalized = normalize_generalization_table(
+        table, context=f"historical UNet {feature}"
+    )
+    frames: list[pd.DataFrame] = []
+    for arch in ("u64", "u128", "u256"):
+        selected = require_exact_dataset_sweep(
+            normalized,
+            arch=arch,
+            value_columns=(score_column,),
+            context=f"historical {UNET_LABELS[arch].replace(' 200k', '')}",
+        )
+        selected["updates_k"] = 200
+        selected["model_label"] = UNET_LABELS[arch]
+        selected["source"] = "historical fixed 200k"
+        frames.append(selected)
+    result = pd.concat(frames, ignore_index=True)
+    result["feature"] = str(feature).upper()
+    return result
 
 
 def require_exact_dataset_sweep(
@@ -160,6 +305,52 @@ def interpolate_n50(
         (float(sizes[index]), float(sizes[index + 1])),
         1,
     )
+
+
+def summarize_n50(
+    table: pd.DataFrame,
+    *,
+    score_column: str = "gen_gl_q95",
+) -> pd.DataFrame:
+    """Summarize q95 transition locations without hiding censoring."""
+
+    required = {
+        "feature",
+        "arch",
+        "model_label",
+        "updates_k",
+        "dataset_size",
+        score_column,
+    }
+    missing = sorted(required - set(table.columns))
+    if missing:
+        raise ValueError(f"transition summary: missing columns {missing}")
+
+    rows: list[dict[str, Any]] = []
+    groups = table.groupby(["feature", "arch", "model_label"], sort=True)
+    for (feature, arch, label), group in groups:
+        update_values = pd.to_numeric(group["updates_k"], errors="coerce").dropna().unique()
+        if len(update_values) != 1:
+            raise ValueError(
+                f"transition summary: {feature}/{arch} has update budgets {update_values.tolist()}"
+            )
+        result = interpolate_n50(group["dataset_size"], group[score_column])
+        rows.append(
+            {
+                "feature": feature,
+                "arch": arch,
+                "model_label": label,
+                "updates_k": int(update_values[0]),
+                "score_column": score_column,
+                "n50": result.n50,
+                "log2_n50": float(np.log2(result.n50)) if np.isfinite(result.n50) else np.nan,
+                "status": result.status,
+                "crossing_count": result.crossing_count,
+                "interval_low": result.interval[0] if result.interval else np.nan,
+                "interval_high": result.interval[1] if result.interval else np.nan,
+            }
+        )
+    return pd.DataFrame(rows).sort_values(["feature", "updates_k", "arch"]).reset_index(drop=True)
 
 
 def scalar_value(value: Any) -> Any:
