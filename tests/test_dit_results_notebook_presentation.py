@@ -36,22 +36,6 @@ def test_l16_audit_flags_novel_but_physically_invalid_samples():
     assert "max_abs_pk_ratio_minus_1" in source
 
 
-def test_continuation_is_not_presented_as_a_depth_scaling_curve():
-    source = notebook_source()
-
-    assert "Complete 200k-update depth comparison" in source
-    assert "Low-data DiT-L16 checkpoint diagnostic (not a scaling curve)" in source
-    assert "DiT depth comparison with continued L16 checkpoints" not in source
-    assert "optimizer and learning-rate scheduler state" in source
-
-
-def test_continuation_image_grid_uses_multiple_samples_per_checkpoint():
-    source = notebook_source()
-
-    assert "generated[:4, 0]" in source
-    assert "four generated maps per checkpoint" in source
-
-
 def test_dit_notebook_plots_generated_samples_against_exact_training_subset():
     source = notebook_source()
 
@@ -87,6 +71,7 @@ def test_dit_notebook_covers_all_training_sizes_in_readable_blocks():
     assert "HIGH_DATA_TAGS = ALL_DATA_TAGS[5:]" in source
     assert "requested tags are missing" in source
     assert "max_count=5" not in source
+    assert "high_data_pk_ratio_zoom" not in source
 
 
 def test_dit_notebook_summarizes_physical_error_for_all_depths():
@@ -110,3 +95,43 @@ def test_conditional_appendix_audits_full_parameter_vector_without_claiming_cove
     assert "heldout_indices_match_manifest" in source
     assert "training_and_heldout_simulations_disjoint" in source
     assert "seed-interval inclusion; not posterior coverage" in source
+
+
+def test_fresh_300k_l16_diagnostics_use_matching_samples_without_legacy_fallback():
+    source = notebook_source()
+
+    assert "Fresh 300k DiT-L16 Samples and Physical Statistics" in source
+    assert "FRESH_MANIFEST_PATH" in source
+    assert "FRESH_EXPECTED_SAMPLE_LABEL = 'dpm50_fresh300k_v2'" in source
+    assert "fresh_300k_sample_audit_pass" in source
+    assert "requested_checkpoint_matches_manifest" in source
+    assert "resolved_checkpoint_matches_manifest" in source
+    assert "stored_config_matches_manifest" in source
+    assert "Legacy 200k samples are intentionally not used as a fallback" in source
+    assert "DPMSolverMultistepScheduler" in source
+    assert "(fresh_300k_sample_audit_df['num_steps'] == 50).all()" in source
+    assert "(fresh_300k_sample_audit_df['n_generated'] == 512).all()" in source
+
+
+def test_fresh_300k_l16_figures_span_all_ten_data_sizes_as_standalone_outputs():
+    source = notebook_source()
+
+    assert "nf_generalize_fig2_dit_l16_fresh300k_v2_generated_full_sweep.png" in source
+    assert "nf_generalize_fig2_dit_l16_fresh300k_v2_onepoint_full_sweep.png" in source
+    assert "nf_generalize_fig2_dit_l16_fresh300k_v2_pk_ratio_full_sweep.png" in source
+    assert "nf_generalize_fig2_dit_l16_fresh300k_v2_pk_log2_error.png" in source
+    assert "nf_generalize_fig2_dit_l16_fresh300k_v2_nearest_full_sweep.png" in source
+    assert "DIT_FRESH_IMAGES_PER_SIZE" in source
+    assert "samples_per_size: int = 4" in source
+    assert "streaming_nearest_training_match" in source
+    assert "FRESH_EXPECTED_TAGS[:5]" in source
+    assert "FRESH_EXPECTED_TAGS[5:]" in source
+
+
+def test_fresh_300k_sampler_audit_requires_same_checkpoint_comparison():
+    source = notebook_source()
+
+    assert "Sampler adequacy audit" in source
+    assert "No controlled sampler comparison is available yet" in source
+    assert "same_expected_checkpoint" in source
+    assert "DPM100 or DPM200 and DDPM500" in source
