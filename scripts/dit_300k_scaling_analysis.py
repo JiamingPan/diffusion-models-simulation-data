@@ -503,3 +503,95 @@ def validate_sample_archive_metadata(
         "seed": seed,
         "n_generated": int(len(samples)),
     }
+
+
+def evenly_spaced_indices(*, total: int, count: int) -> np.ndarray:
+    """Choose deterministic, unique sample indices spanning an archive."""
+
+    total = int(total)
+    count = int(count)
+    if total <= 0:
+        raise ValueError("total must be positive")
+    if count <= 0:
+        raise ValueError("count must be positive")
+    if count > total:
+        raise ValueError("count cannot exceed total")
+    if count == 1:
+        return np.asarray([0], dtype=int)
+    return np.rint(np.linspace(0, total - 1, count)).astype(int)
+
+
+def streaming_nearest_neighbors(
+    generated: np.ndarray,
+    training_batches: Iterable[np.ndarray],
+) -> dict[str, Any]:
+    """Find each query's MSE-nearest training image without loading all training data.
+
+    Pairwise distances use the squared-norm identity, so memory scales with the
+    current training batch rather than query x training x pixels.
+    """
+
+    queries = np.asarray(generated, dtype=np.float32)
+    if queries.ndim < 2 or len(queries) == 0:
+        raise ValueError("generated must contain at least one image")
+    image_shape = queries.shape[1:]
+    query_flat = queries.reshape(len(queries), -1).astype(np.float64, copy=False)
+    pixels = query_flat.shape[1]
+    query_norm2 = np.einsum("ij,ij->i", query_flat, query_flat)
+    query_norm = np.sqrt(query_norm2)
+
+    best_mse = np.full(len(queries), np.inf, dtype=float)
+    best_cosine = np.full(len(queries), np.nan, dtype=float)
+    best_index = np.full(len(queries), -1, dtype=int)
+    best_images = np.empty((len(queries), *image_shape), dtype=np.float32)
+    training_offset = 0
+
+    for batch in training_batches:
+        images = np.asarray(batch, dtype=np.float32)
+        if images.ndim != queries.ndim or images.shape[1:] != image_shape:
+            raise ValueError(
+                f"training image shape {images.shape[1:]} does not match "
+                f"generated image shape {image_shape}"
+            )
+        if len(images) == 0:
+            continue
+
+        training_flat = images.reshape(len(images), -1).astype(np.float64, copy=False)
+        training_norm2 = np.einsum("ij,ij->i", training_flat, training_flat)
+        dot = query_flat @ training_flat.T
+        pair_mse = (
+            query_norm2[:, None] + training_norm2[None, :] - 2.0 * dot
+        ) / pixels
+        pair_mse = np.maximum(pair_mse, 0.0)
+
+        local_index = np.argmin(pair_mse, axis=1)
+        local_mse = pair_mse[np.arange(len(queries)), local_index]
+        improved = local_mse < best_mse
+        if np.any(improved):
+            query_index = np.flatnonzero(improved)
+            selected_local = local_index[improved]
+            denominator = query_norm[improved] * np.sqrt(training_norm2[selected_local])
+            cosine = np.divide(
+                dot[query_index, selected_local],
+                denominator,
+                out=np.zeros_like(denominator),
+                where=denominator > 0,
+            )
+            best_mse[improved] = local_mse[improved]
+            best_cosine[improved] = cosine
+            best_index[improved] = training_offset + selected_local
+            best_images[improved] = images[selected_local]
+        training_offset += len(images)
+
+    if training_offset == 0:
+        raise ValueError("no training samples were provided")
+    if np.any(best_index < 0):
+        raise RuntimeError("nearest-neighbor search did not resolve every query")
+
+    return {
+        "nearest_index": best_index,
+        "mse": best_mse,
+        "cosine_similarity": best_cosine,
+        "nearest_images": best_images,
+        "n_training": int(training_offset),
+    }

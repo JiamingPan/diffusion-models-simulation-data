@@ -80,7 +80,7 @@ import numpy as np
 import pandas as pd
 import yaml
 from IPython.display import Markdown, display
-
+from matplotlib.lines import Line2D
 
 def resolve_project_root(start: Path | None = None) -> Path:
     current = (start or Path.cwd()).resolve()
@@ -94,6 +94,11 @@ PROJECT_DIR = resolve_project_root()
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
+from simdiff_eval.io import (
+    as_nchw,
+    configured_training_reference_info,
+    iter_real_reference_batches_from_config,
+)
 from scripts.dit_300k_scaling_analysis import (
     DATASET_POWERS,
     DATASET_SIZES,
@@ -108,10 +113,12 @@ from scripts.dit_300k_scaling_analysis import (
     MODEL_PARAMETER_COUNTS,
     build_historical_unet_metric_table,
     build_mixed_dit_metric_table,
+    evenly_spaced_indices,
     interpolate_n50,
     normalize_generalization_table,
     prepare_loss_history,
     require_exact_dataset_sweep,
+    streaming_nearest_neighbors,
     summarize_n50,
     validate_sample_archive_metadata,
 )
@@ -529,6 +536,271 @@ print('wrote', fresh_tail_plot_path)
 """
 
 
+GENERATED_FIELDS_CODE = r"""DISPLAY_SAMPLE_COUNT = 4
+
+
+def resolve_repo_path(value: str | Path) -> Path:
+    path = Path(str(value)).expanduser()
+    return path.resolve() if path.is_absolute() else (PROJECT_DIR / path).resolve()
+
+
+def fresh_sample_path(row: dict[str, Any]) -> Path:
+    return resolve_repo_path(
+        str(row['sample_path']).format(
+            seed=FRESH_TRAINING_SEED,
+            sample_label=FRESH_SAMPLE_LABEL,
+        )
+    )
+
+
+fresh_sample_bundles: dict[str, dict[str, Any]] = {}
+fresh_sample_audit_rows = []
+for row in sorted(fresh_manifest_rows, key=lambda item: int(item['dataset_size'])):
+    tag = str(row['dataset_tag'])
+    if str(row['sample_label']) != 'dpm50_fresh300k_v2':
+        raise ValueError(f'{tag}: expected the controlled dpm50_fresh300k_v2 archive')
+    sample_path = fresh_sample_path(row)
+    config_path = resolve_repo_path(row['config'])
+    expected_checkpoint = resolve_repo_path(row['expected_checkpoint'])
+    if not sample_path.exists():
+        raise FileNotFoundError(f'Missing fresh 300k sample archive for {tag}: {sample_path}')
+    if not config_path.exists():
+        raise FileNotFoundError(f'Missing frozen fresh configuration for {tag}: {config_path}')
+    if not expected_checkpoint.is_dir():
+        raise FileNotFoundError(f'Missing exact fresh 300k checkpoint for {tag}: {expected_checkpoint}')
+
+    with np.load(sample_path, allow_pickle=False) as payload:
+        archive = {name: np.asarray(payload[name]) for name in payload.files}
+    metadata = validate_sample_archive_metadata(
+        archive,
+        expected_checkpoint=expected_checkpoint,
+        expected_config_path=config_path,
+        expected_scheduler=FRESH_SCHEDULER,
+        expected_num_steps=FRESH_SAMPLER_STEPS,
+        expected_seed=FRESH_TRAINING_SEED,
+        expected_samples=FRESH_SAMPLE_COUNT,
+    )
+    generated = as_nchw(np.asarray(archive['samples'], dtype=np.float32))
+    reference_info = configured_training_reference_info(config_path)
+    configured_slices = int(reference_info['configured_slices'])
+    if configured_slices != int(row['dataset_size']):
+        raise ValueError(
+            f'{tag}: configured_slices={configured_slices} does not equal '
+            f'manifest dataset_size={row["dataset_size"]}'
+        )
+
+    fresh_sample_bundles[tag] = {
+        'manifest': row,
+        'generated': generated,
+        'sample_path': sample_path,
+        'config_path': config_path,
+        'expected_checkpoint': expected_checkpoint,
+        'reference_info': reference_info,
+    }
+    fresh_sample_audit_rows.append({
+        'dataset_tag': tag,
+        'dataset_size': int(row['dataset_size']),
+        'target_updates': int(row['target_total_updates']),
+        'sample_label': FRESH_SAMPLE_LABEL,
+        'n_generated': metadata['n_generated'],
+        'configured_slices': configured_slices,
+        'real_reference': 'exact model training subset',
+        'scheduler': metadata['scheduler'],
+        'num_steps': metadata['num_steps'],
+        'seed': metadata['seed'],
+        'sample_path': str(sample_path),
+        'config_path': str(config_path),
+        'checkpoint': metadata['resolved_checkpoint'],
+    })
+
+if tuple(fresh_sample_bundles) != DATASET_TAGS:
+    raise ValueError('Fresh sample bundle does not cover d2p06 through d2p15 in order')
+fresh_sample_audit = pd.DataFrame(fresh_sample_audit_rows)
+fresh_sample_audit_path = QUICKCHECK_DIR / 'fresh_sample_audit.csv'
+fresh_sample_audit.to_csv(fresh_sample_audit_path, index=False)
+display(fresh_sample_audit)
+print('wrote', fresh_sample_audit_path)
+
+display_indices = evenly_spaced_indices(
+    total=FRESH_SAMPLE_COUNT,
+    count=DISPLAY_SAMPLE_COUNT,
+)
+display_values = np.concatenate([
+    fresh_sample_bundles[tag]['generated'][display_indices, 0].reshape(-1)
+    for tag in DATASET_TAGS
+])
+display_vmin, display_vmax = np.quantile(display_values, [0.005, 0.995])
+
+fig, axes = plt.subplots(
+    2 * DISPLAY_SAMPLE_COUNT,
+    5,
+    figsize=(16.5, 22.0),
+    constrained_layout=True,
+)
+for block, tags in enumerate((DATASET_TAGS[:5], DATASET_TAGS[5:])):
+    for column, tag in enumerate(tags):
+        power = int(tag[-2:])
+        generated = fresh_sample_bundles[tag]['generated']
+        for row_index, sample_index in enumerate(display_indices):
+            axis = axes[block * DISPLAY_SAMPLE_COUNT + row_index, column]
+            axis.imshow(
+                generated[sample_index, 0],
+                cmap='viridis',
+                vmin=display_vmin,
+                vmax=display_vmax,
+            )
+            axis.set_xticks([])
+            axis.set_yticks([])
+            if row_index == 0:
+                axis.set_title(rf'$2^{{{power}}}$', fontweight='semibold')
+        axes[block * DISPLAY_SAMPLE_COUNT, 0].set_ylabel(
+            f'samples {display_indices[0]}–{display_indices[-1]}',
+            fontweight='semibold',
+        )
+fig.suptitle(
+    'Fresh DiT-L16 generated fields at 300k updates: complete data-size sweep',
+    fontsize=21,
+    fontweight='semibold',
+)
+generated_plot_path = QUICKCHECK_DIR / 'dit_l16_fresh300k_generated_all_sizes.png'
+fig.savefig(generated_plot_path, bbox_inches='tight')
+plt.show()
+print('wrote', generated_plot_path)
+"""
+
+
+NEAREST_TRAINING_CODE = r"""NEAREST_QUERY_COUNT = 16
+REAL_REFERENCE_RAW_BATCH_SIZE = 4
+
+nearest_results: dict[str, dict[str, Any]] = {}
+nearest_query_rows = []
+for tag in DATASET_TAGS:
+    bundle = fresh_sample_bundles[tag]
+    query_indices = evenly_spaced_indices(
+        total=len(bundle['generated']),
+        count=NEAREST_QUERY_COUNT,
+    )
+    queries = bundle['generated'][query_indices]
+    result = streaming_nearest_neighbors(
+        queries,
+        (
+            as_nchw(np.asarray(batch, dtype=np.float32))
+            for batch in iter_real_reference_batches_from_config(
+                bundle['config_path'],
+                raw_batch_size=REAL_REFERENCE_RAW_BATCH_SIZE,
+            )
+        ),
+    )
+    expected_training = int(bundle['reference_info']['configured_slices'])
+    if result['n_training'] != expected_training:
+        raise ValueError(
+            f'{tag}: nearest search scanned {result["n_training"]} slices; '
+            f'expected {expected_training}'
+        )
+    result['query_indices'] = query_indices
+    result['queries'] = queries
+    nearest_results[tag] = result
+    for local_index, query_index in enumerate(query_indices):
+        nearest_query_rows.append({
+            'dataset_tag': tag,
+            'dataset_size': int(bundle['manifest']['dataset_size']),
+            'query_index': int(query_index),
+            'nearest_training_index': int(result['nearest_index'][local_index]),
+            'nearest_mse': float(result['mse'][local_index]),
+            'nearest_cosine_similarity': float(result['cosine_similarity'][local_index]),
+            'training_slices_scanned': int(result['n_training']),
+        })
+
+nearest_queries = pd.DataFrame(nearest_query_rows)
+nearest_query_path = QUICKCHECK_DIR / 'dit_l16_fresh300k_nearest_queries.csv'
+nearest_queries.to_csv(nearest_query_path, index=False)
+display(nearest_queries.groupby(['dataset_tag', 'dataset_size']).agg(
+    nearest_mse_median=('nearest_mse', 'median'),
+    nearest_mse_max=('nearest_mse', 'max'),
+    nearest_cosine_median=('nearest_cosine_similarity', 'median'),
+    nearest_cosine_max=('nearest_cosine_similarity', 'max'),
+).reset_index())
+print('wrote', nearest_query_path)
+
+fig, axes = plt.subplots(6, 5, figsize=(16.5, 19.0), constrained_layout=True)
+for block, tags in enumerate((DATASET_TAGS[:5], DATASET_TAGS[5:])):
+    for column, tag in enumerate(tags):
+        power = int(tag[-2:])
+        result = nearest_results[tag]
+        generated = result['queries'][0, 0]
+        nearest = result['nearest_images'][0, 0]
+        difference = np.abs(generated - nearest)
+        row_start = block * 3
+        axes[row_start, column].imshow(
+            generated, cmap='viridis', vmin=display_vmin, vmax=display_vmax
+        )
+        axes[row_start + 1, column].imshow(
+            nearest, cmap='viridis', vmin=display_vmin, vmax=display_vmax
+        )
+        axes[row_start + 2, column].imshow(
+            difference,
+            cmap='magma',
+            vmin=0,
+            vmax=max(float(np.quantile(difference, 0.995)), 1e-8),
+        )
+        axes[row_start + 2, column].text(
+            0.02,
+            0.03,
+            f'MSE={result["mse"][0]:.3g}\ncos={result["cosine_similarity"][0]:.3f}',
+            transform=axes[row_start + 2, column].transAxes,
+            fontsize=8.5,
+            color='white',
+            va='bottom',
+            bbox={'facecolor': 'black', 'alpha': 0.6, 'pad': 2},
+        )
+        axes[row_start, column].set_title(rf'$2^{{{power}}}$', fontweight='semibold')
+        for row_offset in range(3):
+            axes[row_start + row_offset, column].set_xticks([])
+            axes[row_start + row_offset, column].set_yticks([])
+    axes[block * 3, 0].set_ylabel('generated', fontweight='semibold')
+    axes[block * 3 + 1, 0].set_ylabel('nearest training', fontweight='semibold')
+    axes[block * 3 + 2, 0].set_ylabel('absolute difference', fontweight='semibold')
+fig.suptitle(
+    'Fresh DiT-L16 generated fields and exact nearest training slices',
+    fontsize=21,
+    fontweight='semibold',
+)
+nearest_example_path = QUICKCHECK_DIR / 'dit_l16_fresh300k_nearest_examples.png'
+fig.savefig(nearest_example_path, bbox_inches='tight')
+plt.show()
+print('wrote', nearest_example_path)
+
+fig, axes = plt.subplots(1, 2, figsize=(14.0, 5.4))
+offsets = np.linspace(-0.16, 0.16, NEAREST_QUERY_COUNT)
+for power, tag in zip(DATASET_POWERS, DATASET_TAGS):
+    rows = nearest_queries[nearest_queries['dataset_tag'] == tag]
+    x = np.full(len(rows), power, dtype=float) + offsets
+    axes[0].scatter(x, rows['nearest_cosine_similarity'], s=26, alpha=0.58, color='#0072B2')
+    axes[1].scatter(x, rows['nearest_mse'], s=26, alpha=0.58, color='#D55E00')
+    axes[0].plot(power, rows['nearest_cosine_similarity'].median(), 'D', ms=7, color='black')
+    axes[1].plot(power, rows['nearest_mse'].median(), 'D', ms=7, color='black')
+for axis in axes:
+    axis.set_xticks(DATASET_POWERS, [rf'$2^{{{power}}}$' for power in DATASET_POWERS])
+    axis.set_xlabel(r'Training images $N_{2D}$')
+    axis.grid(axis='y', alpha=0.18)
+axes[0].set_ylabel('Cosine similarity to nearest training slice')
+axes[0].set_title('Nearest-training cosine similarity', fontweight='semibold')
+axes[1].set_yscale('log')
+axes[1].set_ylabel('MSE to nearest training slice')
+axes[1].set_title('Nearest-training pixel MSE', fontweight='semibold')
+fig.suptitle(
+    'Complete-subset nearest-neighbor audit (16 deterministic generations per size)',
+    fontsize=18,
+    fontweight='semibold',
+)
+fig.tight_layout(rect=(0, 0, 1, 0.91))
+nearest_distribution_path = QUICKCHECK_DIR / 'dit_l16_fresh300k_nearest_distribution.png'
+fig.savefig(nearest_distribution_path, bbox_inches='tight')
+plt.show()
+print('wrote', nearest_distribution_path)
+"""
+
+
 SECTION_MARKDOWN = (
     (
         "input-audit",
@@ -633,6 +905,8 @@ SECTION_CODE = {
     "transition": (TRANSITION_CODE,),
     "transition-summary": (TRANSITION_SUMMARY_CODE,),
     "optimization": (OPTIMIZATION_CODE,),
+    "generated-fields": (GENERATED_FIELDS_CODE,),
+    "nearest-training": (NEAREST_TRAINING_CODE,),
 }
 
 

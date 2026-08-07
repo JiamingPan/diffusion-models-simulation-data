@@ -131,3 +131,40 @@ def test_notebook_audits_and_plots_all_ten_fresh_l16_loss_histories():
 
     assert "fresh_loss_by_tag" in source
     assert "historical L16" not in source
+
+
+def test_notebook_audits_fresh_samples_and_exact_training_subsets():
+    source = code_source()
+    required = (
+        "configured_training_reference_info",
+        "iter_real_reference_batches_from_config",
+        "validate_sample_archive_metadata",
+        "FRESH_SAMPLE_LABEL",
+        "dpm50_fresh300k_v2",
+        "fresh_sample_audit.csv",
+        "configured_slices",
+        "exact model training subset",
+    )
+    for text in required:
+        assert text in source
+
+
+def test_notebook_plots_full_sweep_generated_fields_and_nearest_training_audit():
+    source = code_source()
+    required = (
+        "evenly_spaced_indices",
+        "streaming_nearest_neighbors",
+        "DISPLAY_SAMPLE_COUNT = 4",
+        "NEAREST_QUERY_COUNT = 16",
+        "dit_l16_fresh300k_generated_all_sizes.png",
+        "dit_l16_fresh300k_nearest_examples.png",
+        "dit_l16_fresh300k_nearest_distribution.png",
+        "dit_l16_fresh300k_nearest_queries.csv",
+        "nearest_cosine_similarity",
+        "nearest_mse",
+    )
+    for text in required:
+        assert text in source
+
+    for power in range(6, 16):
+        assert f"2^{{{power}}}" in source or f"d2p{power:02d}" in source
