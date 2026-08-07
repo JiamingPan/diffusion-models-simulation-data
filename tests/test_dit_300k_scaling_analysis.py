@@ -14,11 +14,13 @@ if str(ROOT) not in sys.path:
 from scripts.dit_300k_scaling_analysis import (
     build_historical_unet_metric_table,
     build_mixed_dit_metric_table,
+    evenly_spaced_indices,
     expected_dataset_tags,
     interpolate_n50,
     normalize_generalization_table,
     prepare_loss_history,
     require_exact_dataset_sweep,
+    streaming_nearest_neighbors,
     summarize_n50,
     validate_sample_archive_metadata,
 )
@@ -308,3 +310,68 @@ def test_validate_sample_archive_metadata_rejects_wrong_sample_count(tmp_path: P
 
     with pytest.raises(ValueError, match="sample count"):
         validate_metadata(metadata, tmp_path)
+
+
+def test_evenly_spaced_indices_are_deterministic_and_cover_endpoints():
+    result = evenly_spaced_indices(total=512, count=4)
+
+    assert result.tolist() == [0, 170, 341, 511]
+    assert len(np.unique(result)) == 4
+
+
+@pytest.mark.parametrize(
+    ("total", "count"),
+    [(0, 1), (3, 0), (3, 4)],
+)
+def test_evenly_spaced_indices_reject_invalid_requests(total: int, count: int):
+    with pytest.raises(ValueError):
+        evenly_spaced_indices(total=total, count=count)
+
+
+def test_streaming_nearest_neighbors_searches_every_batch_and_tracks_offsets():
+    generated = np.asarray(
+        [
+            [[[0.0, 0.0], [0.0, 1.0]]],
+            [[[1.0, 1.0], [0.0, 0.0]]],
+        ],
+        dtype=np.float32,
+    )
+    training_batches = [
+        np.asarray(
+            [
+                [[[1.0, 0.0], [0.0, 0.0]]],
+                [[[0.0, 0.0], [0.0, 0.8]]],
+            ],
+            dtype=np.float32,
+        ),
+        np.asarray(
+            [
+                [[[1.0, 1.0], [0.0, 0.1]]],
+                [[[0.0, 1.0], [1.0, 0.0]]],
+            ],
+            dtype=np.float32,
+        ),
+    ]
+
+    result = streaming_nearest_neighbors(generated, training_batches)
+
+    assert result["n_training"] == 4
+    assert result["nearest_index"].tolist() == [1, 2]
+    assert result["mse"].tolist() == pytest.approx([0.01, 0.0025])
+    assert result["cosine_similarity"].tolist() == pytest.approx(
+        [1.0, 2.0 / np.sqrt(2.01) / np.sqrt(2.0)]
+    )
+    assert np.array_equal(result["nearest_images"][0], training_batches[0][1])
+    assert np.array_equal(result["nearest_images"][1], training_batches[1][0])
+
+
+def test_streaming_nearest_neighbors_rejects_shape_mismatch_and_empty_reference():
+    generated = np.zeros((2, 1, 4, 4), dtype=np.float32)
+
+    with pytest.raises(ValueError, match="no training samples"):
+        streaming_nearest_neighbors(generated, [])
+    with pytest.raises(ValueError, match="shape"):
+        streaming_nearest_neighbors(
+            generated,
+            [np.zeros((3, 1, 8, 8), dtype=np.float32)],
+        )
