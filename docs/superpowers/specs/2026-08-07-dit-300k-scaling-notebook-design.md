@@ -10,6 +10,7 @@ The primary scientific questions are:
 2. How do those DiT transitions compare with the established UNet-64, UNet-128, and UNet-256 references?
 3. Are the fresh DiT-L16 300k samples novel and physically valid across training-set sizes from `2^6` through `2^15`?
 4. Do sampler step counts materially change the fresh L16 300k conclusions?
+5. Are apparently unstable generated fields isolated outliers or a systematic failure at particular training-set sizes?
 
 ## Scope
 
@@ -72,11 +73,14 @@ The notebook must stop with an informative error if any required fresh artifact 
    - Report interval/censoring status when a clean crossing is not observed.
    - Show an exploratory capacity view without a fitted universal scaling law.
 5. **Fresh L16 300k validity**
-   - Generated maps across all ten data sizes.
+   - Training-loss histories for all ten data sizes, shown against optimizer updates with a common loss definition and axis policy.
+   - Final-loss and late-training-loss summaries against training-set size.
+   - Multiple generated maps at every one of the ten data sizes, using a common display normalization.
    - Generated samples versus nearest training slices.
-   - One-point distributions using the exact model training subset.
-   - Power-spectrum ratios with common axes.
+   - One-point distributions for all ten data sizes using the exact model training subset.
+   - Power-spectrum ratios for all ten data sizes with common axes.
    - Scale-resolved log-ratio heatmap and compact error summary.
+   - Per-generated-sample one-point and power-spectrum error distributions, including robust median, interquartile range, and high-error tail summaries.
    - Joint novelty-versus-physical-error view.
 6. **Sampler audit**
    - Discover same-checkpoint DPM50, DPM100, DPM200, and DDPM500 files.
@@ -94,6 +98,8 @@ The notebook must stop with an informative error if any required fresh artifact 
 - Use common axes for comparable small multiples.
 - Put the update budget directly in legends or subtitles.
 - Keep all data sizes from `2^6` through `2^15`; do not truncate the fresh L16 image or physical-statistics sweeps.
+- Show several generated fields per data size rather than relying on one visually selected example.
+- Use aggregate curves and per-sample error distributions together so unstable outliers are not hidden by the mean.
 
 ## Scaling Interpretation
 
@@ -111,6 +117,7 @@ Before delivery:
 - compile every code cell;
 - require zero saved execution outputs in the committed notebook;
 - run focused structural tests for data-source exclusions, labels, figure coverage, and sampler guards;
+- test that loss, image, one-point, and power-spectrum sections cover all ten fresh L16 training-set sizes;
 - run the updater twice and verify idempotence;
 - execute top-to-bottom on Great Lakes after the result artifacts are available;
 - visually inspect the exported full-range and transition figures for overlap and clipping.
