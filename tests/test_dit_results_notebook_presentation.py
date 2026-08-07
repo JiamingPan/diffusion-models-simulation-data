@@ -13,10 +13,30 @@ def notebook_source() -> str:
 def test_depth_comparison_is_combined_and_explains_novelty_metric():
     source = notebook_source()
 
-    assert "nf_generalize_fig2_dit_depth_vs_unet_pca_sscd_q95.png" in source
+    assert "nf_generalize_fig2_dit_depth_vs_unet_mixed_budget_pca_sscd_q95.png" in source
     assert "High score means unlike the training set; it does not guarantee physical fidelity." in source
     assert "PCA embedding" in source
     assert "SSCD embedding" in source
+
+
+def test_depth_comparison_replaces_legacy_l16_with_fresh_300k_sweep():
+    source = notebook_source()
+
+    assert "build_mixed_dit_metric_table" in source
+    assert "nf_generalize_fig2_dit_l16_fresh300k_v2_pca_full_nn_metrics.csv" in source
+    assert "nf_generalize_fig2_dit_l16_fresh300k_v2_sscd_full_nn_metrics.csv" in source
+    assert "DiT-L16 fresh 300k" in source
+    assert "UNet and DiT-L8/L12: 200k updates; fresh DiT-L16: 300k updates." in source
+    assert "DiT depth comparison with fresh L16 300k" in source
+
+
+def test_fresh_300k_image_rows_are_explained_as_generated_draws():
+    source = notebook_source()
+
+    assert "generated draw {sample_index + 1}" in source
+    assert "archive indices 0 through 3" in source
+    assert "not independently trained models" in source
+    assert "different initial diffusion-noise draws" in source
 
 
 def test_batch_loss_axis_accounts_for_gradient_accumulation():
