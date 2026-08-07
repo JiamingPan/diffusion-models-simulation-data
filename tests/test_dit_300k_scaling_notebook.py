@@ -168,3 +168,45 @@ def test_notebook_plots_full_sweep_generated_fields_and_nearest_training_audit()
 
     for power in range(6, 16):
         assert f"2^{{{power}}}" in source or f"d2p{power:02d}" in source
+
+
+def test_notebook_streams_exact_reference_physics_and_plots_full_sweep():
+    source = code_source()
+    required = (
+        "aggregate_physical_batches",
+        "per_sample_physical_errors",
+        "PHYSICAL_HIST_EDGES",
+        "PK_NBINS = 30",
+        "configured_slices",
+        "pixel_coverage",
+        "dit_l16_fresh300k_onepoint_all_sizes.png",
+        "dit_l16_fresh300k_pk_ratio_all_sizes.png",
+        "dit_l16_fresh300k_pk_log2_heatmap.png",
+        "dit_l16_fresh300k_physics_per_sample.csv",
+    )
+    for text in required:
+        assert text in source
+
+
+def test_notebook_retains_physical_error_tails_and_links_novelty_to_physics():
+    source = code_source()
+    required = (
+        "hist_l1",
+        "pk_log10_mae",
+        "dit_l16_fresh300k_physics_error_tails.png",
+        "dit_l16_fresh300k_novelty_vs_physics.png",
+        "nearest_cosine_similarity",
+        "query_index",
+        "SSCD",
+        "pixel nearest novelty",
+    )
+    for text in required:
+        assert text in source
+
+
+def test_notebook_physics_sections_cover_all_ten_sizes_without_old_l16():
+    source = code_source()
+    for dataset_tag in ("d2p06", "d2p07", "d2p08", "d2p09", "d2p10",
+                        "d2p11", "d2p12", "d2p13", "d2p14", "d2p15"):
+        assert dataset_tag in source
+    assert "dpm50_cont_" not in source

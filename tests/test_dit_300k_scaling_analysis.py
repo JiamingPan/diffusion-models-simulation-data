@@ -12,12 +12,14 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.dit_300k_scaling_analysis import (
+    aggregate_physical_batches,
     build_historical_unet_metric_table,
     build_mixed_dit_metric_table,
     evenly_spaced_indices,
     expected_dataset_tags,
     interpolate_n50,
     normalize_generalization_table,
+    per_sample_physical_errors,
     prepare_loss_history,
     require_exact_dataset_sweep,
     streaming_nearest_neighbors,
@@ -374,4 +376,56 @@ def test_streaming_nearest_neighbors_rejects_shape_mismatch_and_empty_reference(
         streaming_nearest_neighbors(
             generated,
             [np.zeros((3, 1, 8, 8), dtype=np.float32)],
+        )
+
+
+def test_aggregate_physical_batches_is_invariant_to_batch_partitioning():
+    rng = np.random.default_rng(14)
+    images = rng.normal(size=(6, 1, 8, 8)).astype(np.float32)
+    edges = np.linspace(-4.0, 4.0, 33)
+
+    together = aggregate_physical_batches([images], hist_edges=edges, nbins=5)
+    partitioned = aggregate_physical_batches(
+        [images[:2], images[2:5], images[5:]],
+        hist_edges=edges,
+        nbins=5,
+    )
+
+    assert together["n_images"] == partitioned["n_images"] == 6
+    assert together["n_pixels"] == partitioned["n_pixels"] == 6 * 8 * 8
+    assert together["hist"] == pytest.approx(partitioned["hist"])
+    assert together["mean_pk"] == pytest.approx(partitioned["mean_pk"])
+    assert together["kbins"] == pytest.approx(partitioned["kbins"])
+
+
+def test_per_sample_physical_errors_are_zero_for_identical_reference_samples():
+    rng = np.random.default_rng(5)
+    image = rng.uniform(-0.9, 0.9, size=(1, 1, 8, 8)).astype(np.float32)
+    edges = np.linspace(-1.0, 1.0, 17)
+    reference = aggregate_physical_batches([image], hist_edges=edges, nbins=5)
+
+    result = per_sample_physical_errors(
+        image,
+        reference_hist=reference["hist"],
+        hist_edges=reference["hist_edges"],
+        reference_mean_pk=reference["mean_pk"],
+        nbins=5,
+    )
+
+    assert result["hist_l1"].tolist() == pytest.approx([0.0])
+    assert result["pk_log10_mae"].tolist() == pytest.approx([0.0])
+    assert result["pk_ratio"][0] == pytest.approx(np.ones(5))
+
+
+def test_physical_helpers_reject_empty_or_incompatible_inputs():
+    edges = np.linspace(-1.0, 1.0, 17)
+    with pytest.raises(ValueError, match="no images"):
+        aggregate_physical_batches([], hist_edges=edges, nbins=5)
+    with pytest.raises(ValueError, match="reference histogram"):
+        per_sample_physical_errors(
+            np.zeros((2, 1, 8, 8), dtype=np.float32),
+            reference_hist=np.zeros(3),
+            hist_edges=edges,
+            reference_mean_pk=np.ones(5),
+            nbins=5,
         )
