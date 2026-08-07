@@ -70,6 +70,7 @@ SETUP = r"""from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -109,6 +110,7 @@ from scripts.dit_300k_scaling_analysis import (
     build_mixed_dit_metric_table,
     interpolate_n50,
     normalize_generalization_table,
+    prepare_loss_history,
     require_exact_dataset_sweep,
     summarize_n50,
     validate_sample_archive_metadata,
@@ -370,6 +372,163 @@ print('wrote', capacity_plot_path)
 """
 
 
+OPTIMIZATION_CODE = r"""LOSS_EXPECTED_TAGS = (
+    'd2p06', 'd2p07', 'd2p08', 'd2p09', 'd2p10',
+    'd2p11', 'd2p12', 'd2p13', 'd2p14', 'd2p15',
+)
+if LOSS_EXPECTED_TAGS != DATASET_TAGS:
+    raise AssertionError('Loss-plot dataset order no longer matches the full sweep')
+
+
+def checkpoint_epoch(path: Path) -> int:
+    match = re.search(r'checkpoint-epoch-(\d+)', str(path))
+    return int(match.group(1)) if match else -1
+
+
+def loss_metric_candidates(row: pd.Series) -> list[Path]:
+    roots: list[Path] = []
+    for key in ('checkpoint_dir', 'expected_checkpoint'):
+        value = str(row.get(key, '') or '')
+        if value:
+            roots.append(Path(value))
+
+    candidates: set[Path] = set()
+    for root in roots:
+        if not root.exists():
+            continue
+        if root.is_file() and root.suffix == '.json':
+            candidates.add(root)
+            continue
+        candidates.update(root.glob('metrics_epoch_*.json'))
+        if (root / 'metrics.json').exists():
+            candidates.add(root / 'metrics.json')
+        candidates.update(root.glob('checkpoint-epoch-*/metrics*.json'))
+        if root.name.startswith('checkpoint-epoch-'):
+            candidates.update(root.glob('metrics*.json'))
+            candidates.update(root.parent.glob('metrics_epoch_*.json'))
+            if (root.parent / 'metrics.json').exists():
+                candidates.add(root.parent / 'metrics.json')
+    return sorted(candidates)
+
+
+def read_latest_loss_metrics(row: pd.Series) -> tuple[dict[str, Any], Path]:
+    candidates = loss_metric_candidates(row)
+    if not candidates:
+        raise FileNotFoundError(
+            f"{row['dataset_tag']}: no training metrics found below "
+            f"{row.get('checkpoint_dir', row.get('expected_checkpoint'))}"
+        )
+
+    def score(path: Path) -> tuple[int, float]:
+        return checkpoint_epoch(path), path.stat().st_mtime
+
+    latest = max(candidates, key=score)
+    with latest.open() as stream:
+        metrics = json.load(stream)
+    return metrics, latest
+
+
+fresh_loss_by_tag: dict[str, dict[str, Any]] = {}
+fresh_loss_audit_rows: list[dict[str, Any]] = []
+for _, row in fresh_manifest.sort_values('dataset_size').iterrows():
+    dataset_tag = str(row['dataset_tag'])
+    target_updates = int(row['target_total_updates'])
+    if target_updates != 300_000:
+        raise ValueError(f'{dataset_tag}: expected 300000 updates, found {target_updates}')
+    metrics, metrics_path = read_latest_loss_metrics(row)
+    history = prepare_loss_history(
+        metrics,
+        steps_per_epoch=int(row['steps_per_epoch']),
+        target_updates=target_updates,
+        restart_updates=4_000,
+        minimum_fraction=0.98,
+    )
+    fresh_loss_by_tag[dataset_tag] = history
+    fresh_loss_audit_rows.append({
+        'dataset_tag': dataset_tag,
+        'dataset_size': int(row['dataset_size']),
+        'metrics_path': str(metrics_path),
+        'target_total_updates': target_updates,
+        'optimizer_updates_recorded': history['recorded_updates'],
+        'epochs_completed': history['epochs_completed'],
+        'steps_per_epoch': history['steps_per_epoch'],
+        'tail_loss_median': history['tail_median_loss'],
+        'tail_loss_q25': history['tail_q25_loss'],
+        'tail_loss_q75': history['tail_q75_loss'],
+        'best_loss': history['best_loss'],
+    })
+
+if tuple(fresh_loss_by_tag) != LOSS_EXPECTED_TAGS:
+    raise ValueError(f'Fresh loss histories are incomplete: {tuple(fresh_loss_by_tag)}')
+
+fresh_loss_audit = pd.DataFrame(fresh_loss_audit_rows)
+fresh_loss_audit_path = QUICKCHECK_DIR / 'fresh_loss_audit.csv'
+fresh_loss_audit.to_csv(fresh_loss_audit_path, index=False)
+display(fresh_loss_audit)
+print('wrote', fresh_loss_audit_path)
+
+loss_colors = plt.cm.viridis(np.linspace(0.08, 0.92, len(DATASET_TAGS)))
+fig, axes = plt.subplots(2, 5, figsize=(18.2, 8.0), sharex=True, sharey=True)
+for axis, dataset_tag, power, color in zip(
+    axes.flat, DATASET_TAGS, DATASET_POWERS, loss_colors
+):
+    history = fresh_loss_by_tag[dataset_tag]
+    axis.plot(
+        history['updates'] / 1_000,
+        history['cycle_averaged_loss'],
+        color=color,
+        lw=2.2,
+    )
+    axis.set_title(rf'$N_{{2D}}=2^{{{power}}}$', fontweight='semibold')
+    axis.set_yscale('log')
+    axis.set_xlim(0, 305)
+    axis.grid(alpha=0.16)
+for axis in axes[-1, :]:
+    axis.set_xlabel('Optimizer updates (thousands)')
+for axis in axes[:, 0]:
+    axis.set_ylabel('Cycle-averaged denoising loss')
+fig.suptitle(
+    'Fresh DiT-L16 optimization across all ten training sizes',
+    fontsize=21,
+    fontweight='semibold',
+    y=0.985,
+)
+fig.text(
+    0.5,
+    0.945,
+    'Every panel is an independent 300k-update run; curves are averaged over one 4k-update LR cycle.',
+    ha='center',
+    fontsize=12.5,
+    color='0.3',
+)
+fig.subplots_adjust(left=0.07, right=0.99, bottom=0.09, top=0.88, hspace=0.34, wspace=0.16)
+fresh_loss_plot_path = QUICKCHECK_DIR / 'dit_l16_fresh300k_loss_all_sizes.png'
+fig.savefig(fresh_loss_plot_path, bbox_inches='tight')
+plt.show()
+print('wrote', fresh_loss_plot_path)
+
+fig, axis = plt.subplots(figsize=(10.8, 5.6))
+x = np.asarray(DATASET_POWERS)
+median = fresh_loss_audit['tail_loss_median'].to_numpy(float)
+q25 = fresh_loss_audit['tail_loss_q25'].to_numpy(float)
+q75 = fresh_loss_audit['tail_loss_q75'].to_numpy(float)
+axis.plot(x, median, color='#0072B2', marker='o', lw=2.6, ms=7, label='final 5% median')
+axis.fill_between(x, q25, q75, color='#56B4E9', alpha=0.28, label='final 5% IQR')
+axis.set_yscale('log')
+axis.set_xticks(x, [rf'$2^{{{power}}}$' for power in x])
+axis.set_xlabel(r'Training images $N_{2D}$')
+axis.set_ylabel('Denoising loss')
+axis.set_title('Fresh DiT-L16 tail loss after 300k optimizer updates', fontweight='semibold')
+axis.grid(axis='y', alpha=0.18)
+axis.legend(frameon=False)
+fig.tight_layout()
+fresh_tail_plot_path = QUICKCHECK_DIR / 'dit_l16_fresh300k_tail_loss_summary.png'
+fig.savefig(fresh_tail_plot_path, bbox_inches='tight')
+plt.show()
+print('wrote', fresh_tail_plot_path)
+"""
+
+
 SECTION_MARKDOWN = (
     (
         "input-audit",
@@ -473,6 +632,7 @@ SECTION_CODE = {
     "input-audit": (INPUT_AUDIT_CODE,),
     "transition": (TRANSITION_CODE,),
     "transition-summary": (TRANSITION_SUMMARY_CODE,),
+    "optimization": (OPTIMIZATION_CODE,),
 }
 
 

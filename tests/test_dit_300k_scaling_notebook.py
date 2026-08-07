@@ -106,3 +106,28 @@ def test_notebook_builds_fresh_mixed_budget_transition_and_n50_outputs():
     )
     for text in required:
         assert text in source
+
+
+def test_notebook_audits_and_plots_all_ten_fresh_l16_loss_histories():
+    source = code_source()
+    required = (
+        "prepare_loss_history",
+        "target_total_updates",
+        "300_000",
+        "fresh_loss_audit.csv",
+        "dit_l16_fresh300k_loss_all_sizes.png",
+        "dit_l16_fresh300k_tail_loss_summary.png",
+        "optimizer_updates_recorded",
+        "tail_loss_median",
+        "tail_loss_q25",
+        "tail_loss_q75",
+    )
+    for text in required:
+        assert text in source
+
+    for dataset_tag in ("d2p06", "d2p07", "d2p08", "d2p09", "d2p10",
+                        "d2p11", "d2p12", "d2p13", "d2p14", "d2p15"):
+        assert dataset_tag in source
+
+    assert "fresh_loss_by_tag" in source
+    assert "historical L16" not in source

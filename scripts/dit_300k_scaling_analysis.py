@@ -353,6 +353,86 @@ def summarize_n50(
     return pd.DataFrame(rows).sort_values(["feature", "updates_k", "arch"]).reset_index(drop=True)
 
 
+def flatten_numeric(values: Any) -> np.ndarray:
+    """Flatten nested metric payloads while ignoring non-numeric entries."""
+
+    output: list[float] = []
+
+    def visit(value: Any) -> None:
+        if value is None:
+            return
+        if isinstance(value, Mapping):
+            for key in ("loss", "value", "mean", "avg"):
+                if key in value:
+                    visit(value[key])
+                    return
+            return
+        if isinstance(value, (list, tuple, np.ndarray)):
+            for item in value:
+                visit(item)
+            return
+        try:
+            output.append(float(value))
+        except (TypeError, ValueError):
+            return
+
+    visit(values)
+    return np.asarray(output, dtype=float)
+
+
+def prepare_loss_history(
+    metrics: Mapping[str, Any],
+    *,
+    steps_per_epoch: int,
+    target_updates: int,
+    restart_updates: int = 4_000,
+    minimum_fraction: float = 0.98,
+) -> dict[str, Any]:
+    """Validate and cycle-average one fresh training-loss history."""
+
+    epoch_loss = flatten_numeric(metrics.get("epoch_loss"))
+    if len(epoch_loss) == 0 or not np.all(np.isfinite(epoch_loss)):
+        raise ValueError("loss history has no finite epoch_loss values")
+    steps_per_epoch = max(1, int(steps_per_epoch))
+    target_updates = int(target_updates)
+
+    recorded_updates = len(epoch_loss) * steps_per_epoch
+    for key in ("optimizer_updates", "optimizer_step", "global_step", "num_updates", "updates"):
+        values = flatten_numeric(metrics.get(key))
+        if len(values):
+            recorded_updates = int(round(values[-1]))
+            break
+    if recorded_updates < minimum_fraction * target_updates:
+        raise ValueError(
+            f"recorded {recorded_updates} optimizer updates; expected at least "
+            f"{minimum_fraction:.0%} of {target_updates}"
+        )
+
+    epoch_updates = (np.arange(len(epoch_loss), dtype=float) + 1.0) * steps_per_epoch
+    window = max(1, min(len(epoch_loss), int(round(restart_updates / steps_per_epoch))))
+    if window == 1:
+        averaged = epoch_loss.copy()
+        averaged_updates = epoch_updates
+    else:
+        averaged = np.convolve(epoch_loss, np.ones(window) / window, mode="valid")
+        averaged_updates = np.convolve(epoch_updates, np.ones(window) / window, mode="valid")
+
+    tail_count = max(1, int(np.ceil(0.05 * len(epoch_loss))))
+    return {
+        "epoch_loss": epoch_loss,
+        "epoch_updates": epoch_updates,
+        "updates": averaged_updates,
+        "cycle_averaged_loss": averaged,
+        "recorded_updates": recorded_updates,
+        "epochs_completed": int(len(epoch_loss)),
+        "steps_per_epoch": steps_per_epoch,
+        "tail_median_loss": float(np.median(epoch_loss[-tail_count:])),
+        "tail_q25_loss": float(np.quantile(epoch_loss[-tail_count:], 0.25)),
+        "tail_q75_loss": float(np.quantile(epoch_loss[-tail_count:], 0.75)),
+        "best_loss": float(np.min(epoch_loss)),
+    }
+
+
 def scalar_value(value: Any) -> Any:
     """Convert a scalar NumPy archive field to its Python value."""
 

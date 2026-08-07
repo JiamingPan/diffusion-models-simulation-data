@@ -17,6 +17,7 @@ from scripts.dit_300k_scaling_analysis import (
     expected_dataset_tags,
     interpolate_n50,
     normalize_generalization_table,
+    prepare_loss_history,
     require_exact_dataset_sweep,
     summarize_n50,
     validate_sample_archive_metadata,
@@ -209,6 +210,37 @@ def test_summarize_n50_preserves_censoring_and_mixed_budget_labels():
     statuses = result.set_index("arch")["status"].to_dict()
     assert statuses == {"dit_l8": "left_censored", "dit_l16": "right_censored"}
     assert set(result["updates_k"]) == {200, 300}
+
+
+def test_prepare_loss_history_uses_optimizer_update_axis_and_cycle_average():
+    metrics = {
+        "epoch_loss": [8.0, 6.0, 4.0, 2.0],
+        "optimizer_updates": [2, 4, 6, 8],
+    }
+
+    result = prepare_loss_history(
+        metrics,
+        steps_per_epoch=2,
+        target_updates=8,
+        restart_updates=4,
+    )
+
+    assert result["recorded_updates"] == 8
+    assert result["updates"].tolist() == [3.0, 5.0, 7.0]
+    assert result["cycle_averaged_loss"].tolist() == [7.0, 5.0, 3.0]
+    assert result["tail_median_loss"] == pytest.approx(2.0)
+
+
+def test_prepare_loss_history_rejects_incomplete_fresh_run():
+    metrics = {"epoch_loss": [1.0] * 9}
+
+    with pytest.raises(ValueError, match="recorded 90 optimizer updates"):
+        prepare_loss_history(
+            metrics,
+            steps_per_epoch=10,
+            target_updates=100,
+            minimum_fraction=0.98,
+        )
 
 
 def valid_sample_metadata(tmp_path: Path) -> dict[str, object]:
