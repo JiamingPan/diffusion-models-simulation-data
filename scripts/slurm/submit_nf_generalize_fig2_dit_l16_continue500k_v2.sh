@@ -60,6 +60,15 @@ PRECHECK_JOB=$(sbatch -A "${ACCOUNT}" --parsable \
 PRECHECK_JOB=${PRECHECK_JOB%%;*}
 echo "precheck=${PRECHECK_JOB}"
 
+BASELINE_SAMPLE_JOB=$(CONTINUE_STAGE=0 OVERWRITE="${OVERWRITE}" \
+  sbatch -A "${ACCOUNT}" \
+  --array=0-9%2 \
+  --dependency="afterok:${PRECHECK_JOB}" \
+  --parsable \
+  scripts/slurm/sample_nf_generalize_fig2_dit_l16_continue500k_v2_array.sbatch)
+BASELINE_SAMPLE_JOB=${BASELINE_SAMPLE_JOB%%;*}
+echo "audited 300k baseline samples=${BASELINE_SAMPLE_JOB}"
+
 PREVIOUS_JOB=${PRECHECK_JOB}
 ANALYSIS_JOBS=()
 FINAL_TRAIN_JOB=
@@ -106,15 +115,15 @@ for STAGE in $(seq "${START_STAGE}" 5); do
   FINAL_SAMPLE_JOB=${SAMPLE_JOB}
 done
 
-DDPM_JOB=$(CONTINUE_STAGE=5 SAMPLE_MODE=DDPM500_CONTROL OVERWRITE="${OVERWRITE}" \
+DDPM_JOB=$(OVERWRITE="${OVERWRITE}" \
   sbatch -A "${ACCOUNT}" \
-  --array=2,5%2 \
+  --array=0-3%2 \
   --dependency="afterok:${FINAL_TRAIN_JOB}" \
   --parsable \
-  scripts/slurm/sample_nf_generalize_fig2_dit_l16_continue500k_v2_array.sbatch)
+  scripts/slurm/sample_nf_generalize_fig2_dit_l16_continue500k_v2_ddpm_controls.sbatch)
 DDPM_JOB=${DDPM_JOB%%;*}
 
-AUDIT_DEPENDENCY="afterok:${FINAL_SAMPLE_JOB}:${DDPM_JOB}"
+AUDIT_DEPENDENCY="afterok:${BASELINE_SAMPLE_JOB}:${FINAL_SAMPLE_JOB}:${DDPM_JOB}"
 for JOB_ID in "${ANALYSIS_JOBS[@]}"; do
   AUDIT_DEPENDENCY+=":${JOB_ID}"
 done
