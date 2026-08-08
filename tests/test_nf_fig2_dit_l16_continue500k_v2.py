@@ -404,3 +404,43 @@ def test_slurm_precheck_requires_report_and_endpoint_model_loads():
     assert 'for DATASET_TAG in d2p06 d2p15' in text
     assert text.count("--preflight-only") == 1
     assert "test -s" in text
+
+
+def test_training_array_has_exact_target_and_recovery_contract():
+    script = (
+        ROOT
+        / "scripts"
+        / "slurm"
+        / "train_nf_generalize_fig2_dit_l16_continue500k_v2_array.sbatch"
+    )
+    text = script.read_text()
+
+    assert "#SBATCH --time=48:00:00" in text
+    assert "#SBATCH --array=0-9%2" in text
+    assert "run_cosmodiff_train_with_dit_resume.py" in text
+    assert "--minimum-checkpoint" in text
+    assert "--target-checkpoint" in text
+    assert "precheck_report.json" in text
+    assert "completion" in text
+    assert "nf_generalize_fig2_dit_l16_continue500k_v2" in text
+    assert "nf_generalize_fig2_dit_l16_continue/" not in text
+
+
+def test_submission_chain_is_five_stage_afterok_only():
+    script = (
+        ROOT
+        / "scripts"
+        / "slurm"
+        / "submit_nf_generalize_fig2_dit_l16_continue500k_v2.sh"
+    )
+    text = script.read_text()
+
+    assert "START_STAGE" in text
+    assert "START_STAGE < 1 || START_STAGE > 5" in text
+    assert "REUSE_EXISTING_MANIFEST" in text
+    assert "--array=0-9%2" in text
+    assert "for STAGE in $(seq \"${START_STAGE}\" 5)" in text
+    assert "afterok" in text
+    assert "afterany" not in text
+    assert "previous_expected_checkpoint" in text
+    assert "nf_generalize_fig2_dit_l16_continue/" not in text
