@@ -5,6 +5,7 @@ import sys
 from copy import deepcopy
 from pathlib import Path
 
+import numpy as np
 import pytest
 import yaml
 
@@ -16,6 +17,7 @@ if str(SCRIPTS) not in sys.path:
 
 import prepare_nf_generalize_fig2_dit_l16_continue500k_v2_configs as prep
 import check_nf_generalize_fig2_dit_l16_continue500k_v2 as precheck
+import validate_nf_generalize_fig2_dit_sample as sample_guard
 
 
 EXPECTED_TAGS = tuple(f"d2p{power:02d}" for power in range(6, 16))
@@ -444,3 +446,84 @@ def test_submission_chain_is_five_stage_afterok_only():
     assert "afterany" not in text
     assert "previous_expected_checkpoint" in text
     assert "nf_generalize_fig2_dit_l16_continue/" not in text
+
+
+def test_dpm_sampling_array_uses_fixed_auditable_protocol():
+    script = (
+        ROOT
+        / "scripts"
+        / "slurm"
+        / "sample_nf_generalize_fig2_dit_l16_continue500k_v2_array.sbatch"
+    )
+    text = script.read_text()
+
+    assert "#SBATCH --array=0-9%2" in text
+    assert "DPMSolverMultistepScheduler" in text
+    assert "SAMPLER_STEPS=50" in text
+    assert "NUM_SAMPLES=512" in text
+    assert "BATCH_SIZE=8" in text
+    assert "SEED=123" in text
+    assert "validate_nf_generalize_fig2_dit_sample.py" in text
+
+
+def test_ddpm_controls_are_only_transition_and_high_data_endpoints():
+    script = (
+        ROOT
+        / "scripts"
+        / "slurm"
+        / "sample_nf_generalize_fig2_dit_l16_continue500k_v2_ddpm_controls.sbatch"
+    )
+    text = script.read_text()
+
+    assert "#SBATCH --array=0-3%2" in text
+    assert "d2p08:0" in text
+    assert "d2p08:5" in text
+    assert "d2p11:0" in text
+    assert "d2p11:5" in text
+    assert "DDPMScheduler" in text
+    assert "SAMPLER_STEPS=500" in text
+    assert "NUM_SAMPLES=512" in text
+    assert "BATCH_SIZE=8" in text
+    assert "SEED=123" in text
+
+
+def _write_sample_file(path: Path, checkpoint: Path, *, value: float = 0.0) -> None:
+    np.savez(
+        path,
+        samples=np.full((512, 1, 128, 128), value, dtype=np.float32),
+        requested_checkpoint=np.asarray(str(checkpoint)),
+        resolved_checkpoint=np.asarray(str(checkpoint)),
+        scheduler=np.asarray("DPMSolverMultistepScheduler"),
+        num_steps=np.asarray(50),
+        seed=np.asarray(123),
+        scheduler_class=np.asarray("DPMSolverMultistepScheduler"),
+        requested_inference_steps=np.asarray(50),
+        executed_inference_steps=np.asarray(50),
+        first_timestep=np.asarray(999.0),
+        final_timestep=np.asarray(0.0),
+        terminal_sigma=np.asarray(0.0),
+        terminal_sigma_is_zero=np.asarray(True),
+        terminal_sigma_verifiable=np.asarray(True),
+    )
+
+
+def test_sample_guard_rejects_identical_outputs_from_different_checkpoints(tmp_path):
+    first_checkpoint = tmp_path / "checkpoint-epoch-100"
+    second_checkpoint = tmp_path / "checkpoint-epoch-200"
+    first_checkpoint.mkdir()
+    second_checkpoint.mkdir()
+    first = tmp_path / "a_dpm50_cont_340k.npz"
+    second = tmp_path / "b_dpm50_cont_340k.npz"
+    _write_sample_file(first, first_checkpoint)
+    _write_sample_file(second, second_checkpoint)
+
+    sample_guard.validate_sample_file(
+        first,
+        requested_checkpoint=first_checkpoint,
+        scheduler="DPMSolverMultistepScheduler",
+        requested_steps=50,
+    )
+    with pytest.raises(ValueError, match="byte-identical"):
+        sample_guard.reject_cross_checkpoint_duplicates(
+            tmp_path, sample_label="dpm50_cont_340k"
+        )
