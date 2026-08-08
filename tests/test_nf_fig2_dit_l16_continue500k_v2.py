@@ -18,6 +18,7 @@ if str(SCRIPTS) not in sys.path:
 import prepare_nf_generalize_fig2_dit_l16_continue500k_v2_configs as prep
 import check_nf_generalize_fig2_dit_l16_continue500k_v2 as precheck
 import validate_nf_generalize_fig2_dit_sample as sample_guard
+import audit_nf_generalize_fig2_dit_l16_continue500k_v2_results as final_audit
 
 
 EXPECTED_TAGS = tuple(f"d2p{power:02d}" for power in range(6, 16))
@@ -241,9 +242,11 @@ def test_analysis_manifest_includes_frozen_300k_baseline(tmp_path):
     baseline = [row for row in analysis if row["target_total_updates"] == 300_000]
     assert len(baseline) == 10
     assert {row["sample_label"] for row in baseline} == {
-        "dpm50_fresh300k_v2"
+        "dpm50_source_300k"
     }
     assert all(row["source_sweep_name"] == prep.SOURCE_SWEEP_NAME for row in baseline)
+    assert all(row["sweep_name"] == prep.CONTINUE_SWEEP_NAME for row in baseline)
+    assert all(prep.CONTINUE_SWEEP_NAME in row["sample_path"] for row in baseline)
 
 
 def _write_complete_source_checkpoint(row: dict) -> Path:
@@ -445,7 +448,15 @@ def test_submission_chain_is_five_stage_afterok_only():
     assert "afterok" in text
     assert "afterany" not in text
     assert "previous_expected_checkpoint" in text
+    assert "Missing prior-stage sample for restart" in text
+    assert "Missing prior-stage metric table for restart" in text
     assert "nf_generalize_fig2_dit_l16_continue/" not in text
+    assert 'SAMPLE_LABEL=dpm50_source_300k' in text
+    assert 'OUT_PREFIX="${SWEEP}_300k_pca_full_nn"' in text
+    assert 'OUT_PREFIX="${SWEEP}_${TARGET_K}k_sscd_full_nn"' in text
+    assert text.count(
+        "scripts/slurm/analyze_nf_generalize_fig2_dit_l16_continue500k_v2_physics.sbatch"
+    ) == 1
 
 
 def test_dpm_sampling_array_uses_fixed_auditable_protocol():
@@ -464,6 +475,8 @@ def test_dpm_sampling_array_uses_fixed_auditable_protocol():
     assert "BATCH_SIZE=8" in text
     assert "SEED=123" in text
     assert "validate_nf_generalize_fig2_dit_sample.py" in text
+    assert "Validating existing sample artifact before reuse" in text
+    assert "Refusing to overwrite existing sample artifact" not in text
 
 
 def test_ddpm_controls_are_only_transition_and_high_data_endpoints():
@@ -485,6 +498,7 @@ def test_ddpm_controls_are_only_transition_and_high_data_endpoints():
     assert "NUM_SAMPLES=512" in text
     assert "BATCH_SIZE=8" in text
     assert "SEED=123" in text
+    assert "Validating existing DDPM control before reuse" in text
 
 
 def test_physics_analysis_is_exact_subset_and_fails_on_missing_samples():
@@ -518,6 +532,9 @@ def test_physics_analysis_is_exact_subset_and_fails_on_missing_samples():
     assert "#SBATCH --mem=80gb" in wrapper
     assert "SAMPLE_LABEL" in wrapper
     assert "OUT_PREFIX" in wrapper
+    assert "results/nf_generalize_fig2_dit/tables" in wrapper
+    assert "results/nf_generalize_fig2_dit/physics" in wrapper
+    assert '--physics-dir "${PHYSICS_DIR}"' in wrapper
 
 
 def _write_sample_file(path: Path, checkpoint: Path, *, value: float = 0.0) -> None:
@@ -560,3 +577,243 @@ def test_sample_guard_rejects_identical_outputs_from_different_checkpoints(tmp_p
         sample_guard.reject_cross_checkpoint_duplicates(
             tmp_path, sample_label="dpm50_cont_340k"
         )
+
+
+def _write_complete_continuation_checkpoint(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    for group, alternatives in precheck.REQUIRED_STATE_GROUPS.items():
+        target = path / alternatives[0].rstrip("/")
+        if alternatives[0].endswith("/"):
+            target.mkdir(parents=True, exist_ok=True)
+            (target / "state.pt").write_bytes(group.encode())
+        else:
+            target.write_bytes(group.encode())
+
+
+def _write_tiny_audited_sample(
+    path: Path,
+    checkpoint: Path,
+    *,
+    scheduler: str,
+    steps: int,
+    value: float,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    samples = np.full((1, 1, 2, 2), value, dtype=np.float32)
+    samples[..., 0, 0] += value / 1000.0
+    np.savez(
+        path,
+        samples=samples,
+        requested_checkpoint=np.asarray(str(checkpoint)),
+        resolved_checkpoint=np.asarray(str(checkpoint)),
+        scheduler=np.asarray(scheduler),
+        num_steps=np.asarray(steps),
+        seed=np.asarray(123),
+        scheduler_class=np.asarray(scheduler),
+        requested_inference_steps=np.asarray(steps),
+        executed_inference_steps=np.asarray(steps),
+        first_timestep=np.asarray(999.0),
+        final_timestep=np.asarray(0.0),
+        terminal_sigma=np.asarray(0.0),
+        terminal_sigma_is_zero=np.asarray(True),
+        terminal_sigma_verifiable=np.asarray(True),
+    )
+
+
+def _write_csv_rows(path: Path, rows: list[dict]) -> None:
+    import csv
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _build_complete_audit_fixture(tmp_path: Path) -> dict[str, Path]:
+    source_rows = _write_source_sweep(tmp_path)
+    continuation_rows = prep.build_continuation_rows(
+        tmp_path,
+        source_rows,
+        checkpoint_root=tmp_path / "continuation_checkpoints" / prep.CONTINUE_SWEEP_NAME,
+    )
+    analysis_rows = prep.build_analysis_manifest(source_rows, continuation_rows)
+    manifest = prep.continuation_manifest_path(tmp_path)
+    analysis_manifest = prep.analysis_manifest_path(tmp_path)
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(json.dumps(continuation_rows, indent=2) + "\n")
+    analysis_manifest.write_text(json.dumps(analysis_rows, indent=2) + "\n")
+
+    for row in continuation_rows:
+        _write_complete_continuation_checkpoint(Path(row["expected_checkpoint"]))
+
+    sample_value = 1.0
+    analysis_by_pair = {}
+    for row in analysis_rows:
+        updates = int(row["analysis_updates"])
+        pair = (row["dataset_tag"], updates)
+        analysis_by_pair[pair] = row
+        sample_path = tmp_path / row["sample_path"]
+        _write_tiny_audited_sample(
+            sample_path,
+            Path(row["analysis_checkpoint"]),
+            scheduler="DPMSolverMultistepScheduler",
+            steps=50,
+            value=sample_value,
+        )
+        sample_value += 1.0
+
+    first_stage = {
+        row["dataset_tag"]: row
+        for row in continuation_rows
+        if row["continue_stage"] == 1
+    }
+    sample_root = tmp_path / "results" / prep.CONTINUE_SWEEP_NAME / "samples"
+    for tag, updates, label in final_audit.DDPM_CONTROLS:
+        run_name = first_stage[tag]["run_name"]
+        path = sample_root / f"{run_name}_seed123_{label}.npz"
+        checkpoint = Path(analysis_by_pair[(tag, updates)]["analysis_checkpoint"])
+        _write_tiny_audited_sample(
+            path,
+            checkpoint,
+            scheduler="DDPMScheduler",
+            steps=500,
+            value=sample_value,
+        )
+        sample_value += 1.0
+
+    table_dir = tmp_path / "results" / "nf_generalize_fig2_dit" / "tables"
+    for updates in final_audit.EXPECTED_UPDATES:
+        label = final_audit.DPM_LABELS[updates]
+        for feature in ("pca", "sscd"):
+            path = table_dir / (
+                f"{prep.CONTINUE_SWEEP_NAME}_{updates // 1000}k_"
+                f"{feature}_full_nn_metrics.csv"
+            )
+            _write_csv_rows(
+                path,
+                [
+                    {
+                        "dataset_tag": tag,
+                        "sample_path": analysis_by_pair[(tag, updates)]["sample_path"],
+                    }
+                    for tag in EXPECTED_TAGS
+                ],
+            )
+
+    _write_csv_rows(
+        table_dir / f"{prep.CONTINUE_SWEEP_NAME}_physics_summary.csv",
+        [
+            {"dataset_tag": tag, "updates_k": updates // 1000}
+            for tag in EXPECTED_TAGS
+            for updates in final_audit.EXPECTED_UPDATES
+        ],
+    )
+    _write_csv_rows(
+        table_dir / f"{prep.CONTINUE_SWEEP_NAME}_pk_selected_bins.csv",
+        [
+            {
+                "dataset_tag": tag,
+                "updates_k": updates // 1000,
+                "k_bin": k_bin,
+            }
+            for tag in EXPECTED_TAGS
+            for updates in final_audit.EXPECTED_UPDATES
+            for k_bin in (20, 40, 60)
+        ],
+    )
+    patch_rows = [
+        {
+            "architecture": "dit_l16",
+            "dataset_tag": tag,
+            "updates_k": updates // 1000,
+        }
+        for tag in EXPECTED_TAGS
+        for updates in final_audit.EXPECTED_UPDATES
+    ]
+    patch_rows.extend(
+        {
+            "architecture": "real_reference",
+            "dataset_tag": tag,
+            "updates_k": 0,
+        }
+        for tag in EXPECTED_TAGS
+    )
+    patch_rows.extend(
+        {
+            "architecture": architecture,
+            "dataset_tag": tag,
+            "updates_k": 200,
+        }
+        for architecture in ("dit_l8", "dit_base")
+        for tag in EXPECTED_TAGS
+    )
+    _write_csv_rows(
+        table_dir / f"{prep.CONTINUE_SWEEP_NAME}_patch_boundaries.csv",
+        patch_rows,
+    )
+
+    physics_dir = tmp_path / "results" / "nf_generalize_fig2_dit" / "physics"
+    physics_dir.mkdir(parents=True, exist_ok=True)
+    curves = {
+        f"{tag}_{updates // 1000}k_{suffix}": np.asarray([sample_value])
+        for tag in EXPECTED_TAGS
+        for updates in final_audit.EXPECTED_UPDATES
+        for suffix in (
+            "kbins",
+            "real_hist_probability",
+            "generated_hist_probability",
+            "real_pk_mean",
+            "generated_pk_mean",
+            "pk_ratio",
+        )
+    }
+    np.savez_compressed(
+        physics_dir / f"{prep.CONTINUE_SWEEP_NAME}_curves.npz", **curves
+    )
+    return {
+        "manifest": manifest,
+        "sample": tmp_path / analysis_rows[0]["sample_path"],
+        "checkpoint": Path(continuation_rows[0]["expected_checkpoint"]),
+        "pca": table_dir
+        / f"{prep.CONTINUE_SWEEP_NAME}_300k_pca_full_nn_metrics.csv",
+        "sscd": table_dir
+        / f"{prep.CONTINUE_SWEEP_NAME}_300k_sscd_full_nn_metrics.csv",
+        "physics": table_dir / f"{prep.CONTINUE_SWEEP_NAME}_physics_summary.csv",
+    }
+
+
+def test_final_audit_passes_only_complete_attributable_sweep(tmp_path, monkeypatch):
+    paths = _build_complete_audit_fixture(tmp_path)
+    monkeypatch.setattr(final_audit, "EXPECTED_SAMPLE_SHAPE", (1, 1, 2, 2))
+
+    report = final_audit.audit_results(tmp_path, paths["manifest"])
+
+    assert report["status"] == "PASS"
+    assert report["counts"]["valid_checkpoints"] == 50
+    assert report["counts"]["valid_sample_files"] == 64
+    assert report["counts"]["valid_metric_tables"] == 12
+    saved = json.loads(
+        (tmp_path / "local" / prep.CONTINUE_SWEEP_NAME / "final_audit.json").read_text()
+    )
+    assert saved["status"] == "PASS"
+
+
+@pytest.mark.parametrize("missing_kind", ["checkpoint", "sample", "pca", "sscd", "physics"])
+def test_final_audit_fails_closed_for_missing_artifact(
+    tmp_path, monkeypatch, missing_kind
+):
+    import shutil
+
+    paths = _build_complete_audit_fixture(tmp_path)
+    monkeypatch.setattr(final_audit, "EXPECTED_SAMPLE_SHAPE", (1, 1, 2, 2))
+    target = paths[missing_kind]
+    if target.is_dir():
+        shutil.rmtree(target)
+    else:
+        target.unlink()
+
+    report = final_audit.audit_results(tmp_path, paths["manifest"])
+
+    assert report["status"] == "FAIL"
+    assert report["issues"] or report["missing_paths"]
