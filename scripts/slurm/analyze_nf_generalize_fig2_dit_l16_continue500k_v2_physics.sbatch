@@ -19,12 +19,13 @@ SWEEP=nf_generalize_fig2_dit_l16_continue500k_v2
 MANIFEST_PATH=${MANIFEST_PATH:-${PROJECT_DIR}/local/${SWEEP}/analysis_manifest.json}
 BASELINE_MANIFEST=${BASELINE_MANIFEST:-${PROJECT_DIR}/local/nf_generalize_fig2_dit/manifest.json}
 SAMPLE_ROOT=${SAMPLE_ROOT:-${PROJECT_DIR}/results/${SWEEP}/samples}
-TABLE_DIR=${TABLE_DIR:-${PROJECT_DIR}/results/${SWEEP}/tables/physics}
+TABLE_DIR=${TABLE_DIR:-${PROJECT_DIR}/results/nf_generalize_fig2_dit/tables}
+PHYSICS_DIR=${PHYSICS_DIR:-${PROJECT_DIR}/results/nf_generalize_fig2_dit/physics}
 SAMPLE_LABEL=${SAMPLE_LABEL:-}
 OUT_PREFIX=${OUT_PREFIX:-${SWEEP}}
 
 cd "${PROJECT_DIR}"
-mkdir -p "logs/${SWEEP}" "${TABLE_DIR}"
+mkdir -p "logs/${SWEEP}" "${TABLE_DIR}" "${PHYSICS_DIR}"
 if [[ -f "${VENV_PATH}/bin/activate" ]]; then
   source "${VENV_PATH}/bin/activate"
 fi
@@ -43,5 +44,6 @@ fi
   --baseline-manifest "${BASELINE_MANIFEST}" \
   --sample-root "${SAMPLE_ROOT}" \
   --table-dir "${TABLE_DIR}" \
+  --physics-dir "${PHYSICS_DIR}" \
   --out-prefix "${OUT_PREFIX}" \
   "${EXTRA_ARGS[@]}"
