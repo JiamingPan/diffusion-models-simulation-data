@@ -9,6 +9,7 @@ import inspect
 import re
 import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -477,6 +478,51 @@ def _labels_for_batch(
     return None
 
 
+def _audit_scalar(value: Any) -> float:
+    if hasattr(value, "detach"):
+        value = value.detach().cpu()
+    array = np.asarray(value)
+    if array.size != 1:
+        raise ValueError(f"expected one scheduler scalar, found shape {array.shape}")
+    return float(array.reshape(-1)[0])
+
+
+def scheduler_audit_metadata(
+    scheduler: Any, requested_steps: int
+) -> dict[str, Any]:
+    """Describe the schedule actually exposed by a configured sampler."""
+    timesteps = getattr(scheduler, "timesteps", None)
+    if timesteps is None:
+        raise ValueError("scheduler does not expose timesteps after set_timesteps")
+    if hasattr(timesteps, "detach"):
+        timesteps = timesteps.detach().cpu()
+    timestep_values = np.asarray(timesteps).reshape(-1)
+    if timestep_values.size == 0:
+        raise ValueError("scheduler produced an empty inference schedule")
+
+    sigmas = getattr(scheduler, "sigmas", None)
+    terminal_sigma_verifiable = sigmas is not None and np.asarray(
+        sigmas.detach().cpu() if hasattr(sigmas, "detach") else sigmas
+    ).size > 0
+    terminal_sigma = float("nan")
+    if terminal_sigma_verifiable:
+        sigma_values = sigmas.detach().cpu() if hasattr(sigmas, "detach") else sigmas
+        terminal_sigma = _audit_scalar(np.asarray(sigma_values).reshape(-1)[-1])
+
+    return {
+        "scheduler_class": scheduler.__class__.__name__,
+        "requested_inference_steps": int(requested_steps),
+        "executed_inference_steps": int(timestep_values.size),
+        "first_timestep": _audit_scalar(timestep_values[0]),
+        "final_timestep": _audit_scalar(timestep_values[-1]),
+        "terminal_sigma": terminal_sigma,
+        "terminal_sigma_is_zero": bool(
+            terminal_sigma_verifiable and np.isclose(terminal_sigma, 0.0)
+        ),
+        "terminal_sigma_verifiable": bool(terminal_sigma_verifiable),
+    }
+
+
 def save_sample_output(
     output: Path,
     samples: np.ndarray,
@@ -487,10 +533,15 @@ def save_sample_output(
     scheduler_name: str,
     num_steps: int,
     seed: int,
+    scheduler_audit: dict[str, Any] | None = None,
 ) -> None:
     """Save samples with enough provenance to audit checkpoint comparisons."""
     output.parent.mkdir(parents=True, exist_ok=True)
     if output.suffix == ".npz":
+        provenance = {
+            key: np.asarray(value)
+            for key, value in (scheduler_audit or {}).items()
+        }
         np.savez(
             output,
             samples=samples,
@@ -500,6 +551,7 @@ def save_sample_output(
             scheduler=np.asarray(str(scheduler_name)),
             num_steps=np.asarray(int(num_steps), dtype=np.int64),
             seed=np.asarray(int(seed), dtype=np.int64),
+            **provenance,
         )
     else:
         np.save(output, samples)
@@ -561,12 +613,15 @@ def main() -> None:
     )
     scheduler = build_inference_scheduler(scheduler, args.scheduler)
     n_steps = int(args.num_steps or scheduler.config.num_train_timesteps)
+    scheduler.set_timesteps(n_steps)
+    scheduler_audit = scheduler_audit_metadata(scheduler, n_steps)
     if args.preflight_only:
-        scheduler.set_timesteps(n_steps)
         print(
             "preflight ok: "
             f"checkpoint={checkpoint} scheduler={scheduler.__class__.__name__} "
-            f"steps={len(scheduler.timesteps)} ema_sigma_rel={args.ema_sigma_rel}"
+            f"steps={len(scheduler.timesteps)} final_t={scheduler_audit['final_timestep']} "
+            f"terminal_sigma={scheduler_audit['terminal_sigma']} "
+            f"ema_sigma_rel={args.ema_sigma_rel}"
         )
         return
 
@@ -620,6 +675,7 @@ def main() -> None:
         scheduler_name=scheduler.__class__.__name__,
         num_steps=n_steps,
         seed=args.seed,
+        scheduler_audit=scheduler_audit,
     )
     print(f"Wrote {args.num_samples} samples to {output}")
 
