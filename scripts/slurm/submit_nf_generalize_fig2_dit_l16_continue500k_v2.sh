@@ -52,6 +52,32 @@ if (( START_STAGE > 1 )); then
       echo "Missing restart checkpoint for ${DATASET_TAG}: ${PREVIOUS_CHECKPOINT}" >&2
       exit 1
     fi
+    RUN_NAME=$("${PYTHON_BIN}" "${PREPARE}" \
+      --project-dir "${PROJECT_DIR}" \
+      --use-existing-manifest \
+      --dataset-tag "${DATASET_TAG}" \
+      --stage 1 \
+      --print-field run_name)
+    for COMPLETED_STAGE in $(seq 1 $((START_STAGE - 1))); do
+      COMPLETED_K=$((300 + 40 * COMPLETED_STAGE))
+      COMPLETED_SAMPLE="${PROJECT_DIR}/results/${SWEEP}/samples/${RUN_NAME}_seed123_dpm50_cont_${COMPLETED_K}k.npz"
+      if [[ ! -s "${COMPLETED_SAMPLE}" ]]; then
+        echo "Missing prior-stage sample for restart: ${COMPLETED_SAMPLE}" >&2
+        echo "Restart from stage ${COMPLETED_STAGE} instead." >&2
+        exit 1
+      fi
+    done
+  done
+  for COMPLETED_STAGE in $(seq 1 $((START_STAGE - 1))); do
+    COMPLETED_K=$((300 + 40 * COMPLETED_STAGE))
+    for FEATURE in pca sscd; do
+      TABLE="${PROJECT_DIR}/results/nf_generalize_fig2_dit/tables/${SWEEP}_${COMPLETED_K}k_${FEATURE}_full_nn_metrics.csv"
+      if [[ ! -s "${TABLE}" ]]; then
+        echo "Missing prior-stage metric table for restart: ${TABLE}" >&2
+        echo "Restart from stage ${COMPLETED_STAGE} instead." >&2
+        exit 1
+      fi
+    done
   done
 fi
 
@@ -74,6 +100,21 @@ ANALYSIS_JOBS=()
 FINAL_TRAIN_JOB=
 FINAL_SAMPLE_JOB=
 
+BASELINE_PCA_JOB=$(MANIFEST_PATH="${ANALYSIS_MANIFEST}" \
+  SAMPLE_LABEL=dpm50_source_300k \
+  OUT_PREFIX="${SWEEP}_300k_pca_full_nn" \
+  sbatch -A "${ACCOUNT}" --dependency="afterok:${BASELINE_SAMPLE_JOB}" --parsable \
+  scripts/slurm/analyze_nf_generalize_fig2_dit_pca.sbatch)
+BASELINE_PCA_JOB=${BASELINE_PCA_JOB%%;*}
+BASELINE_SSCD_JOB=$(MANIFEST_PATH="${ANALYSIS_MANIFEST}" \
+  SAMPLE_LABEL=dpm50_source_300k \
+  OUT_PREFIX="${SWEEP}_300k_sscd_full_nn" \
+  sbatch -A "${ACCOUNT}" --dependency="afterok:${BASELINE_SAMPLE_JOB}" --parsable \
+  scripts/slurm/analyze_nf_generalize_fig2_dit_sscd.sbatch)
+BASELINE_SSCD_JOB=${BASELINE_SSCD_JOB%%;*}
+ANALYSIS_JOBS+=("${BASELINE_PCA_JOB}" "${BASELINE_SSCD_JOB}")
+echo "300k analysis: pca=${BASELINE_PCA_JOB} sscd=${BASELINE_SSCD_JOB}"
+
 for STAGE in $(seq "${START_STAGE}" 5); do
   TRAIN_JOB=$(CONTINUE_STAGE="${STAGE}" sbatch -A "${ACCOUNT}" \
     --array=0-9%2 \
@@ -93,27 +134,31 @@ for STAGE in $(seq "${START_STAGE}" 5); do
   TARGET_K=$((300 + 40 * STAGE))
   SAMPLE_LABEL=dpm50_cont_${TARGET_K}k
   PCA_JOB=$(MANIFEST_PATH="${ANALYSIS_MANIFEST}" SAMPLE_LABEL="${SAMPLE_LABEL}" \
-    OUT_PREFIX="nf_generalize_fig2_dit_l16_cont_${TARGET_K}k_pca_full_nn" \
+    OUT_PREFIX="${SWEEP}_${TARGET_K}k_pca_full_nn" \
     sbatch -A "${ACCOUNT}" --dependency="afterok:${SAMPLE_JOB}" --parsable \
     scripts/slurm/analyze_nf_generalize_fig2_dit_pca.sbatch)
   PCA_JOB=${PCA_JOB%%;*}
   SSCD_JOB=$(MANIFEST_PATH="${ANALYSIS_MANIFEST}" SAMPLE_LABEL="${SAMPLE_LABEL}" \
-    OUT_PREFIX="nf_generalize_fig2_dit_l16_cont_${TARGET_K}k_sscd_full_nn" \
+    OUT_PREFIX="${SWEEP}_${TARGET_K}k_sscd_full_nn" \
     sbatch -A "${ACCOUNT}" --dependency="afterok:${SAMPLE_JOB}" --parsable \
     scripts/slurm/analyze_nf_generalize_fig2_dit_sscd.sbatch)
   SSCD_JOB=${SSCD_JOB%%;*}
-  PHYSICS_JOB=$(CONTINUE_STAGE="${STAGE}" \
-    sbatch -A "${ACCOUNT}" --dependency="afterok:${SAMPLE_JOB}" --parsable \
-    scripts/slurm/analyze_nf_generalize_fig2_dit_l16_continue500k_v2_physics.sbatch)
-  PHYSICS_JOB=${PHYSICS_JOB%%;*}
-  ANALYSIS_JOBS+=("${PCA_JOB}" "${SSCD_JOB}" "${PHYSICS_JOB}")
+  ANALYSIS_JOBS+=("${PCA_JOB}" "${SSCD_JOB}")
 
   echo "stage ${STAGE} (${TARGET_K}k): train=${TRAIN_JOB} sample=${SAMPLE_JOB}"
-  echo "  analysis: pca=${PCA_JOB} sscd=${SSCD_JOB} physics=${PHYSICS_JOB}"
+  echo "  analysis: pca=${PCA_JOB} sscd=${SSCD_JOB}"
   PREVIOUS_JOB=${SAMPLE_JOB}
   FINAL_TRAIN_JOB=${TRAIN_JOB}
   FINAL_SAMPLE_JOB=${SAMPLE_JOB}
 done
+
+PHYSICS_JOB=$(sbatch -A "${ACCOUNT}" \
+  --dependency="afterok:${BASELINE_SAMPLE_JOB}:${FINAL_SAMPLE_JOB}" \
+  --parsable \
+  scripts/slurm/analyze_nf_generalize_fig2_dit_l16_continue500k_v2_physics.sbatch)
+PHYSICS_JOB=${PHYSICS_JOB%%;*}
+ANALYSIS_JOBS+=("${PHYSICS_JOB}")
+echo "full 300k-500k physics analysis=${PHYSICS_JOB}"
 
 DDPM_JOB=$(OVERWRITE="${OVERWRITE}" \
   sbatch -A "${ACCOUNT}" \
