@@ -84,8 +84,15 @@ if [[ ! -d "${CHECKPOINT_PATH}" ]]; then
   exit 1
 fi
 if [[ -f "${OUTPUT_PATH}" && "${OVERWRITE}" != "1" ]]; then
-  echo "Refusing to overwrite existing sample artifact: ${OUTPUT_PATH}" >&2
-  exit 1
+  echo "Validating existing sample artifact before reuse: ${OUTPUT_PATH}"
+  "${PYTHON_BIN}" "${PROJECT_DIR}/scripts/validate_nf_generalize_fig2_dit_sample.py" \
+    --sample "${OUTPUT_PATH}" \
+    --sample-root "${SAMPLE_ROOT}" \
+    --sample-label "${SAMPLE_LABEL}" \
+    --requested-checkpoint "${CHECKPOINT_PATH}" \
+    --scheduler "${SAMPLER_CLASS}" \
+    --requested-steps "${SAMPLER_STEPS}"
+  exit 0
 fi
 
 STUB_ROOT="${PROJECT_DIR}/results/cache/python_stubs"

@@ -325,13 +325,21 @@ def build_analysis_manifest(
     baseline = []
     for source in _validate_source_rows(source_rows):
         row = deepcopy(source)
+        run_name = _continuation_run_name(str(source["dataset_tag"]))
         row.update(
             {
+                "sweep_name": CONTINUE_SWEEP_NAME,
                 "source_sweep_name": SOURCE_SWEEP_NAME,
                 "source_run_name": source["run_name"],
                 "source_checkpoint": source["expected_checkpoint"],
                 "analysis_checkpoint": source["expected_checkpoint"],
                 "analysis_updates": SOURCE_TARGET_UPDATES,
+                "run_name": run_name,
+                "sample_label": "dpm50_source_300k",
+                "sample_path": (
+                    f"results/{CONTINUE_SWEEP_NAME}/samples/"
+                    f"{run_name}_seed123_dpm50_source_300k.npz"
+                ),
             }
         )
         baseline.append(row)
