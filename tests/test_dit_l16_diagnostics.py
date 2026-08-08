@@ -1,0 +1,112 @@
+from __future__ import annotations
+
+import numpy as np
+import pytest
+
+from simdiff_eval.dit_diagnostics import (
+    bootstrap_mean_interval,
+    one_point_l1_common_bins,
+    patch_boundary_statistics,
+    selected_power_bin_statistics,
+)
+
+
+def test_bootstrap_mean_interval_is_deterministic():
+    values = np.linspace(-1.0, 1.0, 41)
+
+    first = bootstrap_mean_interval(values, n_resamples=500, seed=17)
+    second = bootstrap_mean_interval(values, n_resamples=500, seed=17)
+
+    assert first == second
+    assert first[0] < values.mean() < first[1]
+
+
+def test_constant_selected_power_bins_have_zero_variance_and_collapsed_interval():
+    spectra = np.full((32, 91), 4.5)
+
+    rows = selected_power_bin_statistics(
+        spectra, bin_indices=(20, 40, 60), n_resamples=200, seed=9
+    )
+
+    assert [row["k_bin"] for row in rows] == [20, 40, 60]
+    for row in rows:
+        assert row["mean"] == pytest.approx(4.5)
+        assert row["variance"] == pytest.approx(0.0)
+        assert row["std"] == pytest.approx(0.0)
+        assert row["mean_ci_low"] == pytest.approx(4.5)
+        assert row["mean_ci_high"] == pytest.approx(4.5)
+
+
+@pytest.mark.parametrize("bad_bin", [-1, 91])
+def test_selected_power_bins_reject_invalid_indices(bad_bin):
+    with pytest.raises(ValueError, match="k-bin"):
+        selected_power_bin_statistics(np.ones((4, 91)), (bad_bin,))
+
+
+def test_selected_power_bins_reject_invalid_shape_and_nonfinite_values():
+    with pytest.raises(ValueError, match="two-dimensional"):
+        selected_power_bin_statistics(np.ones(91), (20,))
+
+    spectra = np.ones((4, 91))
+    spectra[0, 20] = np.nan
+    with pytest.raises(ValueError, match="non-finite"):
+        selected_power_bin_statistics(spectra, (20,))
+
+
+def test_identical_fields_have_zero_common_bin_l1():
+    rng = np.random.default_rng(123)
+    images = rng.normal(size=(8, 1, 16, 16))
+
+    assert one_point_l1_common_bins(images, images, bins=40) == pytest.approx(0.0)
+
+
+def test_one_point_l1_rejects_empty_or_nonfinite_fields():
+    with pytest.raises(ValueError, match="empty"):
+        one_point_l1_common_bins(np.empty((0,)), np.ones((1,)))
+    with pytest.raises(ValueError, match="non-finite"):
+        one_point_l1_common_bins(np.asarray([np.nan]), np.ones((1,)))
+
+
+def _smooth_linear_fields(n_images: int = 3, size: int = 32) -> np.ndarray:
+    coordinate = np.arange(size, dtype=np.float64)
+    field = coordinate[:, None] + coordinate[None, :]
+    return np.repeat(field[None, None], n_images, axis=0)
+
+
+def test_smooth_fields_have_patch_boundary_ratio_near_one():
+    stats = patch_boundary_statistics(_smooth_linear_fields(), patch_size=8)
+
+    assert stats["boundary_to_interior_ratio"] == pytest.approx(1.0)
+    assert stats["boundary_to_control_ratio"] == pytest.approx(1.0)
+    assert stats["boundary_excess_abs_difference"] == pytest.approx(0.0)
+    assert stats["horizontal_boundary_to_interior_ratio"] == pytest.approx(1.0)
+    assert stats["vertical_boundary_to_interior_ratio"] == pytest.approx(1.0)
+
+
+def test_eight_pixel_seams_raise_patch_boundary_ratio():
+    images = _smooth_linear_fields(n_images=2)
+    block_offsets = np.repeat(np.arange(4, dtype=np.float64), 8)
+    images = images + 25.0 * (
+        block_offsets[None, None, :, None] + block_offsets[None, None, None, :]
+    )
+
+    stats = patch_boundary_statistics(images, patch_size=8)
+
+    assert stats["boundary_to_interior_ratio"] > 10.0
+    assert stats["boundary_to_control_ratio"] > 10.0
+    assert stats["boundary_relative_excess"] > 9.0
+    assert stats["horizontal_boundary_to_interior_ratio"] > 10.0
+    assert stats["vertical_boundary_to_interior_ratio"] > 10.0
+
+
+@pytest.mark.parametrize(
+    ("images", "patch_size", "message"),
+    [
+        (np.ones((2, 32, 32)), 8, "N,C,H,W"),
+        (np.ones((2, 1, 32, 32)), 1, "patch_size"),
+        (np.ones((2, 1, 30, 32)), 8, "divisible"),
+    ],
+)
+def test_patch_boundary_statistics_reject_invalid_inputs(images, patch_size, message):
+    with pytest.raises(ValueError, match=message):
+        patch_boundary_statistics(images, patch_size=patch_size)

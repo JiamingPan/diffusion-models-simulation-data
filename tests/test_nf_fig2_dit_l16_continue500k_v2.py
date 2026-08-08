@@ -487,6 +487,39 @@ def test_ddpm_controls_are_only_transition_and_high_data_endpoints():
     assert "SEED=123" in text
 
 
+def test_physics_analysis_is_exact_subset_and_fails_on_missing_samples():
+    script = (
+        ROOT
+        / "scripts"
+        / "analyze_nf_generalize_fig2_dit_l16_continue500k_v2_physics.py"
+    )
+    slurm = (
+        ROOT
+        / "scripts"
+        / "slurm"
+        / "analyze_nf_generalize_fig2_dit_l16_continue500k_v2_physics.sbatch"
+    )
+
+    source = script.read_text()
+    wrapper = slurm.read_text()
+    assert "iter_real_reference_batches_from_config" in source
+    assert "batch_power_spectra" in source
+    assert "selected_power_bin_statistics" in source
+    assert "patch_boundary_statistics" in source
+    assert "--baseline-manifest" in source
+    assert "skip-missing" not in source
+    assert "nf_generalize_fig2_dit_l16_continue500k_v2_physics_summary.csv" in source
+    assert "nf_generalize_fig2_dit_l16_continue500k_v2_pk_selected_bins.csv" in source
+    assert "nf_generalize_fig2_dit_l16_continue500k_v2_patch_boundaries.csv" in source
+    assert "nf_generalize_fig2_dit_l16_continue500k_v2_curves.npz" in source
+
+    assert "#SBATCH --partition=standard" in wrapper
+    assert "#SBATCH --cpus-per-task=8" in wrapper
+    assert "#SBATCH --mem=80gb" in wrapper
+    assert "SAMPLE_LABEL" in wrapper
+    assert "OUT_PREFIX" in wrapper
+
+
 def _write_sample_file(path: Path, checkpoint: Path, *, value: float = 0.0) -> None:
     np.savez(
         path,
