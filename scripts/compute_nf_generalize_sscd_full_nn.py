@@ -80,16 +80,20 @@ def embed_with_cache(
     args: argparse.Namespace,
     cache_dir: Path,
     kind: str,
+    source_id: str | None = None,
 ) -> torch.Tensor:
     cache_dir.mkdir(parents=True, exist_ok=True)
     path = embedding_cache_path(cache_dir, row, args, kind)
     if path.exists() and not args.refresh_cache:
         payload = torch.load(path, map_location="cpu")
         emb = payload["embeddings"] if isinstance(payload, dict) else payload
-        if len(emb) == len(images):
+        cached_source_id = payload.get("source_id") if isinstance(payload, dict) else None
+        source_matches = source_id is None or cached_source_id == source_id
+        if len(emb) == len(images) and source_matches:
             print(f"  loaded cached {kind} embeddings: {path}")
             return F.normalize(emb.float(), dim=1)
-        print(f"  cache length mismatch for {path}; recomputing")
+        reason = "source mismatch" if not source_matches else "length mismatch"
+        print(f"  cache {reason} for {path}; recomputing")
 
     emb = embed_fn(
         images,
@@ -111,6 +115,7 @@ def embed_with_cache(
             "image_size": int(args.image_size),
             "render_mode": args.render_mode,
             "value_range": (float(args.value_min), float(args.value_max)),
+            "source_id": source_id,
         },
         path,
     )
@@ -538,7 +543,14 @@ def main() -> None:
             real_val, model=model, embed_fn=embed_fn, row=row, args=args, cache_dir=cache_dir, kind="heldout"
         )
         gen_z = embed_with_cache(
-            generated, model=model, embed_fn=embed_fn, row=row, args=args, cache_dir=cache_dir, kind="generated"
+            generated,
+            model=model,
+            embed_fn=embed_fn,
+            row=row,
+            args=args,
+            cache_dir=cache_dir,
+            kind="generated",
+            source_id=str(sample_path.resolve()),
         )
         generated_embeddings[(str(row.get("arch", "")), int(row["dataset_size"]))] = gen_z.cpu().clone()
 
