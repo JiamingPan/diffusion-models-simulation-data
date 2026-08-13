@@ -20,7 +20,18 @@ or sample files produced by the scripts in the repository.
 ## Diffusion Transformers
 
 - [DiT depth and data-size results](nf_generalize_fig2_dit_results.ipynb)
+- [Audited DiT-L16 300k-500k continuation analysis](nf_generalize_fig2_dit_l16_300k_500k_analysis.ipynb)
 - [Executed DiT results snapshot](nf_generalize_fig2_dit_results_executed.ipynb)
+
+The audited continuation notebook expects the Great Lakes-only manifests,
+samples, metrics, and physics arrays. Execute it on Great Lakes with:
+
+```bash
+cd /home/jiamingp/diffusion_models_repo
+jupyter nbconvert --execute --to notebook --inplace \
+  --ExecutePreprocessor.timeout=-1 \
+  notebooks/nf_generalize_fig2_dit_l16_300k_500k_analysis.ipynb
+```
 
 ## Conditional Generation and Calibration
 
