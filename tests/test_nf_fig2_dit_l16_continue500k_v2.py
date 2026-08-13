@@ -4,9 +4,11 @@ import json
 import sys
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import torch
 import yaml
 
 
@@ -19,9 +21,95 @@ import prepare_nf_generalize_fig2_dit_l16_continue500k_v2_configs as prep
 import check_nf_generalize_fig2_dit_l16_continue500k_v2 as precheck
 import validate_nf_generalize_fig2_dit_sample as sample_guard
 import audit_nf_generalize_fig2_dit_l16_continue500k_v2_results as final_audit
+import compute_nf_generalize_pca_full_nn as pca_nn
+import compute_nf_generalize_sscd_full_nn as sscd_nn
 
 
 EXPECTED_TAGS = tuple(f"d2p{power:02d}" for power in range(6, 16))
+
+
+def test_analysis_selects_only_the_requested_explicit_sample_label():
+    rows = [
+        {
+            "run_name": "same-run",
+            "arch": "dit_l16",
+            "dataset_tag": "d2p06",
+            "dataset_size": 64,
+            "sample_label": label,
+            "sample_path": f"results/same-run_seed123_{label}.npz",
+        }
+        for label in ("dpm50_source_300k", "dpm50_cont_340k")
+    ]
+    args = SimpleNamespace(
+        arch=None,
+        dataset_tag=None,
+        run_name=None,
+        sample_label="dpm50_cont_340k",
+    )
+
+    selected = pca_nn.selected_rows(rows, args)
+
+    assert [row["sample_label"] for row in selected] == ["dpm50_cont_340k"]
+
+
+def test_analysis_keeps_legacy_rows_without_explicit_sample_labels():
+    rows = [
+        {
+            "run_name": "legacy-run",
+            "arch": "dit_l16",
+            "dataset_tag": "d2p06",
+            "dataset_size": 64,
+        }
+    ]
+    args = SimpleNamespace(
+        arch=None,
+        dataset_tag=None,
+        run_name=None,
+        sample_label="dpm50",
+    )
+
+    assert pca_nn.selected_rows(rows, args) == rows
+
+
+def test_sscd_generated_cache_is_recomputed_when_source_file_changes(tmp_path):
+    args = SimpleNamespace(
+        sample_label="dpm50_cont_340k",
+        seed=123,
+        image_size=8,
+        render_mode="fixed",
+        device="cpu",
+        refresh_cache=False,
+        embedding_batch_size=2,
+        value_min=-1.0,
+        value_max=1.0,
+    )
+    row = {"run_name": "same-run", "dataset_size": 64}
+    cache_dir = tmp_path / "cache"
+    cache_path = sscd_nn.embedding_cache_path(cache_dir, row, args, "generated")
+    cache_path.parent.mkdir(parents=True)
+    torch.save({"embeddings": torch.ones((2, 2))}, cache_path)
+    calls = []
+
+    def embed_fn(images, model, **kwargs):
+        calls.append(len(images))
+        return torch.tensor([[1.0, 0.0], [0.0, 1.0]])
+
+    embeddings = sscd_nn.embed_with_cache(
+        np.zeros((2, 1, 2, 2), dtype=np.float32),
+        model=torch.nn.Identity(),
+        embed_fn=embed_fn,
+        row=row,
+        args=args,
+        cache_dir=cache_dir,
+        kind="generated",
+        source_id="/samples/right-checkpoint.npz",
+    )
+
+    assert calls == [2]
+    assert torch.allclose(embeddings, torch.eye(2))
+    assert torch.load(cache_path, map_location="cpu")["source_id"] == (
+        "/samples/right-checkpoint.npz"
+    )
 
 
 def _source_config(output_dir: Path, *, num_epochs: int) -> dict:
@@ -457,6 +545,28 @@ def test_submission_chain_is_five_stage_afterok_only():
     assert text.count(
         "scripts/slurm/analyze_nf_generalize_fig2_dit_l16_continue500k_v2_physics.sbatch"
     ) == 1
+
+
+def test_metric_repair_submission_reruns_only_metrics_and_final_audit():
+    script = (
+        ROOT
+        / "scripts"
+        / "slurm"
+        / "repair_nf_generalize_fig2_dit_l16_continue500k_v2_metrics.sh"
+    )
+    text = script.read_text()
+
+    assert "UPDATES=(300 340 380 420 460 500)" in text
+    assert (
+        "SAMPLE_LABELS=(dpm50_source_300k dpm50_cont_340k dpm50_cont_380k "
+        "dpm50_cont_420k dpm50_cont_460k dpm50_cont_500k)"
+    ) in text
+    assert "analyze_nf_generalize_fig2_dit_pca.sbatch" in text
+    assert "analyze_nf_generalize_fig2_dit_sscd.sbatch" in text
+    assert "audit_nf_generalize_fig2_dit_l16_continue500k_v2.sbatch" in text
+    assert "afterok" in text
+    assert "train_nf_generalize" not in text
+    assert "sample_nf_generalize" not in text
 
 
 def test_dpm_sampling_array_uses_fixed_auditable_protocol():
