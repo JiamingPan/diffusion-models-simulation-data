@@ -24,6 +24,8 @@ from scripts.dit_300k_scaling_analysis import (
     prepare_loss_history,
     prepare_stitched_loss_history,
     require_exact_dataset_sweep,
+    robust_log_ratio_outliers,
+    summarize_filtered_power_ratios,
     streaming_nearest_neighbors,
     summarize_n50,
     validate_sampler_endpoint,
@@ -519,3 +521,53 @@ def test_physical_helpers_reject_empty_or_incompatible_inputs():
             reference_mean_pk=np.ones(5),
             nbins=5,
         )
+
+
+def test_robust_log_ratio_outliers_flags_only_extreme_sample():
+    values = np.asarray([0.91, 0.96, 1.00, 1.04, 1.09, 75.0])
+
+    result = robust_log_ratio_outliers(values, threshold=4.5)
+
+    assert result["outlier_mask"].tolist() == [False, False, False, False, False, True]
+    assert result["n_total"] == 6
+    assert result["n_flagged"] == 1
+    assert result["threshold"] == pytest.approx(4.5)
+    assert result["robust_score"][-1] > 4.5
+
+
+def test_robust_log_ratio_outliers_flags_nothing_when_mad_is_zero():
+    result = robust_log_ratio_outliers(np.ones(8), threshold=4.5)
+
+    assert not result["outlier_mask"].any()
+    assert result["n_flagged"] == 0
+    assert result["scaled_mad"] == pytest.approx(0.0)
+
+
+def test_robust_log_ratio_outliers_rejects_nonpositive_values():
+    with pytest.raises(ValueError, match="strictly positive"):
+        robust_log_ratio_outliers([1.0, 0.0, 2.0])
+
+
+def test_summarize_filtered_power_ratios_reports_original_and_retained_values():
+    ratios = np.asarray(
+        [
+            [0.9, 1.0, 1.1],
+            [1.0, 1.1, 1.2],
+            [1.1, 1.2, 1.3],
+            [9.0, 12.0, 15.0],
+        ]
+    )
+
+    rows = summarize_filtered_power_ratios(
+        ratios,
+        outlier_mask=np.asarray([False, False, False, True]),
+        bin_indices=(0, 2),
+    )
+
+    assert [row["k_bin"] for row in rows] == [0, 2]
+    assert {row["n_total"] for row in rows} == {4}
+    assert {row["n_kept"] for row in rows} == {3}
+    assert rows[0]["original_mean"] == pytest.approx(3.0)
+    assert rows[0]["filtered_mean"] == pytest.approx(1.0)
+    assert rows[1]["original_median"] == pytest.approx(1.25)
+    assert rows[1]["filtered_variance"] == pytest.approx(np.var([1.1, 1.2, 1.3]))
