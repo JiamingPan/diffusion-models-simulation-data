@@ -167,8 +167,14 @@ def expected_sample_label(updates_k: int) -> str:
 
 def source_config_for_row(row: pd.Series) -> Path:
     '''Resolve the frozen source config that defines the model's training subset.'''
-    source_config = str(row.get('source_config', '') or '')
-    return project_path(source_config if source_config else row['config'])
+    for key in ('source_config', 'config'):
+        value = row.get(key)
+        if value is None or pd.isna(value):
+            continue
+        text = str(value).strip()
+        if text:
+            return project_path(text)
+    raise ValueError('Manifest row has neither source_config nor config')
 
 
 def load_samples(path: str | Path) -> np.ndarray:

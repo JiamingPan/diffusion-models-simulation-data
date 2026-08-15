@@ -1,6 +1,10 @@
+import ast
 import importlib.util
 import json
 from pathlib import Path
+
+import numpy as np
+import pandas as pd
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +28,23 @@ def notebook() -> dict:
 
 def notebook_source() -> str:
     return "\n".join("".join(cell.get("source", [])) for cell in notebook()["cells"])
+
+
+def notebook_function(name: str):
+    for cell in notebook()["cells"]:
+        if cell["cell_type"] != "code":
+            continue
+        tree = ast.parse("".join(cell["source"]))
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef) and node.name == name:
+                namespace = {
+                    "Path": Path,
+                    "pd": pd,
+                    "project_path": lambda value: Path(str(value)),
+                }
+                exec(compile(ast.Module(body=[node], type_ignores=[]), "<notebook>", "exec"), namespace)
+                return namespace[name]
+    raise AssertionError(f"Notebook function not found: {name}")
 
 
 def test_builder_and_standalone_notebook_exist():
@@ -147,3 +168,9 @@ def test_notebook_uses_exact_subset_references_and_full_dataset_range():
     assert "load_real_reference_from_config" in source
     assert "range(6, 16)" in source
     assert "CONT_TAGS[:5]" not in source
+
+
+def test_source_config_resolver_falls_back_when_dataframe_value_is_nan():
+    resolver = notebook_function("source_config_for_row")
+    row = pd.Series({"source_config": np.nan, "config": "configs/source.yaml"})
+    assert resolver(row) == Path("configs/source.yaml")
