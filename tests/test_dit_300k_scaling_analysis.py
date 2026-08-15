@@ -15,12 +15,14 @@ from scripts.dit_300k_scaling_analysis import (
     aggregate_physical_batches,
     build_historical_unet_metric_table,
     build_mixed_dit_metric_table,
+    checkpoint_metric_candidates,
     evenly_spaced_indices,
     expected_dataset_tags,
     interpolate_n50,
     normalize_generalization_table,
     per_sample_physical_errors,
     prepare_loss_history,
+    prepare_stitched_loss_history,
     require_exact_dataset_sweep,
     streaming_nearest_neighbors,
     summarize_n50,
@@ -244,6 +246,52 @@ def test_prepare_loss_history_rejects_incomplete_fresh_run():
             steps_per_epoch=10,
             target_updates=100,
             minimum_fraction=0.98,
+        )
+
+
+def test_checkpoint_metric_candidates_selects_only_the_exact_checkpoint(tmp_path: Path):
+    checkpoint_root = tmp_path / "checkpoints"
+    checkpoint = checkpoint_root / "checkpoint-epoch-100"
+    checkpoint.mkdir(parents=True)
+    local_metrics = checkpoint / "metrics.json"
+    exact_metrics = checkpoint_root / "metrics_epoch_100.json"
+    later_metrics = checkpoint_root / "metrics_epoch_200.json"
+    root_metrics = checkpoint_root / "metrics.json"
+    for path in (local_metrics, exact_metrics, later_metrics, root_metrics):
+        path.write_text("{}")
+
+    assert checkpoint_metric_candidates(checkpoint) == [
+        local_metrics,
+        exact_metrics,
+    ]
+
+
+def test_prepare_stitched_loss_history_places_stage_local_metrics_on_global_axis():
+    result = prepare_stitched_loss_history(
+        [
+            ({"epoch_loss": [8.0, 6.0]}, 300, 304),
+            ({"epoch_loss": [4.0, 2.0]}, 304, 308),
+        ],
+        steps_per_epoch=2,
+        restart_updates=2,
+    )
+
+    assert result["updates"].tolist() == [302.0, 304.0, 306.0, 308.0]
+    assert result["cycle_averaged_loss"].tolist() == [8.0, 6.0, 4.0, 2.0]
+    assert result["start_updates"] == 300
+    assert result["recorded_updates"] == 308
+    assert result["stage_recorded_updates"].tolist() == [4, 4]
+
+
+def test_prepare_stitched_loss_history_rejects_incomplete_stage():
+    with pytest.raises(ValueError, match="segment 2 recorded 2 optimizer updates"):
+        prepare_stitched_loss_history(
+            [
+                ({"epoch_loss": [8.0, 6.0]}, 300, 304),
+                ({"epoch_loss": [4.0]}, 304, 308),
+            ],
+            steps_per_epoch=2,
+            restart_updates=2,
         )
 
 

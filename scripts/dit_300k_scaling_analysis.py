@@ -433,6 +433,110 @@ def prepare_loss_history(
     }
 
 
+def checkpoint_metric_candidates(checkpoint_path: str | Path) -> list[Path]:
+    """Return metrics tied to one exact checkpoint, excluding later run metrics."""
+
+    checkpoint = Path(checkpoint_path)
+    match = re.fullmatch(r"checkpoint-epoch-(\d+)", checkpoint.name)
+    if match is None:
+        raise ValueError(f"invalid checkpoint directory name: {checkpoint}")
+    target_epoch = int(match.group(1))
+
+    candidates: list[Path] = []
+    if checkpoint.is_dir():
+        candidates.extend(sorted(checkpoint.glob("metrics*.json")))
+    if checkpoint.parent.is_dir():
+        for path in sorted(checkpoint.parent.glob("metrics_epoch_*.json")):
+            epoch_match = re.fullmatch(r"metrics_epoch_(\d+)\.json", path.name)
+            if epoch_match and int(epoch_match.group(1)) == target_epoch:
+                candidates.append(path)
+    return list(dict.fromkeys(candidates))
+
+
+def prepare_stitched_loss_history(
+    segments: Sequence[tuple[Mapping[str, Any], int, int]],
+    *,
+    steps_per_epoch: int,
+    restart_updates: int = 4_000,
+    minimum_fraction: float = 0.98,
+) -> dict[str, Any]:
+    """Validate and stitch stage-local loss logs onto one global update axis."""
+
+    if not segments:
+        raise ValueError("loss history has no continuation segments")
+    steps_per_epoch = max(1, int(steps_per_epoch))
+    all_losses: list[np.ndarray] = []
+    all_updates: list[np.ndarray] = []
+    stage_recorded_updates: list[int] = []
+    first_start: int | None = None
+    previous_end: int | None = None
+
+    for index, (metrics, raw_start, raw_end) in enumerate(segments, start=1):
+        start_updates = int(raw_start)
+        end_updates = int(raw_end)
+        if end_updates <= start_updates:
+            raise ValueError(
+                f"segment {index} has invalid update interval "
+                f"[{start_updates}, {end_updates}]"
+            )
+        if previous_end is not None and start_updates != previous_end:
+            raise ValueError(
+                f"segment {index} starts at {start_updates}, expected {previous_end}"
+            )
+
+        epoch_loss = flatten_numeric(metrics.get("epoch_loss"))
+        if len(epoch_loss) == 0 or not np.all(np.isfinite(epoch_loss)):
+            raise ValueError(f"segment {index} has no finite epoch_loss values")
+        recorded = int(len(epoch_loss) * steps_per_epoch)
+        expected = end_updates - start_updates
+        if recorded < minimum_fraction * expected:
+            raise ValueError(
+                f"segment {index} recorded {recorded} optimizer updates; expected at least "
+                f"{minimum_fraction:.0%} of {expected}"
+            )
+        if recorded > expected / minimum_fraction:
+            raise ValueError(
+                f"segment {index} recorded {recorded} optimizer updates; expected about "
+                f"{expected}, so the metrics are not stage-local"
+            )
+
+        epoch_updates = start_updates + (
+            np.arange(len(epoch_loss), dtype=float) + 1.0
+        ) * steps_per_epoch
+        all_losses.append(epoch_loss)
+        all_updates.append(epoch_updates)
+        stage_recorded_updates.append(recorded)
+        first_start = start_updates if first_start is None else first_start
+        previous_end = end_updates
+
+    epoch_loss = np.concatenate(all_losses)
+    epoch_updates = np.concatenate(all_updates)
+    window = max(1, min(len(epoch_loss), int(round(restart_updates / steps_per_epoch))))
+    if window == 1:
+        averaged = epoch_loss.copy()
+        averaged_updates = epoch_updates.copy()
+    else:
+        averaged = np.convolve(epoch_loss, np.ones(window) / window, mode="valid")
+        averaged_updates = np.convolve(epoch_updates, np.ones(window) / window, mode="valid")
+
+    tail_count = max(1, int(np.ceil(0.05 * len(epoch_loss))))
+    return {
+        "epoch_loss": epoch_loss,
+        "epoch_updates": epoch_updates,
+        "updates": averaged_updates,
+        "cycle_averaged_loss": averaged,
+        "start_updates": int(first_start),
+        "recorded_updates": int(previous_end),
+        "stage_recorded_updates": np.asarray(stage_recorded_updates, dtype=int),
+        "epochs_completed": int(len(epoch_loss)),
+        "steps_per_epoch": steps_per_epoch,
+        "tail_median_loss": float(np.median(epoch_loss[-tail_count:])),
+        "tail_q25_loss": float(np.quantile(epoch_loss[-tail_count:], 0.25)),
+        "tail_q75_loss": float(np.quantile(epoch_loss[-tail_count:], 0.75)),
+        "best_loss": float(np.min(epoch_loss)),
+    }
+
+
 def scalar_value(value: Any) -> Any:
     """Convert a scalar NumPy archive field to its Python value."""
 

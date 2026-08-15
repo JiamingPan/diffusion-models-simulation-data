@@ -147,6 +147,16 @@ def test_notebook_contains_every_requested_diagnostic():
         assert text in source
 
 
+def test_notebook_stitches_exact_stage_local_loss_histories():
+    source = notebook_source()
+    assert "checkpoint_metric_candidates" in source
+    assert "prepare_stitched_loss_history" in source
+    assert "CONT_UPDATES_K[1:]" in source
+    assert "previous_expected_checkpoint" in source
+    assert "read_latest_metrics" not in source
+    assert "target_updates=500_000" not in source
+
+
 def test_notebook_does_not_reintroduce_legacy_l16_200k_results():
     source = notebook_source()
     forbidden = (

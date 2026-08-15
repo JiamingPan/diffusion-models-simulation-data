@@ -93,9 +93,11 @@ if str(PROJECT_DIR) not in sys.path:
 
 from scripts.dit_300k_scaling_analysis import (
     build_historical_unet_metric_table,
+    checkpoint_metric_candidates,
     evenly_spaced_indices,
+    flatten_numeric,
     normalize_generalization_table,
-    prepare_loss_history,
+    prepare_stitched_loss_history,
     require_exact_dataset_sweep,
     streaming_nearest_neighbors,
     summarize_n50,
@@ -354,59 +356,61 @@ by itself establish novelty or physical agreement.
 
 LOSS_CODE = r"""
 def checkpoint_epoch(path: Path) -> int:
-    match = re.search(r'(?:checkpoint-epoch-|metrics_epoch_)(\d+)', str(path))
-    return int(match.group(1)) if match else -1
+    match = re.fullmatch(r'checkpoint-epoch-(\d+)', path.name)
+    if match is None:
+        raise ValueError(f'Cannot read checkpoint epoch from {path}')
+    return int(match.group(1))
 
 
-def metric_candidates(row: pd.Series) -> list[Path]:
-    roots = []
-    for key in ('checkpoint_dir', 'expected_checkpoint', 'analysis_checkpoint'):
-        value = str(row.get(key, '') or '')
-        if value:
-            roots.append(project_path(value))
-    candidates = set()
-    for root in roots:
-        if not root.exists():
-            continue
-        candidates.update(root.glob('metrics_epoch_*.json'))
-        candidates.update(root.glob('checkpoint-epoch-*/metrics*.json'))
-        if (root / 'metrics.json').is_file():
-            candidates.add(root / 'metrics.json')
-        if root.name.startswith('checkpoint-epoch-'):
-            candidates.update(root.glob('metrics*.json'))
-            candidates.update(root.parent.glob('metrics_epoch_*.json'))
-            if (root.parent / 'metrics.json').is_file():
-                candidates.add(root.parent / 'metrics.json')
-    return sorted(candidates)
-
-
-def read_latest_metrics(row: pd.Series) -> tuple[dict[str, Any], Path]:
-    candidates = metric_candidates(row)
+def read_checkpoint_metrics(row: pd.Series) -> tuple[dict[str, Any], Path]:
+    checkpoint = project_path(row['expected_checkpoint'])
+    candidates = checkpoint_metric_candidates(checkpoint)
     if not candidates:
-        raise FileNotFoundError(f"No metrics found for {row['dataset_tag']}")
-    latest = max(candidates, key=lambda path: (checkpoint_epoch(path), path.stat().st_mtime))
-    return json.loads(latest.read_text()), latest
+        raise FileNotFoundError(
+            f"No checkpoint-specific metrics found for {row['dataset_tag']} "
+            f"at {int(row['updates_k'])}k: {checkpoint}"
+        )
+    payloads = [(json.loads(path.read_text()), path) for path in candidates]
+    return max(
+        payloads,
+        key=lambda item: (
+            len(flatten_numeric(item[0].get('epoch_loss'))),
+            item[1].stat().st_mtime,
+        ),
+    )
 
 
 loss_histories = {}
 loss_audit_rows = []
 for tag in CONT_TAGS:
-    row = continuation_row(tag, 500)
-    metrics, metrics_path = read_latest_metrics(row)
-    history = prepare_loss_history(
-        metrics,
-        steps_per_epoch=int(row['steps_per_epoch']),
-        target_updates=500_000,
+    final_row = continuation_row(tag, 500)
+    steps_per_epoch = int(final_row['steps_per_epoch'])
+    segments = []
+    metrics_paths = []
+    for updates_k in CONT_UPDATES_K[1:]:
+        row = continuation_row(tag, updates_k)
+        metrics, metrics_path = read_checkpoint_metrics(row)
+        previous_epoch = checkpoint_epoch(project_path(row['previous_expected_checkpoint']))
+        final_epoch = int(row['expected_final_epoch'])
+        stage_start_updates = (previous_epoch + 1) * steps_per_epoch
+        stage_end_updates = (final_epoch + 1) * steps_per_epoch
+        segments.append((metrics, stage_start_updates, stage_end_updates))
+        metrics_paths.append(str(metrics_path))
+    history = prepare_stitched_loss_history(
+        segments,
+        steps_per_epoch=steps_per_epoch,
         restart_updates=4_000,
         minimum_fraction=0.98,
     )
     loss_histories[tag] = history
     loss_audit_rows.append({
         'dataset_tag': tag,
-        'dataset_size': int(row['dataset_size']),
-        'recorded_updates': history['recorded_updates'],
+        'dataset_size': int(final_row['dataset_size']),
+        'start_update': history['start_updates'],
+        'final_update': history['recorded_updates'],
+        'stage_recorded_updates': history['stage_recorded_updates'].tolist(),
         'tail_median_loss': history['tail_median_loss'],
-        'metrics_path': str(metrics_path),
+        'metrics_paths': metrics_paths,
     })
 
 fig, axes = plt.subplots(2, 5, figsize=(19, 8.4), sharex=True, constrained_layout=True)
