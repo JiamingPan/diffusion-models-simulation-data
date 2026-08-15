@@ -550,6 +550,45 @@ def _normalized_path(value: Any) -> str:
     return str(Path(str(scalar_value(value))).expanduser().resolve())
 
 
+def validate_sampler_endpoint(
+    *,
+    scheduler_class: str,
+    executed_steps: int,
+    expected_steps: int,
+    final_timestep: float,
+    terminal_sigma: float,
+    terminal_sigma_is_zero: bool,
+    terminal_sigma_verifiable: bool,
+) -> str:
+    """Validate sampler completion using metadata exposed by that scheduler."""
+
+    scheduler_class = str(scheduler_class)
+    executed_steps = int(executed_steps)
+    expected_steps = int(expected_steps)
+    if executed_steps != expected_steps:
+        raise ValueError(
+            f"{scheduler_class} executed {executed_steps} steps; expected {expected_steps}"
+        )
+
+    if bool(terminal_sigma_verifiable):
+        if not bool(terminal_sigma_is_zero) or not np.isclose(float(terminal_sigma), 0.0):
+            raise ValueError(
+                f"{scheduler_class} did not terminate at sigma=0: {terminal_sigma}"
+            )
+        return "terminal sigma = 0"
+
+    if scheduler_class == "DDPMScheduler":
+        if not np.isclose(float(final_timestep), 0.0):
+            raise ValueError(
+                f"DDPMScheduler did not reach final diffusion timestep 0: {final_timestep}"
+            )
+        return "final diffusion timestep = 0"
+
+    raise ValueError(
+        f"Cannot verify endpoint for {scheduler_class}: no terminal sigma is available"
+    )
+
+
 def validate_sample_archive_metadata(
     metadata: Mapping[str, Any],
     *,
