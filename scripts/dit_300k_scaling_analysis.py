@@ -946,3 +946,88 @@ def per_sample_physical_errors(
         "per_sample_pk": sample_pk,
         "kbins": kbins,
     }
+
+
+def robust_log_ratio_outliers(
+    values: Sequence[float],
+    *,
+    threshold: float = 4.5,
+) -> dict[str, Any]:
+    """Flag extreme ratios with a conservative median/MAD rule in log space."""
+
+    ratios = np.asarray(values, dtype=np.float64)
+    if ratios.ndim != 1 or ratios.size == 0:
+        raise ValueError("values must be a non-empty one-dimensional array")
+    if not np.all(np.isfinite(ratios)):
+        raise ValueError("values must be finite")
+    if np.any(ratios <= 0):
+        raise ValueError("values must be strictly positive")
+    if not np.isfinite(threshold) or threshold <= 0:
+        raise ValueError("threshold must be finite and positive")
+
+    log_ratio = np.log10(ratios)
+    median = float(np.median(log_ratio))
+    mad = float(np.median(np.abs(log_ratio - median)))
+    scaled_mad = 1.4826 * mad
+    if not np.isfinite(scaled_mad) or scaled_mad == 0.0:
+        robust_score = np.zeros_like(log_ratio)
+        outlier_mask = np.zeros(log_ratio.shape, dtype=bool)
+    else:
+        robust_score = np.abs(log_ratio - median) / scaled_mad
+        outlier_mask = robust_score > float(threshold)
+
+    return {
+        "log_ratio": log_ratio,
+        "median_log_ratio": median,
+        "mad_log_ratio": mad,
+        "scaled_mad": scaled_mad,
+        "robust_score": robust_score,
+        "outlier_mask": outlier_mask,
+        "threshold": float(threshold),
+        "n_total": int(ratios.size),
+        "n_flagged": int(outlier_mask.sum()),
+    }
+
+
+def summarize_filtered_power_ratios(
+    pk_ratio: np.ndarray,
+    *,
+    outlier_mask: Sequence[bool],
+    bin_indices: Sequence[int] = (20, 40, 60),
+) -> list[dict[str, float | int]]:
+    """Compare unfiltered and retained-sample power ratios at selected bins."""
+
+    ratios = np.asarray(pk_ratio, dtype=np.float64)
+    mask = np.asarray(outlier_mask, dtype=bool)
+    if ratios.ndim != 2 or ratios.shape[0] == 0:
+        raise ValueError("pk_ratio must be a non-empty two-dimensional array")
+    if mask.shape != (ratios.shape[0],):
+        raise ValueError("outlier_mask length must match the sample count")
+    kept = ~mask
+    if not np.any(kept):
+        raise ValueError("outlier_mask excludes every sample")
+
+    rows: list[dict[str, float | int]] = []
+    for raw_index in bin_indices:
+        index = int(raw_index)
+        if index < 0 or index >= ratios.shape[1]:
+            raise ValueError(f"k-bin index out of range: {index}")
+        original = ratios[:, index]
+        filtered = ratios[kept, index]
+        if not np.any(np.isfinite(original)) or not np.any(np.isfinite(filtered)):
+            raise ValueError(f"k-bin {index} has no finite ratios")
+        rows.append(
+            {
+                "k_bin": index,
+                "n_total": int(ratios.shape[0]),
+                "n_flagged": int(mask.sum()),
+                "n_kept": int(kept.sum()),
+                "original_mean": float(np.nanmean(original)),
+                "original_median": float(np.nanmedian(original)),
+                "original_variance": float(np.nanvar(original)),
+                "filtered_mean": float(np.nanmean(filtered)),
+                "filtered_median": float(np.nanmedian(filtered)),
+                "filtered_variance": float(np.nanvar(filtered)),
+            }
+        )
+    return rows

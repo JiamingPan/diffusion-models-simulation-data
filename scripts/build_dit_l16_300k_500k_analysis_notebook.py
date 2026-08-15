@@ -99,7 +99,9 @@ from scripts.dit_300k_scaling_analysis import (
     normalize_generalization_table,
     prepare_stitched_loss_history,
     require_exact_dataset_sweep,
+    robust_log_ratio_outliers,
     streaming_nearest_neighbors,
+    summarize_filtered_power_ratios,
     summarize_n50,
     validate_sampler_endpoint,
 )
@@ -121,6 +123,8 @@ CONT_TAGS = (
 CONT_POWERS = tuple(range(6, 16))
 CONT_SIZES = tuple(2 ** power for power in range(6, 16))
 CONT_FEATURES = ('PCA', 'SSCD')
+OUTLIER_K_BIN = 60
+OUTLIER_THRESHOLD = 4.5
 FEATURE_TITLES = {
     'PCA': 'PCA q95 novelty',
     'SSCD': 'SSCD q95 novelty',
@@ -771,8 +775,242 @@ plt.show()
 """
 
 
+OUTLIER_MARKDOWN = r"""
+## 11. Conservative k=60 outlier sensitivity analysis
+
+The unusually large low-data variance could reflect either a few catastrophic
+samples or a broadly unstable generated distribution. We distinguish these
+possibilities using every one of the 512 generated samples in every
+dataset-size/checkpoint group.
+
+For each group, the selection variable is
+$\log_{10}[P_g(k=60)/P_r(k=60)]$. A sample is flagged only when its absolute
+deviation from the group median exceeds **4.5 robust standard deviations**, where
+one robust standard deviation is $1.4826\,\mathrm{MAD}$. The rule is two-sided
+and is evaluated independently within each group. If the MAD is zero, no sample
+is removed. This is deliberately stricter than the common 3-MAD convention.
+
+The original all-sample result remains the primary result. The outlier-excluded
+curves are a sensitivity analysis only. Every excluded sample is identified,
+plotted with its complete spectrum, and retained in the audit tables. Filtered
+plots always state `n_kept / 512`.
+"""
+
+
+OUTLIER_CODE = r"""
+outlier_sample_parts = []
+outlier_group_rows = []
+filtered_selected_rows = []
+outlier_analysis = {}
+
+for updates_k in CONT_UPDATES_K:
+    for tag in CONT_TAGS:
+        row = continuation_row(tag, updates_k)
+        sample_path = project_path(row['sample_path'])
+        samples = load_samples(sample_path)
+        key = f'{tag}_{updates_k}k'
+        real_pk = np.asarray(continuation_curves[f'{key}_real_pk_mean'], dtype=float)
+        expected_kbins = np.asarray(continuation_curves[f'{key}_kbins'], dtype=float)
+        generated_pk, kbins = batch_power_spectra(samples, nbins=len(real_pk))
+        if not np.allclose(kbins, expected_kbins, equal_nan=True):
+            raise RuntimeError(f'k-bin mismatch for {tag}/{updates_k}k')
+        pk_ratio = generated_pk / np.clip(real_pk[None, :], 1e-30, None)
+        selection = robust_log_ratio_outliers(
+            pk_ratio[:, OUTLIER_K_BIN], threshold=OUTLIER_THRESHOLD
+        )
+        mask = np.asarray(selection['outlier_mask'], dtype=bool)
+        score = np.asarray(selection['robust_score'], dtype=float)
+        log_ratio = np.asarray(selection['log_ratio'], dtype=float)
+        median_log = float(selection['median_log_ratio'])
+        scaled_mad = float(selection['scaled_mad'])
+        lower_log = median_log - OUTLIER_THRESHOLD * scaled_mad
+        upper_log = median_log + OUTLIER_THRESHOLD * scaled_mad
+
+        outlier_sample_parts.append(pd.DataFrame({
+            'dataset_tag': tag,
+            'dataset_size': int(row['dataset_size']),
+            'updates_k': updates_k,
+            'sample_index': np.arange(len(samples), dtype=int),
+            'k_bin': OUTLIER_K_BIN,
+            'k60_ratio': pk_ratio[:, OUTLIER_K_BIN],
+            'log10_k60_ratio': log_ratio,
+            'robust_score': score,
+            'flagged_outlier': mask,
+            'sample_path': str(sample_path),
+        }))
+        outlier_group_rows.append({
+            'dataset_tag': tag,
+            'dataset_size': int(row['dataset_size']),
+            'updates_k': updates_k,
+            'k_bin': OUTLIER_K_BIN,
+            'threshold_robust_sd': OUTLIER_THRESHOLD,
+            'median_log10_ratio': median_log,
+            'mad_log10_ratio': float(selection['mad_log_ratio']),
+            'scaled_mad_log10_ratio': scaled_mad,
+            'lower_ratio_threshold': float(10 ** lower_log),
+            'upper_ratio_threshold': float(10 ** upper_log),
+            'n_total': int(selection['n_total']),
+            'n_flagged': int(selection['n_flagged']),
+            'n_kept': int(selection['n_total'] - selection['n_flagged']),
+        })
+        for summary in summarize_filtered_power_ratios(
+            pk_ratio, outlier_mask=mask, bin_indices=(20, 40, 60)
+        ):
+            filtered_selected_rows.append({
+                'dataset_tag': tag,
+                'dataset_size': int(row['dataset_size']),
+                'updates_k': updates_k,
+                **summary,
+            })
+        outlier_analysis[(tag, updates_k)] = {
+            'kbins': kbins,
+            'pk_ratio': pk_ratio,
+            'outlier_mask': mask,
+            'sample_path': sample_path,
+        }
+
+outlier_samples = pd.concat(outlier_sample_parts, ignore_index=True)
+outlier_groups = pd.DataFrame(outlier_group_rows).sort_values(['updates_k', 'dataset_size'])
+filtered_selected_bins = pd.DataFrame(filtered_selected_rows).sort_values(
+    ['k_bin', 'updates_k', 'dataset_size']
+)
+
+sample_audit_path = OUTPUT_DIR / 'k60_outlier_sample_audit.csv'
+group_audit_path = OUTPUT_DIR / 'k60_outlier_group_audit.csv'
+filtered_bins_path = OUTPUT_DIR / 'k60_outlier_filtered_selected_bins.csv'
+outlier_samples.to_csv(sample_audit_path, index=False)
+outlier_groups.to_csv(group_audit_path, index=False)
+filtered_selected_bins.to_csv(filtered_bins_path, index=False)
+print('wrote', sample_audit_path)
+print('wrote', group_audit_path)
+print('wrote', filtered_bins_path)
+display(outlier_groups)
+
+# Distribution of the actual selection variable. Flagged points remain visible.
+fig, axes = plt.subplots(2, 3, figsize=(18, 10), sharex=True, constrained_layout=True)
+for axis, updates_k in zip(axes.flat, CONT_UPDATES_K):
+    current = outlier_samples[outlier_samples['updates_k'] == updates_k]
+    for power, tag in zip(CONT_POWERS, CONT_TAGS):
+        group = current[current['dataset_tag'] == tag]
+        retained = group[~group['flagged_outlier']]
+        flagged = group[group['flagged_outlier']]
+        jitter = np.random.default_rng(10_000 + updates_k + power).uniform(-0.12, 0.12, len(retained))
+        axis.scatter(
+            power + jitter, retained['k60_ratio'], s=8, color='0.45', alpha=0.22,
+            rasterized=True,
+        )
+        if len(flagged):
+            axis.scatter(
+                np.full(len(flagged), power), flagged['k60_ratio'], s=34,
+                color='#D55E00', edgecolor='black', linewidth=0.4, zorder=5,
+            )
+    axis.axhline(1, color='black', ls='--', lw=1)
+    axis.set_yscale('log')
+    axis.set_title(f'{updates_k}k updates', fontweight='semibold')
+    axis.set_xticks(CONT_POWERS, [rf'$2^{{{power}}}$' for power in CONT_POWERS])
+    axis.set_xlabel(r'Training images $N_{2D}$')
+    axis.grid(alpha=0.14)
+for axis in axes[:, 0]:
+    axis.set_ylabel(r'Per-sample $P_g(k=60)/P_r(k=60)$')
+fig.suptitle('k=60 sample distribution; orange points are flagged by the 4.5-MAD rule', fontsize=20, fontweight='semibold')
+save_figure(fig, 'k60_outlier_distributions.png')
+plt.show()
+
+# Plot every flagged sample. Pages are bounded so no image is silently omitted.
+flagged_rows = outlier_samples[outlier_samples['flagged_outlier']].sort_values(
+    ['updates_k', 'dataset_size', 'robust_score'], ascending=[True, True, False]
+).reset_index(drop=True)
+if flagged_rows.empty:
+    display(Markdown('No samples passed the conservative 4.5-MAD outlier rule.'))
+else:
+    rows_per_page = 6
+    for page_start in range(0, len(flagged_rows), rows_per_page):
+        page = flagged_rows.iloc[page_start:page_start + rows_per_page]
+        page_sample_cache = {}
+        fig, axes = plt.subplots(len(page), 2, figsize=(12, 4.1 * len(page)), squeeze=False, constrained_layout=True)
+        for row_index, (_, flagged) in enumerate(page.iterrows()):
+            tag = str(flagged['dataset_tag'])
+            updates_k = int(flagged['updates_k'])
+            sample_index = int(flagged['sample_index'])
+            analysis = outlier_analysis[(tag, updates_k)]
+            sample_path = str(analysis['sample_path'])
+            if sample_path not in page_sample_cache:
+                page_sample_cache[sample_path] = load_samples(sample_path)
+            image = page_sample_cache[sample_path][sample_index, 0]
+            ratio = analysis['pk_ratio'][sample_index]
+            axes[row_index, 0].imshow(image, cmap='viridis', vmin=-1, vmax=1)
+            axes[row_index, 0].set_title(
+                f'{tag}, {updates_k}k, sample {sample_index}; '
+                f'k60={float(flagged["k60_ratio"]):.3g}, score={float(flagged["robust_score"]):.1f}',
+                fontsize=11,
+            )
+            axes[row_index, 0].set_xticks([])
+            axes[row_index, 0].set_yticks([])
+            axes[row_index, 1].plot(analysis['kbins'], ratio, color='#D55E00', lw=2)
+            axes[row_index, 1].axhline(1, color='black', ls='--', lw=1)
+            axes[row_index, 1].axvline(analysis['kbins'][OUTLIER_K_BIN], color='#0072B2', ls=':', lw=1.2)
+            axes[row_index, 1].set_xlabel(r'$k$ bin')
+            axes[row_index, 1].set_ylabel(r'$P_g/P_r$')
+            axes[row_index, 1].grid(alpha=0.16)
+        page_number = page_start // rows_per_page + 1
+        fig.suptitle(f'Flagged k=60 samples: page {page_number}', fontsize=19, fontweight='semibold')
+        save_figure(fig, f'k60_flagged_sample_gallery_page_{page_number:03d}.png')
+        plt.show()
+
+# Original, robust-center, and outlier-excluded summaries at the selected bins.
+fig, axes = plt.subplots(2, 3, figsize=(18, 10), constrained_layout=True)
+for column, k_bin in enumerate((20, 40, 60)):
+    selected = filtered_selected_bins[filtered_selected_bins['k_bin'] == k_bin]
+    for updates_k in CONT_UPDATES_K:
+        current = selected[selected['updates_k'] == updates_k].sort_values('dataset_size')
+        x = np.log2(current['dataset_size'])
+        color = COLORS[updates_k]
+        axes[0, column].plot(x, current['original_mean'], color=color, alpha=0.25, lw=1.3)
+        axes[0, column].plot(x, current['original_median'], color=color, ls=':', lw=1.4)
+        axes[0, column].plot(x, current['filtered_mean'], color=color, marker='o', ms=3.8, lw=2, label=f'{updates_k}k')
+        axes[1, column].plot(x, current['original_variance'], color=color, alpha=0.25, lw=1.3)
+        axes[1, column].plot(x, current['filtered_variance'], color=color, marker='o', ms=3.8, lw=2)
+    axes[0, column].axhline(1, color='black', ls='--', lw=1)
+    axes[0, column].set_title(f'k-bin {k_bin}', fontweight='semibold')
+    axes[1, column].set_xlabel(r'Training images $N_{2D}$')
+    for axis in axes[:, column]:
+        axis.set_xticks(CONT_POWERS, [rf'$2^{{{power}}}$' for power in CONT_POWERS])
+        axis.grid(alpha=0.14)
+axes[0, 0].set_ylabel(r'Mean or median $P_g/P_r$')
+axes[1, 0].set_ylabel(r'Variance of $P_g/P_r$')
+axes[0, 2].legend(title='Filtered mean', ncol=2, frameon=False, fontsize=9)
+fig.text(0.5, 0.01, 'Faint: original mean/variance; dotted: sample median; solid: 4.5-MAD filtered result', ha='center', fontsize=11)
+fig.suptitle('Selected-bin outlier sensitivity analysis', fontsize=20, fontweight='semibold')
+save_figure(fig, 'power_spectrum_selected_bins_outlier_sensitivity.png')
+plt.show()
+
+# Full 500k spectra show whether filtering changes only the high-k tail or the entire curve.
+fig, axes = plt.subplots(2, 5, figsize=(19, 8), sharey=True, constrained_layout=True)
+for axis, tag in zip(axes.flat, CONT_TAGS):
+    analysis = outlier_analysis[(tag, 500)]
+    ratios = analysis['pk_ratio']
+    kept = ~analysis['outlier_mask']
+    original_mean = np.nanmean(ratios, axis=0)
+    sample_median = np.nanmedian(ratios, axis=0)
+    filtered_mean = np.nanmean(ratios[kept], axis=0)
+    axis.plot(analysis['kbins'], original_mean, color='0.55', lw=1.5, label='all-sample mean')
+    axis.plot(analysis['kbins'], sample_median, color='#0072B2', ls=':', lw=1.7, label='sample median')
+    axis.plot(analysis['kbins'], filtered_mean, color='#B33C86', lw=2, label='filtered mean')
+    axis.axhline(1, color='black', ls='--', lw=1)
+    axis.set_title(f'{dataset_label(int(continuation_row(tag, 500)["dataset_size"]))}\n{int(kept.sum())}/512 kept')
+    axis.set_xlabel(r'$k$ bin')
+    axis.grid(alpha=0.14)
+for axis in axes[:, 0]:
+    axis.set_ylabel(r'$P_g(k)/P_r(k)$')
+axes[0, 0].legend(frameon=False, fontsize=9)
+fig.suptitle('500k full-spectrum outlier sensitivity analysis', fontsize=20, fontweight='semibold')
+save_figure(fig, 'power_spectrum_ratios_500k_outlier_sensitivity.png')
+plt.show()
+"""
+
+
 SAMPLER_MARKDOWN = r"""
-## 11. Sampler control
+## 12. Sampler control
 
 The sampler control compares DPM-Solver 50 with DDPM 500 at the same resolved
 checkpoint, data configuration, generation seed, and number of samples. It uses
@@ -885,7 +1123,7 @@ display(pd.DataFrame(sampler_rows))
 
 
 PATCH_MARKDOWN = r"""
-## 12. Patch-boundary diagnostics
+## 13. Patch-boundary diagnostics
 
 The Patch-boundary statistic compares adjacent-pixel discontinuity on the
 8-pixel DiT patch grid with an equal-size neighboring control. The trajectory
@@ -938,7 +1176,7 @@ plt.show()
 
 
 NEAREST_MARKDOWN = r"""
-## 13. Nearest-training audit
+## 14. Nearest-training audit
 
 Four deterministic generated indices are checked for $2^8$ and $2^{11}$ at
 300k and 500k. Nearest neighbors are searched across the complete exact
@@ -1011,7 +1249,7 @@ display(nearest_summary)
 
 
 JOINT_MARKDOWN = r"""
-## 14. Joint novelty and physical validity
+## 15. Joint novelty and physical validity
 
 Novelty and physical validity answer different questions. The scatter plots
 join q95 novelty to one-point and power-spectrum error at the same checkpoint
@@ -1065,7 +1303,7 @@ print('wrote', joint_path)
 
 
 SUMMARY_MARKDOWN = r"""
-## 15. Evidence summary
+## 16. Evidence summary
 
 The final table reports checkpoint-to-checkpoint changes without converting them
 into a universal claim. Negative physical-error deltas indicate improvement;
@@ -1133,16 +1371,18 @@ def build_notebook() -> dict[str, Any]:
         code(PK_CODE, section="09-power"),
         markdown(UNCERTAINTY_MARKDOWN, section="10-uncertainty"),
         code(UNCERTAINTY_CODE, section="10-uncertainty"),
-        markdown(SAMPLER_MARKDOWN, section="11-sampler"),
-        code(SAMPLER_CODE, section="11-sampler"),
-        markdown(PATCH_MARKDOWN, section="12-patch"),
-        code(PATCH_CODE, section="12-patch"),
-        markdown(NEAREST_MARKDOWN, section="13-nearest"),
-        code(NEAREST_CODE, section="13-nearest"),
-        markdown(JOINT_MARKDOWN, section="14-joint"),
-        code(JOINT_CODE, section="14-joint"),
-        markdown(SUMMARY_MARKDOWN, section="15-summary"),
-        code(SUMMARY_CODE, section="15-summary"),
+        markdown(OUTLIER_MARKDOWN, section="11-outliers"),
+        code(OUTLIER_CODE, section="11-outliers"),
+        markdown(SAMPLER_MARKDOWN, section="12-sampler"),
+        code(SAMPLER_CODE, section="12-sampler"),
+        markdown(PATCH_MARKDOWN, section="13-patch"),
+        code(PATCH_CODE, section="13-patch"),
+        markdown(NEAREST_MARKDOWN, section="14-nearest"),
+        code(NEAREST_CODE, section="14-nearest"),
+        markdown(JOINT_MARKDOWN, section="15-joint"),
+        code(JOINT_CODE, section="15-joint"),
+        markdown(SUMMARY_MARKDOWN, section="16-summary"),
+        code(SUMMARY_CODE, section="16-summary"),
     ]
     return {
         "cells": cells,
