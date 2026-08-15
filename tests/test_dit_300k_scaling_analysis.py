@@ -26,6 +26,7 @@ from scripts.dit_300k_scaling_analysis import (
     require_exact_dataset_sweep,
     streaming_nearest_neighbors,
     summarize_n50,
+    validate_sampler_endpoint,
     validate_sample_archive_metadata,
 )
 
@@ -292,6 +293,47 @@ def test_prepare_stitched_loss_history_rejects_incomplete_stage():
             ],
             steps_per_epoch=2,
             restart_updates=2,
+        )
+
+
+def test_validate_sampler_endpoint_accepts_zero_terminal_sigma():
+    result = validate_sampler_endpoint(
+        scheduler_class="DPMSolverMultistepScheduler",
+        executed_steps=50,
+        expected_steps=50,
+        final_timestep=20.0,
+        terminal_sigma=0.0,
+        terminal_sigma_is_zero=True,
+        terminal_sigma_verifiable=True,
+    )
+
+    assert result == "terminal sigma = 0"
+
+
+def test_validate_sampler_endpoint_accepts_ddpm_final_timestep_zero_without_sigmas():
+    result = validate_sampler_endpoint(
+        scheduler_class="DDPMScheduler",
+        executed_steps=500,
+        expected_steps=500,
+        final_timestep=0.0,
+        terminal_sigma=np.nan,
+        terminal_sigma_is_zero=False,
+        terminal_sigma_verifiable=False,
+    )
+
+    assert result == "final diffusion timestep = 0"
+
+
+def test_validate_sampler_endpoint_rejects_truncated_ddpm_schedule():
+    with pytest.raises(ValueError, match="did not reach final diffusion timestep 0"):
+        validate_sampler_endpoint(
+            scheduler_class="DDPMScheduler",
+            executed_steps=500,
+            expected_steps=500,
+            final_timestep=2.0,
+            terminal_sigma=np.nan,
+            terminal_sigma_is_zero=False,
+            terminal_sigma_verifiable=False,
         )
 
 

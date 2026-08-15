@@ -101,6 +101,7 @@ from scripts.dit_300k_scaling_analysis import (
     require_exact_dataset_sweep,
     streaming_nearest_neighbors,
     summarize_n50,
+    validate_sampler_endpoint,
 )
 from simdiff_eval.io import (
     as_nchw,
@@ -776,7 +777,10 @@ SAMPLER_MARKDOWN = r"""
 The sampler control compares DPM-Solver 50 with DDPM 500 at the same resolved
 checkpoint, data configuration, generation seed, and number of samples. It uses
 $2^8$ and $2^{11}$ at 300k and 500k. Agreement would argue against premature
-termination by the 50-step sampler as the primary explanation.
+termination by the 50-step sampler as the primary explanation. Endpoint
+completion is scheduler-specific: DPM-Solver exposes a terminal $\sigma=0$,
+whereas DDPM exposes no sigma array and is verified by all 500 executed steps
+ending at diffusion timestep $t=0$.
 """
 
 
@@ -803,9 +807,9 @@ for case_index, (axis, (tag, updates_k)) in enumerate(zip(axes.flat, sampler_cas
     kbins = continuation_curves[f'{key}_kbins']
     real_pk = continuation_curves[f'{key}_real_pk_mean']
     sample_arrays = {}
-    for path, label, color, expected_steps in (
-        (dpm_path, 'DPM-Solver 50', '#0072B2', 50),
-        (ddpm_path, 'DDPM 500', '#D55E00', 500),
+    for path, label, color, expected_steps, expected_scheduler in (
+        (dpm_path, 'DPM-Solver 50', '#0072B2', 50, 'DPMSolverMultistepScheduler'),
+        (ddpm_path, 'DDPM 500', '#D55E00', 500, 'DDPMScheduler'),
     ):
         samples = load_samples(path)
         sample_arrays[label] = samples
@@ -815,25 +819,38 @@ for case_index, (axis, (tag, updates_k)) in enumerate(zip(axes.flat, sampler_cas
         ratio = np.nanmean(spectra, axis=0) / np.clip(real_pk, 1e-30, None)
         axis.plot(kbins, ratio, color=color, marker='o', ms=3, lw=2, label=label)
         observed_steps = int(archive_scalar(path, 'executed_inference_steps'))
-        if observed_steps != expected_steps:
-            raise RuntimeError(f'{path} executed {observed_steps} steps, expected {expected_steps}')
+        scheduler_class = str(archive_scalar(path, 'scheduler_class'))
+        if scheduler_class != expected_scheduler:
+            raise RuntimeError(
+                f'{path} used {scheduler_class}; expected {expected_scheduler}'
+            )
+        final_timestep = float(archive_scalar(path, 'final_timestep'))
         terminal_sigma = float(archive_scalar(path, 'terminal_sigma'))
         terminal_sigma_is_zero = bool(archive_scalar(path, 'terminal_sigma_is_zero'))
         terminal_sigma_verifiable = bool(archive_scalar(path, 'terminal_sigma_verifiable'))
-        if (
-            not terminal_sigma_verifiable
-            or not terminal_sigma_is_zero
-            or not np.isclose(terminal_sigma, 0.0)
-        ):
-            raise RuntimeError(f'Sampler did not terminate at sigma=0: {path}')
+        try:
+            endpoint_evidence = validate_sampler_endpoint(
+                scheduler_class=scheduler_class,
+                executed_steps=observed_steps,
+                expected_steps=expected_steps,
+                final_timestep=final_timestep,
+                terminal_sigma=terminal_sigma,
+                terminal_sigma_is_zero=terminal_sigma_is_zero,
+                terminal_sigma_verifiable=terminal_sigma_verifiable,
+            )
+        except ValueError as error:
+            raise RuntimeError(f'Sampler endpoint audit failed for {path}: {error}') from error
         sampler_rows.append({
             'dataset_tag': tag,
             'updates_k': updates_k,
             'sampler': label,
+            'scheduler_class': scheduler_class,
             'executed_inference_steps': observed_steps,
+            'final_timestep': final_timestep,
             'terminal_sigma': terminal_sigma,
             'terminal_sigma_is_zero': terminal_sigma_is_zero,
             'terminal_sigma_verifiable': terminal_sigma_verifiable,
+            'endpoint_evidence': endpoint_evidence,
             'resolved_checkpoint': str(resolved[label]),
             'sample_path': str(path),
         })

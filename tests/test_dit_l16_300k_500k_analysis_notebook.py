@@ -137,7 +137,7 @@ def test_notebook_contains_every_requested_diagnostic():
         "k-bin 20, 40, and 60",
         "DPM-Solver 50",
         "DDPM 500",
-        "Sampler did not terminate at sigma=0",
+        "validate_sampler_endpoint",
         "Patch-boundary",
         "nearest training",
         "Novel but physically inaccurate",
@@ -145,6 +145,15 @@ def test_notebook_contains_every_requested_diagnostic():
     )
     for text in required:
         assert text in source
+
+
+def test_sampler_control_uses_scheduler_specific_endpoint_validation():
+    source = notebook_source()
+    assert "scheduler_class" in source
+    assert "final_timestep" in source
+    assert "endpoint_evidence" in source
+    assert "'DDPMScheduler'" in source
+    assert "Sampler did not terminate at sigma=0" not in source
 
 
 def test_notebook_stitches_exact_stage_local_loss_histories():
