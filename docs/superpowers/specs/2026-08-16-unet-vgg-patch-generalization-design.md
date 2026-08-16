@@ -41,6 +41,8 @@ uncertainty after accounting for feature frequency and reference-set size.
 ### Primary encoder: frozen VGG16
 
 - Repeat the standardized single-channel patch into three channels.
+- Clip standardized values to `[-4, 4]`, map them linearly to `[0, 1]`, and
+  record the clipped-pixel fraction for every cache.
 - Resize it to 64 by 64 with bilinear interpolation and apply ImageNet channel
   normalization.
 - Use a frozen TorchVision VGG16 with the same pretrained weights family already
