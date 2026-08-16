@@ -200,6 +200,16 @@ def test_notebook_uses_exact_subset_references_and_full_dataset_range():
     assert "CONT_TAGS[:5]" not in source
 
 
+def test_nearest_training_cell_uses_streaming_helper_result_schema():
+    source = notebook_source()
+    assert "matches['nearest_index'][query_index]" in source
+    assert "matches['mse'][query_index]" in source
+    assert "matches['cosine_similarity'][query_index]" in source
+    assert "matches['nearest_training_index'][query_index]" not in source
+    assert "matches['nearest_mse'][query_index]" not in source
+    assert "matches['nearest_cosine'][query_index]" not in source
+
+
 def test_source_config_resolver_falls_back_when_dataframe_value_is_nan():
     resolver = notebook_function("source_config_for_row")
     row = pd.Series({"source_config": np.nan, "config": "configs/source.yaml"})
