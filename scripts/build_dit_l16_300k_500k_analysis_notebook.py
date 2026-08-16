@@ -1218,7 +1218,7 @@ for tag in ('d2p08', 'd2p11'):
             axes[local_index, column].set_ylabel(f'generated {indices_by_update[updates_k][local_index]}', fontweight='bold')
             axes[local_index, column + 2].text(
                 0.03, 0.03,
-                f"MSE={matches['nearest_mse'][query_index]:.3g}\ncos={matches['nearest_cosine'][query_index]:.3f}",
+                f"MSE={matches['mse'][query_index]:.3g}\ncos={matches['cosine_similarity'][query_index]:.3f}",
                 transform=axes[local_index, column + 2].transAxes,
                 color='white', fontsize=8,
                 bbox={'facecolor': 'black', 'alpha': 0.65, 'pad': 2},
@@ -1227,9 +1227,9 @@ for tag in ('d2p08', 'd2p11'):
                 'dataset_tag': tag,
                 'updates_k': updates_k,
                 'generated_index': int(indices_by_update[updates_k][local_index]),
-                'nearest_training_index': int(matches['nearest_training_index'][query_index]),
-                'nearest_mse': float(matches['nearest_mse'][query_index]),
-                'nearest_cosine': float(matches['nearest_cosine'][query_index]),
+                'nearest_training_index': int(matches['nearest_index'][query_index]),
+                'nearest_mse': float(matches['mse'][query_index]),
+                'nearest_cosine': float(matches['cosine_similarity'][query_index]),
             })
     for column, title in enumerate((
         '300k generated', '300k nearest training', '300k absolute difference',
