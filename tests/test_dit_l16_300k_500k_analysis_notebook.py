@@ -145,6 +145,12 @@ def test_notebook_contains_every_requested_diagnostic():
         "k60_flagged_sample_gallery",
         "power_spectrum_selected_bins_outlier_sensitivity.png",
         "power_spectrum_ratios_500k_outlier_sensitivity.png",
+        "outlier_excluded_physics_summary.csv",
+        "outlier_excluded_novelty_bounds.csv",
+        "outlier_excluded_one_point_500k.png",
+        "outlier_excluded_power_spectrum_500k.png",
+        "feasible interval after exclusion",
+        "generated-sample median (diagnostic)",
         "n_kept",
         "DPM-Solver 50",
         "DDPM 500",
@@ -156,6 +162,17 @@ def test_notebook_contains_every_requested_diagnostic():
     )
     for text in required:
         assert text in source
+
+
+def test_builder_includes_outlier_excluded_analysis():
+    builder = load_builder()
+    source = "\n".join(
+        "".join(cell.get("source", [])) for cell in builder.build_notebook()["cells"]
+    )
+    assert "how='validate'" not in source
+    assert "how='inner'" in source
+    assert "outlier_excluded_physics_summary.csv" in source
+    assert "outlier_excluded_novelty_bounds.csv" in source
 
 
 def test_sampler_control_uses_scheduler_specific_endpoint_validation():
