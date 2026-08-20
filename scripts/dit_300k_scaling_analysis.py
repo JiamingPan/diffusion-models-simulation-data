@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 import re
 from typing import Any, Iterable, Mapping, Sequence
@@ -433,8 +434,14 @@ def prepare_loss_history(
     }
 
 
-def checkpoint_metric_candidates(checkpoint_path: str | Path) -> list[Path]:
-    """Return metrics tied to one exact checkpoint, excluding later run metrics."""
+def checkpoint_metric_candidates(
+    checkpoint_path: str | Path,
+    *,
+    durable_metrics_dir: str | Path | None = None,
+    dataset_tag: str | None = None,
+    target_updates: int | None = None,
+) -> list[Path]:
+    """Return exact-checkpoint metric candidates in durable-first order."""
 
     checkpoint = Path(checkpoint_path)
     match = re.fullmatch(r"checkpoint-epoch-(\d+)", checkpoint.name)
@@ -443,6 +450,18 @@ def checkpoint_metric_candidates(checkpoint_path: str | Path) -> list[Path]:
     target_epoch = int(match.group(1))
 
     candidates: list[Path] = []
+    if durable_metrics_dir is not None:
+        durable = Path(durable_metrics_dir)
+        if dataset_tag and target_updates is not None:
+            candidates.extend(
+                path
+                for path in (
+                    durable / f"{dataset_tag}_{int(target_updates) // 1000}k_metrics.json",
+                    durable / f"{dataset_tag}_metrics_epoch_{target_epoch}.json",
+                    durable / dataset_tag / f"metrics_epoch_{target_epoch}.json",
+                )
+                if path.is_file()
+            )
     if checkpoint.is_dir():
         candidates.extend(sorted(checkpoint.glob("metrics*.json")))
     if checkpoint.parent.is_dir():
@@ -451,6 +470,154 @@ def checkpoint_metric_candidates(checkpoint_path: str | Path) -> list[Path]:
             if epoch_match and int(epoch_match.group(1)) == target_epoch:
                 candidates.append(path)
     return list(dict.fromkeys(candidates))
+
+
+@dataclass(frozen=True)
+class LossMetricResolution:
+    metrics: dict[str, list[float]]
+    source_kind: str
+    source_paths: tuple[Path, ...]
+    first_epoch: int
+    final_epoch: int
+
+
+def _checkpoint_epoch(path: str | Path) -> int:
+    match = re.fullmatch(r"checkpoint-epoch-(\d+)", Path(path).name)
+    if match is None:
+        raise ValueError(f"invalid checkpoint directory name: {path}")
+    return int(match.group(1))
+
+
+def _loss_interval_from_payload(
+    payload: Mapping[str, Any],
+    *,
+    first_epoch: int,
+    final_epoch: int,
+    allow_stage_local: bool,
+) -> list[float]:
+    losses = flatten_numeric(payload.get("epoch_loss"))
+    expected_count = final_epoch - first_epoch + 1
+    if len(losses) >= final_epoch + 1:
+        interval = losses[first_epoch : final_epoch + 1]
+    elif allow_stage_local and len(losses) == expected_count:
+        interval = losses
+    else:
+        raise ValueError(
+            f"epoch_loss has {len(losses)} values; need a complete history through "
+            f"epoch {final_epoch} or an exact {expected_count}-epoch stage snapshot"
+        )
+    if len(interval) != expected_count or not np.all(np.isfinite(interval)):
+        raise ValueError(
+            f"loss interval [{first_epoch}, {final_epoch}] is incomplete or non-finite"
+        )
+    return [float(value) for value in interval]
+
+
+def resolve_checkpoint_loss_metrics(
+    row: Mapping[str, Any],
+    *,
+    durable_metrics_dir: str | Path,
+    log_dir: str | Path,
+) -> LossMetricResolution:
+    """Resolve one continuation stage without requiring retained weights."""
+
+    dataset_tag = str(row["dataset_tag"])
+    target_updates = int(row["target_total_updates"])
+    checkpoint = Path(str(row["expected_checkpoint"]))
+    first_epoch = _checkpoint_epoch(row["previous_expected_checkpoint"]) + 1
+    final_epoch = int(row["expected_final_epoch"])
+    if final_epoch < first_epoch:
+        raise ValueError(
+            f"{dataset_tag} at {target_updates // 1000}k has invalid epoch interval "
+            f"[{first_epoch}, {final_epoch}]"
+        )
+
+    durable_dir = Path(durable_metrics_dir)
+    exact_candidates = checkpoint_metric_candidates(
+        checkpoint,
+        durable_metrics_dir=durable_dir,
+        dataset_tag=dataset_tag,
+        target_updates=target_updates,
+    )
+    attempted: list[str] = []
+    for path in exact_candidates:
+        source_kind = (
+            "repaired_copy"
+            if path == durable_dir or durable_dir in path.parents
+            else "checkpoint_snapshot"
+        )
+        try:
+            payload = json.loads(path.read_text())
+            interval = _loss_interval_from_payload(
+                payload,
+                first_epoch=first_epoch,
+                final_epoch=final_epoch,
+                allow_stage_local=True,
+            )
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            attempted.append(f"{source_kind} {path}: {exc}")
+            continue
+        return LossMetricResolution(
+            metrics={"epoch_loss": interval},
+            source_kind=source_kind,
+            source_paths=(path,),
+            first_epoch=first_epoch,
+            final_epoch=final_epoch,
+        )
+
+    checkpoint_root = checkpoint.parent
+    history_candidates = []
+    if checkpoint_root.is_dir():
+        history_candidates.extend(sorted(checkpoint_root.glob("metrics_epoch_*.json")))
+        root_metrics = checkpoint_root / "metrics.json"
+        if root_metrics.is_file():
+            history_candidates.append(root_metrics)
+    for path in dict.fromkeys(history_candidates):
+        if path in exact_candidates:
+            continue
+        try:
+            payload = json.loads(path.read_text())
+            interval = _loss_interval_from_payload(
+                payload,
+                first_epoch=first_epoch,
+                final_epoch=final_epoch,
+                allow_stage_local=False,
+            )
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            attempted.append(f"run_history_slice {path}: {exc}")
+            continue
+        return LossMetricResolution(
+            metrics={"epoch_loss": interval},
+            source_kind="run_history_slice",
+            source_paths=(path,),
+            first_epoch=first_epoch,
+            final_epoch=final_epoch,
+        )
+
+    task_index = int(str(dataset_tag).removeprefix("d2p")) - DATASET_POWERS[0]
+    log_paths = sorted(Path(log_dir).glob(f"train_stage*_{task_index}.out"))
+    try:
+        metrics, used_paths = stage_loss_metrics_from_logs(
+            log_paths,
+            first_epoch=first_epoch,
+            final_epoch=final_epoch,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        attempted.append(f"slurm_log_reconstruction {log_dir}: {exc}")
+    else:
+        return LossMetricResolution(
+            metrics=metrics,
+            source_kind="slurm_log_reconstruction",
+            source_paths=used_paths,
+            first_epoch=first_epoch,
+            final_epoch=final_epoch,
+        )
+
+    details = "; ".join(attempted) if attempted else "no candidates found"
+    raise FileNotFoundError(
+        f"{dataset_tag} at {target_updates // 1000}k: no durable loss metrics cover "
+        f"epochs [{first_epoch}, {final_epoch}]; {details}"
+    )
 
 
 _EPOCH_LOSS_PATTERN = re.compile(

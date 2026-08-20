@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import sys
 
@@ -24,6 +25,7 @@ from scripts.dit_300k_scaling_analysis import (
     prepare_loss_history,
     prepare_stitched_loss_history,
     require_exact_dataset_sweep,
+    resolve_checkpoint_loss_metrics,
     robust_log_ratio_outliers,
     stage_loss_metrics_from_logs,
     summarize_filtered_power_ratios,
@@ -268,6 +270,83 @@ def test_checkpoint_metric_candidates_selects_only_the_exact_checkpoint(tmp_path
         local_metrics,
         exact_metrics,
     ]
+
+
+def test_checkpoint_loss_resolution_prefers_durable_repaired_copy(tmp_path: Path):
+    checkpoint_root = tmp_path / "scratch" / "checkpoints"
+    checkpoint = checkpoint_root / "checkpoint-epoch-3"
+    checkpoint.mkdir(parents=True)
+    (checkpoint / "metrics.json").write_text(json.dumps({"epoch_loss": [9.0, 9.0]}))
+    durable_dir = tmp_path / "results" / "training_metrics"
+    durable_dir.mkdir(parents=True)
+    durable_path = durable_dir / "d2p06_340k_metrics.json"
+    durable_path.write_text(json.dumps({"epoch_loss": [0.7, 0.6]}))
+    row = {
+        "dataset_tag": "d2p06",
+        "target_total_updates": 340_000,
+        "previous_expected_checkpoint": str(checkpoint_root / "checkpoint-epoch-1"),
+        "expected_checkpoint": str(checkpoint),
+        "expected_final_epoch": 3,
+        "steps_per_epoch": 10,
+    }
+
+    resolved = resolve_checkpoint_loss_metrics(
+        row,
+        durable_metrics_dir=durable_dir,
+        log_dir=tmp_path / "missing-logs",
+    )
+
+    assert resolved.source_kind == "repaired_copy"
+    assert resolved.source_paths == (durable_path,)
+    assert resolved.metrics["epoch_loss"] == pytest.approx([0.7, 0.6])
+
+
+def test_checkpoint_loss_resolution_slices_complete_run_history(tmp_path: Path):
+    checkpoint_root = tmp_path / "scratch" / "checkpoints"
+    checkpoint_root.mkdir(parents=True)
+    run_metrics = checkpoint_root / "metrics.json"
+    run_metrics.write_text(json.dumps({"epoch_loss": [1.0, 0.9, 0.8, 0.7]}))
+    row = {
+        "dataset_tag": "d2p06",
+        "target_total_updates": 340_000,
+        "previous_expected_checkpoint": str(checkpoint_root / "checkpoint-epoch-1"),
+        "expected_checkpoint": str(checkpoint_root / "checkpoint-epoch-3"),
+        "expected_final_epoch": 3,
+        "steps_per_epoch": 10,
+    }
+
+    resolved = resolve_checkpoint_loss_metrics(
+        row,
+        durable_metrics_dir=tmp_path / "missing-durable",
+        log_dir=tmp_path / "missing-logs",
+    )
+
+    assert resolved.source_kind == "run_history_slice"
+    assert resolved.source_paths == (run_metrics,)
+    assert resolved.metrics["epoch_loss"] == pytest.approx([0.8, 0.7])
+
+
+def test_checkpoint_loss_resolution_rejects_incomplete_run_history(tmp_path: Path):
+    checkpoint_root = tmp_path / "scratch" / "checkpoints"
+    checkpoint_root.mkdir(parents=True)
+    (checkpoint_root / "metrics.json").write_text(
+        json.dumps({"epoch_loss": [0.8, 0.7]})
+    )
+    row = {
+        "dataset_tag": "d2p06",
+        "target_total_updates": 340_000,
+        "previous_expected_checkpoint": str(checkpoint_root / "checkpoint-epoch-1"),
+        "expected_checkpoint": str(checkpoint_root / "checkpoint-epoch-3"),
+        "expected_final_epoch": 3,
+        "steps_per_epoch": 10,
+    }
+
+    with pytest.raises(FileNotFoundError, match="no durable loss metrics cover"):
+        resolve_checkpoint_loss_metrics(
+            row,
+            durable_metrics_dir=tmp_path / "missing-durable",
+            log_dir=tmp_path / "missing-logs",
+        )
 
 
 def test_stage_loss_metrics_from_logs_reconstructs_exact_epoch_interval(tmp_path: Path):
