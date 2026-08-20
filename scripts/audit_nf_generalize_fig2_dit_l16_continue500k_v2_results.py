@@ -23,6 +23,7 @@ for import_root in (SCRIPT_DIR, PROJECT_IMPORT_ROOT):
 
 import check_nf_generalize_fig2_dit_l16_continue500k_v2 as precheck
 import prepare_nf_generalize_fig2_dit_l16_continue500k_v2_configs as prep
+from dit_300k_scaling_analysis import resolve_checkpoint_loss_metrics
 from validate_nf_generalize_fig2_dit_sample import validate_sample_file
 
 
@@ -274,6 +275,7 @@ def audit_results(project_dir: Path, manifest_path: Path) -> dict[str, Any]:
         "issues": [],
         "retention_issues": [],
         "warnings": [],
+        "loss_metric_sources": [],
     }
 
     try:
@@ -334,6 +336,33 @@ def audit_results(project_dir: Path, manifest_path: Path) -> dict[str, Any]:
         )
     else:
         report["checkpoint_retention_status"] = "PASS"
+
+    durable_metrics_dir = project_dir / "results" / SWEEP / "training_metrics"
+    log_dir = project_dir / "logs" / SWEEP
+    valid_loss_metric_sources = 0
+    for (tag, updates), row in sorted(continuation.items()):
+        try:
+            resolved = resolve_checkpoint_loss_metrics(
+                row,
+                durable_metrics_dir=durable_metrics_dir,
+                log_dir=log_dir,
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            report["issues"].append(str(exc))
+            continue
+        valid_loss_metric_sources += 1
+        report["loss_metric_sources"].append(
+            {
+                "dataset_tag": tag,
+                "updates_k": updates // 1000,
+                "source_kind": resolved.source_kind,
+                "source_paths": [str(path) for path in resolved.source_paths],
+                "first_epoch": resolved.first_epoch,
+                "final_epoch": resolved.final_epoch,
+            }
+        )
+    report["counts"]["expected_loss_metric_sources"] = len(continuation)
+    report["counts"]["valid_loss_metric_sources"] = valid_loss_metric_sources
 
     sample_paths: list[Path] = []
     sample_hashes: dict[str, tuple[Path, str]] = {}
