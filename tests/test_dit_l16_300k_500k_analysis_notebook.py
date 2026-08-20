@@ -232,10 +232,13 @@ def test_sampler_control_uses_scheduler_specific_endpoint_validation():
 
 def test_notebook_stitches_exact_stage_local_loss_histories():
     source = notebook_source()
-    assert "checkpoint_metric_candidates" in source
+    assert "stage_loss_metrics_from_logs" in source
     assert "prepare_stitched_loss_history" in source
+    assert "train_stage*_" in source
+    assert "first_epoch=previous_epoch + 1" in source
     assert "CONT_UPDATES_K[1:]" in source
     assert "previous_expected_checkpoint" in source
+    assert "checkpoint_metric_candidates" not in source
     assert "read_latest_metrics" not in source
     assert "target_updates=500_000" not in source
 
