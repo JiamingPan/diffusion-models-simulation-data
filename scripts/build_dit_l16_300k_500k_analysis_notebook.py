@@ -345,6 +345,62 @@ if len(continuation_patch) != audit_counts['patch_boundary_rows']:
 if len(continuation_curves.files) != audit_counts['physics_curve_arrays']:
     raise RuntimeError('physics_curve_arrays does not match the loaded archive')
 
+corrected_physics_columns = (
+    'k_max', 'hist_bins', 'hist_min', 'hist_max',
+    'real_pixel_coverage', 'generated_pixel_coverage',
+    'hist_l1', 'hist_l1_lo', 'hist_l1_hi',
+    'pk_log10_mae', 'pk_log10_mae_lo', 'pk_log10_mae_hi',
+    'real_vs_real_hist_l1', 'real_vs_real_pk_log10_mae',
+    'bootstrap_resamples', 'bootstrap_seed',
+)
+missing_corrected_columns = sorted(set(corrected_physics_columns) - set(continuation_physics.columns))
+if missing_corrected_columns:
+    raise RuntimeError(
+        'Physics summary predates the corrected metric definitions; missing columns: '
+        + ', '.join(missing_corrected_columns)
+    )
+
+corrected_numeric = continuation_physics.loc[:, corrected_physics_columns].apply(
+    pd.to_numeric, errors='raise'
+)
+if not np.isfinite(corrected_numeric.to_numpy(dtype=float)).all():
+    raise RuntimeError('Corrected physics columns contain non-finite values')
+if not (
+    (corrected_numeric['hist_l1_lo'] <= corrected_numeric['hist_l1'])
+    & (corrected_numeric['hist_l1'] <= corrected_numeric['hist_l1_hi'])
+    & (corrected_numeric['pk_log10_mae_lo'] <= corrected_numeric['pk_log10_mae'])
+    & (corrected_numeric['pk_log10_mae'] <= corrected_numeric['pk_log10_mae_hi'])
+).all():
+    raise RuntimeError('A corrected physics point estimate lies outside its bootstrap interval')
+for coverage_column in ('real_pixel_coverage', 'generated_pixel_coverage'):
+    if not corrected_numeric[coverage_column].between(0.0, 1.0).all():
+        raise RuntimeError(f'{coverage_column} must lie in [0, 1]')
+if not (
+    (corrected_numeric['k_max'] > 0).all()
+    and (corrected_numeric['hist_bins'] > 0).all()
+    and (corrected_numeric['bootstrap_resamples'] > 0).all()
+    and (corrected_numeric['real_vs_real_hist_l1'] >= 0).all()
+    and (corrected_numeric['real_vs_real_pk_log10_mae'] >= 0).all()
+):
+    raise RuntimeError('Corrected metric metadata or real-vs-real floors are invalid')
+
+corrected_metric_audit = pd.DataFrame([{
+    'rows': len(continuation_physics),
+    'k_max': ', '.join(map(str, sorted(corrected_numeric['k_max'].astype(int).unique()))),
+    'hist_bins': ', '.join(map(str, sorted(corrected_numeric['hist_bins'].astype(int).unique()))),
+    'hist_range': (
+        f"[{corrected_numeric['hist_min'].min():.3g}, "
+        f"{corrected_numeric['hist_max'].max():.3g}]"
+    ),
+    'min_real_pixel_coverage': float(corrected_numeric['real_pixel_coverage'].min()),
+    'min_generated_pixel_coverage': float(corrected_numeric['generated_pixel_coverage'].min()),
+    'bootstrap_resamples': ', '.join(map(
+        str, sorted(corrected_numeric['bootstrap_resamples'].astype(int).unique())
+    )),
+    'bootstrap_intervals_ordered': True,
+    'real_vs_real_floors_present': True,
+}])
+
 reference_audit = []
 for tag in CONT_TAGS:
     row = continuation_row(tag, 300)
@@ -359,6 +415,8 @@ if continuation_audit.get('checkpoint_retention_status') != 'PASS':
         'physics products remain usable, but those exact intermediate models '
         'cannot be resumed or sampled again without retraining.'
     ))
+display(Markdown('### Corrected physical-statistics definition audit'))
+display(corrected_metric_audit)
 display(pd.DataFrame(metric_audit_rows))
 display(pd.DataFrame(reference_audit))
 """
@@ -1320,10 +1378,18 @@ print('wrote', joint_path)
 SUMMARY_MARKDOWN = r"""
 ## 16. Evidence summary
 
-The final table reports checkpoint-to-checkpoint changes without converting them
-into a universal claim. Negative physical-error deltas indicate improvement;
-positive novelty deltas indicate increased distance from individual training
-maps. The N50 table retains crossing, censoring, and ambiguity status.
+The final digest uses the corrected, all-sample physical metrics as the primary
+result. It classifies a 300k-to-500k change as an improvement or degradation
+only when the corresponding bootstrap intervals are separated. Overlapping
+intervals remain unresolved. A ``reaches real floor'' flag means that the 500k
+bootstrap interval reaches the empirical real-versus-real discrepancy; it is a
+descriptive benchmark, not a formal equivalence test.
+
+Median spectra and the fixed $4.5$-MAD outlier exclusion remain sensitivity
+analyses. They can reveal whether a mean is driven by a small generated tail,
+but they do not replace the primary all-sample population result. Novelty is
+reported separately because removing physically unusual samples can bias a
+memorization estimate upward or downward.
 
 Interpret the output using the following rules:
 
@@ -1339,25 +1405,92 @@ Interpret the output using the following rules:
 
 
 SUMMARY_CODE = r"""
-physics_wide = continuation_physics.pivot(index=['dataset_tag', 'dataset_size'], columns='updates_k', values=['hist_l1', 'pk_log10_mae'])
-evidence_rows = []
+def classify_interval_change(old_lo: float, old_hi: float, new_lo: float, new_hi: float) -> str:
+    # Lower physical discrepancy is better; only separated intervals get a direction.
+    if new_hi < old_lo:
+        return 'CI-separated improvement'
+    if new_lo > old_hi:
+        return 'CI-separated degradation'
+    return 'CI-overlapping / unresolved'
+
+
+novelty_delta_columns = {
+    'PCA': 'PCA_novelty_delta_500k_minus_300k',
+    'SSCD': 'SSCD_novelty_delta_500k_minus_300k',
+}
+results_rows = []
 for tag, size in zip(CONT_TAGS, CONT_SIZES):
-    row = {'dataset_tag': tag, 'dataset_size': size}
-    row['hist_l1_delta_500k_minus_300k'] = float(physics_wide.loc[(tag, size), ('hist_l1', 500)] - physics_wide.loc[(tag, size), ('hist_l1', 300)])
-    row['pk_error_delta_500k_minus_300k'] = float(physics_wide.loc[(tag, size), ('pk_log10_mae', 500)] - physics_wide.loc[(tag, size), ('pk_log10_mae', 300)])
+    physics_rows = continuation_physics[continuation_physics['dataset_tag'] == tag].set_index('updates_k')
+    if not {300, 500}.issubset(physics_rows.index):
+        raise RuntimeError(f'Missing 300k or 500k corrected physics row for {tag}')
+    at_300 = physics_rows.loc[300]
+    at_500 = physics_rows.loc[500]
+
+    row = {
+        'dataset_tag': tag,
+        'dataset_size': size,
+        'hist_l1_300k': float(at_300['hist_l1']),
+        'hist_l1_500k': float(at_500['hist_l1']),
+        'hist_l1_delta_500k_minus_300k': float(at_500['hist_l1'] - at_300['hist_l1']),
+        'hist_change_300k_to_500k': classify_interval_change(
+            float(at_300['hist_l1_lo']), float(at_300['hist_l1_hi']),
+            float(at_500['hist_l1_lo']), float(at_500['hist_l1_hi']),
+        ),
+        'pk_log10_mae_300k': float(at_300['pk_log10_mae']),
+        'pk_log10_mae_500k': float(at_500['pk_log10_mae']),
+        'pk_error_delta_500k_minus_300k': float(at_500['pk_log10_mae'] - at_300['pk_log10_mae']),
+        'pk_change_300k_to_500k': classify_interval_change(
+            float(at_300['pk_log10_mae_lo']), float(at_300['pk_log10_mae_hi']),
+            float(at_500['pk_log10_mae_lo']), float(at_500['pk_log10_mae_hi']),
+        ),
+        'hist_reaches_real_floor_500k': bool(
+            float(at_500['hist_l1_lo']) <= float(at_500['real_vs_real_hist_l1'])
+        ),
+        'pk_reaches_real_floor_500k': bool(
+            float(at_500['pk_log10_mae_lo']) <= float(at_500['real_vs_real_pk_log10_mae'])
+        ),
+    }
     for feature in CONT_FEATURES:
         selected = continuation_novelty[
             (continuation_novelty['dataset_tag'] == tag) & (continuation_novelty['feature'] == feature)
         ].set_index('updates_k')['gen_gl_q95']
-        row[f'{feature.lower()}_novelty_delta_500k_minus_300k'] = float(selected.loc[500] - selected.loc[300])
-    evidence_rows.append(row)
+        row[novelty_delta_columns[feature]] = float(selected.loc[500] - selected.loc[300])
 
-evidence_summary = pd.DataFrame(evidence_rows)
+    filtered = outlier_excluded_physics[
+        (outlier_excluded_physics['dataset_tag'] == tag)
+        & (outlier_excluded_physics['updates_k'] == 500)
+    ]
+    if len(filtered) != 1:
+        raise RuntimeError(f'Expected one outlier-excluded 500k row for {tag}; found {len(filtered)}')
+    filtered = filtered.iloc[0]
+    row.update({
+        'filtered_hist_l1_500k': float(filtered['hist_l1']),
+        'filtered_pk_log10_mae_500k': float(filtered['pk_log10_mae']),
+        'outliers_removed_500k': int(filtered['n_removed']),
+        'retention_fraction_500k': float(filtered['retention_fraction']),
+    })
+    results_rows.append(row)
+
+results_digest = pd.DataFrame(results_rows)
+results_digest_path = OUTPUT_DIR / 'results_digest.csv'
+results_digest.to_csv(results_digest_path, index=False)
+
+change_counts = pd.concat([
+    results_digest['hist_change_300k_to_500k'].value_counts().rename('one-point PDF'),
+    results_digest['pk_change_300k_to_500k'].value_counts().rename('power spectrum'),
+], axis=1).fillna(0).astype(int)
+
+display(Markdown('### 300k-to-500k corrected-results digest'))
+display(results_digest)
+display(Markdown('### Bootstrap-interval change classifications'))
+display(change_counts)
+
+evidence_summary = results_digest.copy()
 evidence_path = OUTPUT_DIR / 'evidence_summary.csv'
 evidence_summary.to_csv(evidence_path, index=False)
-display(evidence_summary)
 display(n50_summary)
 display(pd.DataFrame(sampler_rows))
+print('wrote', results_digest_path)
 print('wrote', evidence_path)
 """
 
