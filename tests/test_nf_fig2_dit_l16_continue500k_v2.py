@@ -640,6 +640,11 @@ def test_physics_analysis_is_exact_subset_and_fails_on_missing_samples():
     assert '"pk_log10_mae_hi": power_interval[1]' in source
     assert '"bootstrap_resamples": int(args.bootstrap_resamples)' in source
     assert '"bootstrap_seed": int(args.seed)' in source
+    assert "global_indices = n_images + np.arange(len(array))" in source
+    assert '"real_vs_real_hist_l1": reference["real_vs_real_hist_l1"]' in source
+    assert '"real_vs_real_pk_log10_mae": reference["real_vs_real_pk_log10_mae"]' in source
+    assert '"n_real_half_a": reference["real_half_a_count"]' in source
+    assert '"n_real_half_b": reference["real_half_b_count"]' in source
     assert "selected_power_bin_statistics" in source
     assert "two_sample_selected_power_ratio_statistics" in source
     assert '"real_pk_sem": ratio["real_pk_sem"]' in source

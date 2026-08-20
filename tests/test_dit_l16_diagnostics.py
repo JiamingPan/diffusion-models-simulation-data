@@ -9,6 +9,7 @@ from simdiff_eval.dit_diagnostics import (
     bootstrap_power_log10_mae_interval,
     one_point_l1_common_bins,
     patch_boundary_statistics,
+    split_reference_physics_floor,
     selected_power_bin_statistics,
     two_sample_selected_power_ratio_statistics,
 )
@@ -180,6 +181,26 @@ def test_two_sample_power_ratio_bootstrap_is_deterministic_and_wider():
         fixed_denominator["mean_ci_high"] - fixed_denominator["mean_ci_low"]
     )
     assert two_sample_width > fixed_width
+
+
+def test_real_half_split_floor_is_finite_nonnegative_and_keeps_exact_counts():
+    result = split_reference_physics_floor(
+        histogram_a=np.asarray([8, 12, 20]),
+        histogram_b=np.asarray([10, 15, 25]),
+        pk_sum_a=np.asarray([20.0, 40.0, 80.0]),
+        pk_count_a=np.asarray([4, 4, 4]),
+        pk_sum_b=np.asarray([24.0, 36.0, 88.0]),
+        pk_count_b=np.asarray([5, 5, 5]),
+        n_images_a=4,
+        n_images_b=5,
+    )
+
+    assert result["real_half_a_count"] == 4
+    assert result["real_half_b_count"] == 5
+    assert np.isfinite(result["real_vs_real_hist_l1"])
+    assert np.isfinite(result["real_vs_real_pk_log10_mae"])
+    assert result["real_vs_real_hist_l1"] >= 0
+    assert result["real_vs_real_pk_log10_mae"] >= 0
 
 
 @pytest.mark.parametrize("bad_bin", [-1, 91])
