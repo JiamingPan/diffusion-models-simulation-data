@@ -368,9 +368,12 @@ for column, k_bin in enumerate((20, 40, 60)):
         mean = current['ratio_mean'].to_numpy(dtype=float)
         low = current['ratio_mean_ci_low'].to_numpy(dtype=float)
         high = current['ratio_mean_ci_high'].to_numpy(dtype=float)
+        if (current['real_reference_mean'] <= 0).any():
+            raise RuntimeError(f'Non-positive real power at k-bin {k_bin}, {updates_k}k')
+        ratio_variance = current['generated_variance'] / current['real_reference_mean'].pow(2)
         axes[0, column].plot(x, mean, marker='o', ms=4.5, color=color, lw=1.8, label=f'{updates_k}k')
         axes[0, column].fill_between(x, low, high, color=color, alpha=0.12)
-        axes[1, column].plot(x, current['ratio_variance'], marker='o', ms=4.5, color=color, lw=1.8)
+        axes[1, column].plot(x, ratio_variance, marker='o', ms=4.5, color=color, lw=1.8)
     axes[0, column].axhline(1.0, color='black', lw=1.1, ls='--')
     axes[0, column].set_title(f'k-bin {k_bin}', fontsize=16, fontweight='semibold')
     axes[1, column].set_xlabel(r'Training images $N_{2D}$')

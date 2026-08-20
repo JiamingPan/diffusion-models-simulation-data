@@ -146,6 +146,13 @@ def test_notebook_audits_corrected_physics_definitions():
         assert text in source
 
 
+def test_selected_bin_variance_uses_current_physics_table_schema():
+    source = notebook_source()
+    assert "current['ratio_variance']" not in source
+    assert "current['generated_variance']" in source
+    assert "current['real_reference_mean'].pow(2)" in source
+
+
 def test_evidence_summary_is_uncertainty_aware_and_includes_sensitivity_results():
     source = notebook_source()
     required = (

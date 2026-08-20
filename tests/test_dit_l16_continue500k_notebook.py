@@ -127,6 +127,9 @@ def test_physics_figures_expose_large_ratios_and_bootstrap_overlap():
     assert "pk_log10_mae_ci_low" not in source
     assert "intervals_overlap" in source
     assert "300k/500k 95% CIs" in source
+    assert "current['ratio_variance']" not in source
+    assert "current['generated_variance']" in source
+    assert "current['real_reference_mean'].pow(2)" in source
 
 
 def test_real_notebook_has_exactly_one_tagged_block_after_update(tmp_path):
