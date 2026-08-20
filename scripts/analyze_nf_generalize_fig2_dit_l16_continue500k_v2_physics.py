@@ -128,6 +128,7 @@ def _stream_reference(
     *,
     hist_edges: np.ndarray,
     pk_nbins: int,
+    k_max: float,
     raw_batch_size: int,
 ) -> dict[str, Any]:
     histogram = np.zeros(len(hist_edges) - 1, dtype=np.int64)
@@ -145,7 +146,9 @@ def _stream_reference(
         if not np.isfinite(array).all():
             raise ValueError(f"real-reference batch contains non-finite values: {config_path}")
         histogram += np.histogram(array, bins=hist_edges)[0]
-        spectra, current_kbins = batch_power_spectra(array, nbins=pk_nbins)
+        spectra, current_kbins = batch_power_spectra(
+            array, nbins=pk_nbins, k_max=k_max
+        )
         if kbins is None:
             kbins = current_kbins
         elif not np.allclose(kbins, current_kbins, equal_nan=True):
@@ -285,6 +288,7 @@ def analyze(args: argparse.Namespace) -> dict[str, Path]:
                 config_path,
                 hist_edges=hist_edges,
                 pk_nbins=int(args.pk_nbins),
+                k_max=float(args.k_max),
                 raw_batch_size=int(args.raw_batch_size),
             )
             reference_patch = dict(references[tag]["patch_summary"])
@@ -319,7 +323,9 @@ def analyze(args: argparse.Namespace) -> dict[str, Path]:
         hist_l1 = float(
             np.sum(np.abs(reference["histogram_probability"] - generated_probability))
         )
-        generated_pk, kbins = batch_power_spectra(samples, nbins=int(args.pk_nbins))
+        generated_pk, kbins = batch_power_spectra(
+            samples, nbins=int(args.pk_nbins), k_max=float(args.k_max)
+        )
         if not np.allclose(kbins, reference["kbins"], equal_nan=True):
             raise ValueError(f"{tag} {label}: generated and real k-bins differ")
         power = _power_summary(reference["pk_mean"], generated_pk)
@@ -350,6 +356,7 @@ def analyze(args: argparse.Namespace) -> dict[str, Path]:
                 "checkpoint": str(checkpoint),
                 "n_generated": len(samples),
                 "n_real_exact_subset": int(reference["n_images"]),
+                "k_max": float(args.k_max),
                 "hist_l1": hist_l1,
                 **power,
                 "patch_boundary_ratio": patch["boundary_to_control_ratio"],
@@ -440,6 +447,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-prefix", default=DEFAULT_PREFIX)
     parser.add_argument("--raw-batch-size", type=int, default=4)
     parser.add_argument("--pk-nbins", type=int, default=91)
+    parser.add_argument("--k-max", type=float, default=64.0)
     parser.add_argument("--hist-bins", type=int, default=120)
     parser.add_argument("--bootstrap-resamples", type=int, default=2000)
     parser.add_argument("--seed", type=int, default=123)

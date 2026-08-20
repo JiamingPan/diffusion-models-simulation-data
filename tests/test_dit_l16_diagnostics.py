@@ -9,6 +9,32 @@ from simdiff_eval.dit_diagnostics import (
     patch_boundary_statistics,
     selected_power_bin_statistics,
 )
+from simdiff_eval.metrics import batch_power_spectra, radial_power_spectrum_2d
+
+
+def test_power_spectrum_k_max_none_preserves_legacy_binning_exactly():
+    rng = np.random.default_rng(4)
+    field = rng.normal(size=(128, 128))
+
+    legacy_pk, legacy_k = radial_power_spectrum_2d(field, nbins=91)
+    explicit_pk, explicit_k = radial_power_spectrum_2d(
+        field, nbins=91, k_max=None
+    )
+
+    assert len(legacy_k) == 91
+    np.testing.assert_array_equal(explicit_k, legacy_k)
+    np.testing.assert_array_equal(explicit_pk, legacy_pk)
+
+
+def test_power_spectrum_k_max_excludes_bins_above_nyquist():
+    rng = np.random.default_rng(5)
+    images = rng.normal(size=(3, 1, 128, 128))
+
+    spectra, k_bins = batch_power_spectra(images, nbins=91, k_max=64.0)
+
+    assert spectra.shape == (3, 91)
+    assert len(k_bins) == 91
+    assert np.all(k_bins <= 64.0)
 
 
 def test_bootstrap_mean_interval_is_deterministic():
