@@ -354,6 +354,12 @@ def parse_float_list(value: str) -> list[float]:
 
 def sample_path_for(project_dir: Path, row: dict[str, Any], seed: int, sample_label: str) -> Path:
     if row.get("sample_path"):
+        row_sample_label = row.get("sample_label")
+        if row_sample_label and row_sample_label != sample_label:
+            raise ValueError(
+                "Selected manifest row does not match the requested sample label: "
+                f"row={row_sample_label!r}, requested={sample_label!r}"
+            )
         raw = str(row["sample_path"])
         if "{sample_label}" not in raw:
             raw = raw.replace(LEGACY_SAMPLE_LABEL, sample_label)
@@ -372,6 +378,9 @@ def selected_rows(rows: list[dict[str, Any]], args: argparse.Namespace) -> list[
     if args.run_name:
         wanted = set(args.run_name)
         out = [row for row in out if row["run_name"] in wanted]
+    sample_label = getattr(args, "sample_label", None)
+    if sample_label and any(row.get("sample_label") for row in out):
+        out = [row for row in out if row.get("sample_label") == sample_label]
     return sorted(out, key=lambda row: (str(row.get("arch", "")), int(row["dataset_size"])))
 
 

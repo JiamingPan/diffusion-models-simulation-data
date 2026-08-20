@@ -5,11 +5,11 @@ from __future__ import annotations
 
 import argparse
 import ast
-import importlib
 import inspect
 import json
 import os
 import pickle
+import random
 import re
 import runpy
 import sys
@@ -22,19 +22,95 @@ import yaml
 CHECKPOINT_RE = re.compile(r"checkpoint-epoch-(\d+)$")
 
 
+def restore_random_states(checkpoint_dir: Path) -> tuple[str, ...]:
+    """Restore the saved Python, NumPy, torch CPU, and torch CUDA RNG states."""
+    import numpy as np
+    import torch
+
+    path = checkpoint_dir / "random_states_0.pkl"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"A scientific continuation requires saved RNG state: {path}"
+        )
+    try:
+        state = torch.load(path, map_location="cpu", weights_only=False)
+    except TypeError:
+        state = torch.load(path, map_location="cpu")
+    if not isinstance(state, dict):
+        raise ValueError(f"Saved RNG state is not a mapping: {path}")
+
+    required = ("random_state", "numpy_random_seed", "torch_manual_seed")
+    missing = [key for key in required if key not in state]
+    if missing:
+        raise ValueError(f"Saved RNG state {path} is missing keys: {', '.join(missing)}")
+
+    random.setstate(state["random_state"])
+    np.random.set_state(state["numpy_random_seed"])
+    torch.set_rng_state(state["torch_manual_seed"].cpu())
+    restored = ["python", "numpy", "torch_cpu"]
+
+    cuda_state = state.get("torch_cuda_manual_seed")
+    if cuda_state and torch.cuda.is_available():
+        if isinstance(cuda_state, torch.Tensor):
+            cuda_state = [cuda_state]
+        torch.cuda.set_rng_state_all([item.cpu() for item in cuda_state])
+        restored.append("torch_cuda")
+
+    print(
+        f"Restored RNG state from {path}: {', '.join(restored)}",
+        flush=True,
+    )
+    return tuple(restored)
+
+
 def checkpoint_epoch(path: Path) -> int | None:
     match = CHECKPOINT_RE.fullmatch(path.name)
     return int(match.group(1)) if match else None
 
 
+REQUIRED_RESUME_FILES = (
+    "config.json",
+    "optimizer.pkl",
+    "noise_scheduler.pkl",
+    "lr_scheduler.pkl",
+    "random_states_0.pkl",
+)
+MODEL_WEIGHT_FILES = (
+    "diffusion_pytorch_model.safetensors",
+    "diffusion_pytorch_model.bin",
+    "model.safetensors",
+    "pytorch_model.bin",
+)
+
+
+def checkpoint_missing_files(path: Path) -> tuple[str, ...]:
+    missing = [name for name in REQUIRED_RESUME_FILES if not (path / name).is_file()]
+    if not any((path / name).is_file() for name in MODEL_WEIGHT_FILES):
+        missing.append("model weights")
+    return tuple(missing)
+
+
+def checkpoint_is_complete(path: Path) -> bool:
+    return path.is_dir() and not checkpoint_missing_files(path)
+
+
 def latest_checkpoint(checkpoint_dir: Path) -> tuple[Path, int]:
-    candidates = [
+    all_candidates = [
         (path, epoch)
         for path in checkpoint_dir.glob("checkpoint-epoch-*")
         if path.is_dir() and (epoch := checkpoint_epoch(path)) is not None
     ]
+    candidates = [
+        (path, epoch)
+        for path, epoch in all_candidates
+        if checkpoint_is_complete(path)
+    ]
     if not candidates:
-        raise FileNotFoundError(f"No checkpoint-epoch-* directories under {checkpoint_dir}")
+        partial = sorted(path.name for path, _epoch in all_candidates)
+        detail = f"; incomplete candidates: {partial}" if partial else ""
+        raise FileNotFoundError(
+            f"No complete checkpoint-epoch-* directories under {checkpoint_dir}{detail}"
+        )
     return max(candidates, key=lambda item: item[1])
 
 
@@ -72,9 +148,10 @@ def validate_resume_target(
                 f"Latest clean checkpoint epoch {current_epoch} is behind required stage start "
                 f"epoch {minimum_epoch}"
             )
-        if not minimum_checkpoint.is_dir():
+        if not checkpoint_is_complete(minimum_checkpoint):
             raise FileNotFoundError(
-                f"Required exact stage-start checkpoint is missing: {minimum_checkpoint}"
+                "Required exact stage-start checkpoint is missing or incomplete: "
+                f"{minimum_checkpoint}"
             )
     if current_epoch > target_epoch:
         raise ValueError(
@@ -189,16 +266,51 @@ def install_exact_target_adapter(optim, *, expected_start_epoch: int, target_epo
     return semantics
 
 
-def import_class(qualified_name: str):
-    module_name, class_name = qualified_name.rsplit(".", 1)
-    return getattr(importlib.import_module(module_name), class_name)
+def restore_optimizer_and_lr_scheduler(model, checkpoint_dir: Path):
+    """Restore optimizer moments and scheduler progress onto ``model``."""
+    optimizer_path = checkpoint_dir / "optimizer.pkl"
+    scheduler_path = checkpoint_dir / "lr_scheduler.pkl"
+    missing = [
+        str(path)
+        for path in (optimizer_path, scheduler_path)
+        if not path.exists()
+    ]
+    if missing:
+        raise FileNotFoundError(
+            "A scientific continuation must preserve optimizer and scheduler state; "
+            f"missing checkpoint files: {', '.join(missing)}"
+        )
+
+    with optimizer_path.open("rb") as handle:
+        saved_optimizer = pickle.load(handle)
+    with scheduler_path.open("rb") as handle:
+        lr_scheduler = pickle.load(handle)
+
+    optimizer_cls = type(saved_optimizer)
+    optimizer_signature = inspect.signature(optimizer_cls.__init__)
+    optimizer_parameters = optimizer_signature.parameters
+    accepts_kwargs = any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in optimizer_parameters.values()
+    )
+    optimizer_kwargs = {
+        key: value
+        for key, value in saved_optimizer.defaults.items()
+        if accepts_kwargs or key in optimizer_parameters
+    }
+    optimizer = optimizer_cls(model.parameters(), **optimizer_kwargs)
+    optimizer.load_state_dict(saved_optimizer.state_dict())
+    if hasattr(lr_scheduler, "optimizer"):
+        lr_scheduler.optimizer = optimizer
+    return optimizer, lr_scheduler
 
 
 def load_checkpoint_preserving_class(ckpt_path: str):
-    """Reconstruct exactly the diffusers class recorded in ``config.json``."""
+    """Restore a class-safe model and the complete saved training state."""
     import diffusers
 
-    config_path = os.path.join(ckpt_path, "config.json")
+    checkpoint_dir = Path(ckpt_path)
+    config_path = checkpoint_dir / "config.json"
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"Missing diffusers config: {config_path}")
     with open(config_path) as handle:
@@ -222,19 +334,19 @@ def load_checkpoint_preserving_class(ckpt_path: str):
             f"Checkpoint {ckpt_path!r} left meta parameters after loading: {meta_parameters[:8]}"
         )
 
-    checkpoint_config_path = os.path.join(ckpt_path, "checkpoint_config.yaml")
-    with open(checkpoint_config_path) as handle:
-        checkpoint_config = yaml.safe_load(handle)
-
-    scheduler_cls = import_class(checkpoint_config["noise_scheduler"]["class"])
-    noise_scheduler = scheduler_cls.from_pretrained(ckpt_path)
-    optimizer_cls = import_class(checkpoint_config["optimizer"]["class"])
-    optimizer = optimizer_cls(model.parameters())
-    lr_scheduler_cls = import_class(checkpoint_config["lr_scheduler"]["class"])
-    lr_scheduler = lr_scheduler_cls(
-        optimizer,
-        **checkpoint_config["lr_scheduler"].get("kwargs", {}),
+    noise_scheduler_path = checkpoint_dir / "noise_scheduler.pkl"
+    if not noise_scheduler_path.exists():
+        raise FileNotFoundError(
+            "A scientific continuation must preserve the saved noise scheduler; "
+            f"missing checkpoint file: {noise_scheduler_path}"
+        )
+    with noise_scheduler_path.open("rb") as handle:
+        noise_scheduler = pickle.load(handle)
+    optimizer, lr_scheduler = restore_optimizer_and_lr_scheduler(
+        model,
+        checkpoint_dir,
     )
+    restore_random_states(checkpoint_dir)
 
     augmentations_path = os.path.join(ckpt_path, "augmentations.pkl")
     if os.path.exists(augmentations_path):
@@ -245,7 +357,7 @@ def load_checkpoint_preserving_class(ckpt_path: str):
 
     print(
         f"Class-safe resume loader reconstructed {type(model).__name__} "
-        f"from {ckpt_path}",
+        f"and restored optimizer/scheduler state from {ckpt_path}",
         flush=True,
     )
     return model, noise_scheduler, optimizer, lr_scheduler, augmentations
@@ -256,7 +368,7 @@ def main() -> None:
     parser.add_argument("--config", required=True)
     parser.add_argument("--cosmodiff-train", required=True, type=Path)
     parser.add_argument("--checkpoint-dir", required=True, type=Path)
-    parser.add_argument("--minimum-checkpoint", required=True, type=Path)
+    parser.add_argument("--minimum-checkpoint", type=Path)
     parser.add_argument("--target-checkpoint", required=True, type=Path)
     args, extra_args = parser.parse_known_args()
 
@@ -296,9 +408,10 @@ def main() -> None:
     )
     sys.argv = [str(train_script), "--config", args.config, *extra_args]
     runpy.run_path(str(train_script), run_name="__main__")
-    if not target_checkpoint.is_dir():
+    if not checkpoint_is_complete(target_checkpoint):
         raise RuntimeError(
-            f"External trainer exited without exact target checkpoint: {target_checkpoint}"
+            "External trainer exited without a complete exact target checkpoint: "
+            f"{target_checkpoint}; missing={checkpoint_missing_files(target_checkpoint)}"
         )
 
 
