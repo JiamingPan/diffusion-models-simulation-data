@@ -629,7 +629,11 @@ def test_physics_analysis_is_exact_subset_and_fails_on_missing_samples():
     assert "iter_real_reference_batches_from_config" in source
     assert "batch_power_spectra" in source
     assert 'parser.add_argument("--k-max", type=float, default=64.0)' in source
+    assert 'parser.add_argument("--hist-bins", type=int, default=140)' in source
     assert '"k_max": float(args.k_max)' in source
+    assert '"hist_bins": int(args.hist_bins)' in source
+    assert '"hist_min": float(hist_edges[0])' in source
+    assert '"hist_max": float(hist_edges[-1])' in source
     assert "selected_power_bin_statistics" in source
     assert "patch_boundary_statistics" in source
     assert "--baseline-manifest" in source
@@ -647,6 +651,15 @@ def test_physics_analysis_is_exact_subset_and_fails_on_missing_samples():
     assert "results/nf_generalize_fig2_dit/tables" in wrapper
     assert "results/nf_generalize_fig2_dit/physics" in wrapper
     assert '--physics-dir "${PHYSICS_DIR}"' in wrapper
+
+
+def test_results_notebook_uses_shared_physical_histogram_edges():
+    source = (
+        ROOT / "notebooks" / "nf_generalize_fig2_dit_results.ipynb"
+    ).read_text()
+
+    assert "from simdiff_eval.metrics import PHYSICAL_HIST_EDGES" in source
+    assert "PHYSICAL_HIST_EDGES = np.linspace" not in source
 
 
 def _write_sample_file(path: Path, checkpoint: Path, *, value: float = 0.0) -> None:

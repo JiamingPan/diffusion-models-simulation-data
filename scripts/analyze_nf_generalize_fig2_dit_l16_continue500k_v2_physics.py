@@ -25,7 +25,11 @@ from simdiff_eval.dit_diagnostics import (
     summarize_patch_boundary_series,
 )
 from simdiff_eval.io import iter_real_reference_batches_from_config
-from simdiff_eval.metrics import batch_power_spectra, histogram_probability_and_coverage
+from simdiff_eval.metrics import (
+    PHYSICAL_HIST_EDGES,
+    batch_power_spectra,
+    histogram_probability_and_coverage,
+)
 from validate_nf_generalize_fig2_dit_sample import validate_sample_file
 
 
@@ -269,7 +273,17 @@ def analyze(args: argparse.Namespace) -> dict[str, Path]:
     run_names = _continuation_run_names(
         _selected_analysis_rows(all_analysis_rows, labels=None)
     )
-    hist_edges = np.linspace(-1.0, 1.0, int(args.hist_bins) + 1)
+    if int(args.hist_bins) == 140:
+        hist_edges = PHYSICAL_HIST_EDGES.copy()
+        if not np.array_equal(
+            hist_edges,
+            np.linspace(-1.0, 1.0, int(args.hist_bins) + 1, dtype=np.float64),
+        ):
+            raise AssertionError("default histogram edges differ from PHYSICAL_HIST_EDGES")
+    else:
+        hist_edges = np.linspace(
+            -1.0, 1.0, int(args.hist_bins) + 1, dtype=np.float64
+        )
 
     references: dict[str, dict[str, Any]] = {}
     summary_rows: list[dict[str, Any]] = []
@@ -364,6 +378,9 @@ def analyze(args: argparse.Namespace) -> dict[str, Path]:
                 "n_generated": len(samples),
                 "n_real_exact_subset": int(reference["n_images"]),
                 "k_max": float(args.k_max),
+                "hist_bins": int(args.hist_bins),
+                "hist_min": float(hist_edges[0]),
+                "hist_max": float(hist_edges[-1]),
                 "real_pixel_coverage": float(reference["pixel_coverage"]),
                 "generated_pixel_coverage": generated_pixel_coverage,
                 "hist_l1": hist_l1,
@@ -457,7 +474,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--raw-batch-size", type=int, default=4)
     parser.add_argument("--pk-nbins", type=int, default=91)
     parser.add_argument("--k-max", type=float, default=64.0)
-    parser.add_argument("--hist-bins", type=int, default=120)
+    parser.add_argument("--hist-bins", type=int, default=140)
     parser.add_argument("--bootstrap-resamples", type=int, default=2000)
     parser.add_argument("--seed", type=int, default=123)
     return parser.parse_args()
