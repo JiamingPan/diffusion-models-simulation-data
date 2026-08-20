@@ -7,7 +7,11 @@ from dataclasses import dataclass
 import numpy as np
 
 
-def radial_power_spectrum_2d(field: np.ndarray, nbins: int = 25) -> tuple[np.ndarray, np.ndarray]:
+def radial_power_spectrum_2d(
+    field: np.ndarray,
+    nbins: int = 25,
+    k_max: float | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
     """Compute an isotropic 2D power spectrum for one image.
 
     The field mean is subtracted before the FFT.
@@ -28,7 +32,15 @@ def radial_power_spectrum_2d(field: np.ndarray, nbins: int = 25) -> tuple[np.nda
     kvals = np.sqrt(kkx**2 + kky**2)
 
     valid = kvals > 0
-    edges = np.linspace(kvals[valid].min(), kvals[valid].max(), nbins + 1)
+    if k_max is None:
+        edges = np.linspace(kvals[valid].min(), kvals[valid].max(), nbins + 1)
+    else:
+        upper = float(k_max)
+        if not np.isfinite(upper) or upper <= kvals[valid].min():
+            raise ValueError(
+                f"k_max must be finite and greater than {kvals[valid].min()}, got {k_max}."
+            )
+        edges = np.linspace(kvals[valid].min(), upper, nbins + 1)
     centers = 0.5 * (edges[:-1] + edges[1:])
 
     pk = np.full(nbins, np.nan, dtype=np.float64)
@@ -36,10 +48,15 @@ def radial_power_spectrum_2d(field: np.ndarray, nbins: int = 25) -> tuple[np.nda
         mask = (kvals >= edges[i]) & (kvals < edges[i + 1])
         if mask.any():
             pk[i] = power[mask].mean()
-    return pk, centers
+    keep = centers <= float(k_max) if k_max is not None else np.ones_like(centers, dtype=bool)
+    return pk[keep], centers[keep]
 
 
-def batch_power_spectra(images: np.ndarray, nbins: int = 25) -> tuple[np.ndarray, np.ndarray]:
+def batch_power_spectra(
+    images: np.ndarray,
+    nbins: int = 25,
+    k_max: float | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
     """Compute radial 2D power spectra for ``(N, C, H, W)`` images."""
     arr = np.asarray(images)
     if arr.ndim != 4:
@@ -48,7 +65,7 @@ def batch_power_spectra(images: np.ndarray, nbins: int = 25) -> tuple[np.ndarray
     pks = []
     kbins = None
     for image in arr:
-        pk, kbins = radial_power_spectrum_2d(image[0], nbins=nbins)
+        pk, kbins = radial_power_spectrum_2d(image[0], nbins=nbins, k_max=k_max)
         pks.append(pk)
     return np.asarray(pks), np.asarray(kbins)
 

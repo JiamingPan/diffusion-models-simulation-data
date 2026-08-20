@@ -628,6 +628,8 @@ def test_physics_analysis_is_exact_subset_and_fails_on_missing_samples():
     wrapper = slurm.read_text()
     assert "iter_real_reference_batches_from_config" in source
     assert "batch_power_spectra" in source
+    assert 'parser.add_argument("--k-max", type=float, default=64.0)' in source
+    assert '"k_max": float(args.k_max)' in source
     assert "selected_power_bin_statistics" in source
     assert "patch_boundary_statistics" in source
     assert "--baseline-manifest" in source
