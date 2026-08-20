@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -191,3 +192,76 @@ def test_transform_control_cli_help_is_import_safe():
     assert result.returncode == 0, result.stderr
     assert "frozen VGG" in result.stdout
     assert "--encoder" in result.stdout
+    assert "--control" in result.stdout
+    assert "c0" in result.stdout
+
+
+def test_c0_builds_40_deterministic_views_with_recorded_nonzero_rolls():
+    from simdiff_eval.probe_controls import build_c0_specs
+
+    first, first_offsets = build_c0_specs(seed=23)
+    second, second_offsets = build_c0_specs(seed=23)
+    assert len(first) == 40
+    assert [spec.name for spec in first] == [spec.name for spec in second]
+    assert first_offsets == second_offsets
+    assert len(first_offsets) == 4
+    assert len(set(first_offsets)) == 4
+    assert all((dx, dy) != (0, 0) for dx, dy in first_offsets)
+    assert sum(spec.name == "identity" for spec in first) == 1
+    assert {spec.dihedral_g for spec in first} == set(range(8))
+
+
+def synthetic_c0_predictions() -> pd.DataFrame:
+    rows = []
+    roll_offsets = [(0, 0), (1, -1), (2, -2), (3, -3), (4, -4)]
+    for sim_index in (900, 901):
+        theta_true = 0.3 + 0.05 * (sim_index - 900)
+        for z_index in range(4):
+            base = theta_true + 0.01 * z_index
+            for dihedral_g in range(8):
+                for roll_state, (dx, dy) in enumerate(roll_offsets):
+                    no_roll = roll_state == 0
+                    if no_roll and dihedral_g == 0:
+                        transform = "identity"
+                        family = "identity"
+                    elif no_roll:
+                        transform = f"dihedral_g{dihedral_g}"
+                        family = "dihedral"
+                    else:
+                        transform = f"dihedral_g{dihedral_g}__roll_dx{dx}_dy{dy}"
+                        family = "roll"
+                    rows.append(
+                        {
+                            "transform": transform,
+                            "transform_family": family,
+                            "k_cut": None,
+                            "k_cut_over_knyq": None,
+                            "window": None,
+                            "dihedral_g": dihedral_g,
+                            "roll_dx": dx,
+                            "roll_dy": dy,
+                            "sim_index": sim_index,
+                            "z_index": z_index,
+                            "parameter": "Omega_m",
+                            "theta_true": theta_true,
+                            "theta_pred": base + 0.001 * dihedral_g + 0.01 * roll_state,
+                            "out_of_range_fraction": 0.0,
+                        }
+                    )
+    return pd.DataFrame(rows)
+
+
+def test_c0_reports_separate_families_and_within_simulation_baseline():
+    from simdiff_eval.probe_controls import c0_symmetry_summary
+
+    report = c0_symmetry_summary(synthetic_c0_predictions(), n_boot=50, seed=31)
+    assert {row["family"] for row in report["per_slice"]} == {"dihedral", "roll"}
+    assert all(np.isfinite(row["std_over_within_sim_std"]) for row in report["per_slice"])
+    assert (
+        report["family_summary"]["roll"]["median_std_ratio"]
+        > report["family_summary"]["dihedral"]["median_std_ratio"]
+    )
+    assert (
+        report["baseline"]["definition"]
+        == "identity Omega_m spread across z-slices within each simulation"
+    )

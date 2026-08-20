@@ -13,7 +13,12 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .probe_transforms import Transform
+from .probe_transforms import (
+    Transform,
+    compose_transforms,
+    dihedral_transform,
+    roll_transform,
+)
 
 
 PARAM_NAMES = (
@@ -57,6 +62,43 @@ class TransformSpec:
             "roll_dx": self.roll_dx,
             "roll_dy": self.roll_dy,
         }
+
+
+def build_c0_specs(seed: int) -> tuple[list[TransformSpec], list[tuple[int, int]]]:
+    """Enumerate eight dihedral elements crossed with five roll states."""
+    rng = np.random.default_rng(int(seed))
+    offsets: list[tuple[int, int]] = []
+    while len(offsets) < 4:
+        dx, dy = (int(value) for value in rng.integers(-63, 64, size=2))
+        offset = (dx, dy)
+        if offset != (0, 0) and offset not in offsets:
+            offsets.append(offset)
+
+    specs: list[TransformSpec] = []
+    for element in range(8):
+        for dx, dy in [(0, 0), *offsets]:
+            if dx == 0 and dy == 0:
+                name = "identity" if element == 0 else f"dihedral_g{element}"
+                family = "identity" if element == 0 else "dihedral"
+                transform = dihedral_transform(element)
+            else:
+                name = f"dihedral_g{element}__roll_dx{dx}_dy{dy}"
+                family = "roll"
+                transform = compose_transforms(
+                    dihedral_transform(element),
+                    roll_transform(dx, dy),
+                )
+            specs.append(
+                TransformSpec(
+                    name=name,
+                    family=family,
+                    transform=transform,
+                    dihedral_g=element,
+                    roll_dx=dx,
+                    roll_dy=dy,
+                )
+            )
+    return specs, offsets
 
 
 def evaluate_transform_specs(
@@ -238,6 +280,168 @@ def aggregate_prediction_table(
             metric_rows.append(record)
     return {
         "metrics": metric_rows,
+        "bootstrap": {"n_resamples": int(n_boot), "seed": int(seed)},
+    }
+
+
+def _spread_table(
+    table: pd.DataFrame,
+    group_columns: list[str],
+) -> pd.DataFrame:
+    return (
+        table.groupby(group_columns, as_index=False, dropna=False)
+        .agg(
+            transform_std=("theta_pred", lambda values: float(np.std(values, ddof=0))),
+            transform_range=(
+                "theta_pred",
+                lambda values: float(np.max(values) - np.min(values)),
+            ),
+            n_views=("theta_pred", "size"),
+        )
+    )
+
+
+def _safe_ratio(numerator: float, denominator: float) -> float:
+    if not np.isfinite(denominator) or denominator <= 0.0:
+        return float("nan")
+    return float(numerator / denominator)
+
+
+def _bootstrap_median_interval(
+    values: np.ndarray,
+    *,
+    n_boot: int,
+    rng: np.random.Generator,
+) -> tuple[float, float]:
+    finite = np.asarray(values, dtype=np.float64)
+    finite = finite[np.isfinite(finite)]
+    if finite.size == 0:
+        return float("nan"), float("nan")
+    medians = np.empty(int(n_boot), dtype=np.float64)
+    for index in range(int(n_boot)):
+        sample = rng.integers(0, len(finite), size=len(finite))
+        medians[index] = np.median(finite[sample])
+    low, high = np.quantile(medians, [0.16, 0.84])
+    return float(low), float(high)
+
+
+def c0_symmetry_summary(
+    predictions: pd.DataFrame,
+    *,
+    n_boot: int,
+    seed: int,
+) -> dict[str, Any]:
+    """Compare C0 view spreads with the identity within-simulation baseline."""
+    omega = predictions[predictions["parameter"] == "Omega_m"].copy()
+    if omega.empty:
+        raise ValueError("C0 predictions contain no Omega_m rows")
+    if int(n_boot) < 1:
+        raise ValueError("n_boot must be positive")
+
+    identity = omega[omega["transform"] == "identity"]
+    baseline = (
+        identity.groupby("sim_index", as_index=False)
+        .agg(
+            within_sim_std=(
+                "theta_pred",
+                lambda values: float(np.std(values, ddof=0)),
+            ),
+            within_sim_range=(
+                "theta_pred",
+                lambda values: float(np.max(values) - np.min(values)),
+            ),
+            n_slices=("z_index", "nunique"),
+        )
+    )
+    baseline_lookup = baseline.set_index("sim_index").to_dict("index")
+
+    no_roll = omega[(omega["roll_dx"] == 0) & (omega["roll_dy"] == 0)]
+    dihedral = _spread_table(no_roll, ["sim_index", "z_index"])
+    if not (dihedral["n_views"] == 8).all():
+        raise ValueError("Each C0 dihedral slice must contain eight no-roll views")
+    dihedral["family"] = "dihedral"
+
+    roll_by_element = _spread_table(
+        omega,
+        ["sim_index", "z_index", "dihedral_g"],
+    )
+    if not (roll_by_element["n_views"] == 5).all():
+        raise ValueError("Each C0 roll group must contain no-roll plus four rolls")
+    roll = (
+        roll_by_element.groupby(["sim_index", "z_index"], as_index=False)
+        .agg(
+            transform_std=("transform_std", "median"),
+            transform_range=("transform_range", "median"),
+            n_views=("n_views", "sum"),
+        )
+    )
+    roll["family"] = "roll"
+
+    per_slice: list[dict[str, Any]] = []
+    for table in (dihedral, roll):
+        for row in table.to_dict("records"):
+            sim_index = int(row["sim_index"])
+            baseline_row = baseline_lookup[sim_index]
+            per_slice.append(
+                {
+                    "family": row["family"],
+                    "sim_index": sim_index,
+                    "z_index": int(row["z_index"]),
+                    "transform_std": float(row["transform_std"]),
+                    "transform_range": float(row["transform_range"]),
+                    "within_sim_std": float(baseline_row["within_sim_std"]),
+                    "within_sim_range": float(baseline_row["within_sim_range"]),
+                    "std_over_within_sim_std": _safe_ratio(
+                        float(row["transform_std"]),
+                        float(baseline_row["within_sim_std"]),
+                    ),
+                    "range_over_within_sim_range": _safe_ratio(
+                        float(row["transform_range"]),
+                        float(baseline_row["within_sim_range"]),
+                    ),
+                }
+            )
+
+    rng = np.random.default_rng(int(seed))
+    per_slice_table = pd.DataFrame(per_slice)
+    family_summary: dict[str, Any] = {}
+    for family, group in per_slice_table.groupby("family", sort=False):
+        per_sim = (
+            group.groupby("sim_index", as_index=False)
+            .agg(
+                std_ratio=("std_over_within_sim_std", "median"),
+                range_ratio=("range_over_within_sim_range", "median"),
+            )
+        )
+        std_values = per_sim["std_ratio"].to_numpy(dtype=np.float64)
+        range_values = per_sim["range_ratio"].to_numpy(dtype=np.float64)
+        std_low, std_high = _bootstrap_median_interval(
+            std_values,
+            n_boot=int(n_boot),
+            rng=rng,
+        )
+        range_low, range_high = _bootstrap_median_interval(
+            range_values,
+            n_boot=int(n_boot),
+            rng=rng,
+        )
+        family_summary[str(family)] = {
+            "n_simulations": int(len(per_sim)),
+            "median_std_ratio": float(np.nanmedian(std_values)),
+            "median_std_ratio_ci_low": std_low,
+            "median_std_ratio_ci_high": std_high,
+            "median_range_ratio": float(np.nanmedian(range_values)),
+            "median_range_ratio_ci_low": range_low,
+            "median_range_ratio_ci_high": range_high,
+        }
+
+    return {
+        "baseline": {
+            "definition": "identity Omega_m spread across z-slices within each simulation",
+            "per_simulation": baseline.to_dict("records"),
+        },
+        "per_slice": per_slice,
+        "family_summary": family_summary,
         "bootstrap": {"n_resamples": int(n_boot), "seed": int(seed)},
     }
 
