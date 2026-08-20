@@ -27,6 +27,7 @@ from simdiff_eval.probe_controls import (  # noqa: E402
     c0_symmetry_summary,
     c1_scale_cut_summary,
     evaluate_transform_specs,
+    json_safe,
 )
 from simdiff_eval.probe_transforms import get_transform  # noqa: E402
 
@@ -70,7 +71,9 @@ def build_requested_specs(
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    temporary.write_text(
+        json.dumps(json_safe(payload), indent=2, sort_keys=True, allow_nan=False) + "\n"
+    )
     os.replace(temporary, path)
 
 
@@ -78,6 +81,20 @@ def _write_csv(path: Path, table: Any) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     table.to_csv(temporary, index=False)
     os.replace(temporary, path)
+
+
+def remove_unrequested_summaries(
+    output_dir: Path,
+    requested_controls: set[str],
+) -> None:
+    """Remove known summary artifacts that do not belong to this invocation."""
+    summary_paths = {
+        "c0": output_dir / "c0_symmetry_summary.json",
+        "c1": output_dir / "c1_scale_cut_summary.json",
+    }
+    for control, path in summary_paths.items():
+        if control not in requested_controls and path.exists():
+            path.unlink()
 
 
 def parse_args() -> argparse.Namespace:
@@ -173,6 +190,7 @@ def main() -> None:
     predictions_path = output_dir / "probe_transform_predictions.csv"
     metrics_path = output_dir / "probe_transform_metrics.json"
     manifest_path = output_dir / "manifest.json"
+    remove_unrequested_summaries(output_dir, requested_controls)
     _write_csv(predictions_path, predictions)
     _write_json(metrics_path, metrics)
     if "c0" in requested_controls:

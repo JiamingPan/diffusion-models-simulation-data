@@ -27,10 +27,15 @@ from simdiff_eval.probe_controls import (  # noqa: E402
     deterministic_cosmology_split,
     evaluate_transform_specs,
     fit_gaussian_smoothing,
+    json_safe,
     power_ratio_transfer,
     subset_generated_cosmologies,
 )
-from simdiff_eval.probe_transforms import get_transform, transfer_transform  # noqa: E402
+from simdiff_eval.probe_transforms import (  # noqa: E402
+    gaussian_smoothing_transform,
+    get_transform,
+    transfer_transform,
+)
 
 
 EXPECTED_HELDOUT = np.arange(900, 932, dtype=np.int64)
@@ -38,7 +43,9 @@ EXPECTED_HELDOUT = np.arange(900, 932, dtype=np.int64)
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    temporary.write_text(
+        json.dumps(json_safe(payload), indent=2, sort_keys=True, allow_nan=False) + "\n"
+    )
     os.replace(temporary, path)
 
 
@@ -50,6 +57,16 @@ def _write_csv(path: Path, table: pd.DataFrame) -> None:
 
 def _json_array(values: np.ndarray) -> list[float]:
     return np.asarray(values, dtype=np.float64).astype(float).tolist()
+
+
+def c4_transform_names(run_name: str, dataset_size: int) -> dict[str, str]:
+    """Return run-specific labels so equal-size generated runs cannot be pooled."""
+    suffix = f"{str(run_name)}__N{int(dataset_size)}"
+    return {
+        "measured": f"transfer_Tk__{suffix}",
+        "gaussian": f"gaussian_smoothing__{suffix}",
+        "generated": f"generated__{suffix}",
+    }
 
 
 def _prediction_table(
@@ -236,13 +253,14 @@ def main() -> None:
         sigma = fit_gaussian_smoothing(k_bins, ratio)
         gaussian_transfer = np.exp(-0.5 * (sigma * k_bins) ** 2)
         measured_images, _ = transfer_transform(k_bins, measured_transfer)(real_evaluation)
-        gaussian_images, _ = transfer_transform(k_bins, gaussian_transfer)(real_evaluation)
+        gaussian_images, _ = gaussian_smoothing_transform(sigma)(real_evaluation)
 
         dataset_size = int(row["dataset_size"])
         run_name = str(row["run_name"])
-        measured_name = f"transfer_Tk_N{dataset_size}"
-        gaussian_name = f"gaussian_smoothing_N{dataset_size}"
-        generated_name = f"generated_N{dataset_size}"
+        transform_names = c4_transform_names(run_name, dataset_size)
+        measured_name = transform_names["measured"]
+        gaussian_name = transform_names["gaussian"]
+        generated_name = transform_names["generated"]
         prediction_tables.extend(
             [
                 _prediction_table(
