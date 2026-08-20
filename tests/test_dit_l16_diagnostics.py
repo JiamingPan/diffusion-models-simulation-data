@@ -10,6 +10,7 @@ from simdiff_eval.dit_diagnostics import (
     one_point_l1_common_bins,
     patch_boundary_statistics,
     selected_power_bin_statistics,
+    two_sample_selected_power_ratio_statistics,
 )
 from simdiff_eval.metrics import (
     PHYSICAL_HIST_EDGES,
@@ -143,6 +144,42 @@ def test_constant_selected_power_bins_have_zero_variance_and_collapsed_interval(
         assert row["std"] == pytest.approx(0.0)
         assert row["mean_ci_low"] == pytest.approx(4.5)
         assert row["mean_ci_high"] == pytest.approx(4.5)
+
+
+def test_two_sample_power_ratio_bootstrap_is_deterministic_and_wider():
+    rng = np.random.default_rng(77)
+    generated = rng.normal(2.0, 0.04, size=(64, 5))
+    real_selected = rng.lognormal(np.log(2.0), 0.75, size=(20, 1))
+
+    first = two_sample_selected_power_ratio_statistics(
+        generated,
+        real_selected,
+        bin_indices=(3,),
+        n_resamples=800,
+        seed=23,
+    )
+    second = two_sample_selected_power_ratio_statistics(
+        generated,
+        real_selected,
+        bin_indices=(3,),
+        n_resamples=800,
+        seed=23,
+    )
+    fixed_denominator = selected_power_bin_statistics(
+        generated[:, [3]] / real_selected.mean(),
+        bin_indices=(0,),
+        n_resamples=800,
+        seed=23,
+    )[0]
+
+    assert first == second
+    row = first[0]
+    assert row["real_pk_sem"] > 0
+    two_sample_width = row["mean_ci_high"] - row["mean_ci_low"]
+    fixed_width = (
+        fixed_denominator["mean_ci_high"] - fixed_denominator["mean_ci_low"]
+    )
+    assert two_sample_width > fixed_width
 
 
 @pytest.mark.parametrize("bad_bin", [-1, 91])
