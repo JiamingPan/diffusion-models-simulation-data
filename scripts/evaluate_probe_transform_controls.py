@@ -20,10 +20,11 @@ if str(PROJECT_ROOT) not in sys.path:
 from simdiff_eval.probe_controls import (  # noqa: E402
     TransformSpec,
     aggregate_prediction_table,
+    build_c0_specs,
     build_run_manifest,
+    c0_symmetry_summary,
     evaluate_transform_specs,
 )
-from simdiff_eval.probe_eval import load_heldout_real_slices  # noqa: E402
 from simdiff_eval.probe_transforms import get_transform  # noqa: E402
 
 
@@ -59,6 +60,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bootstrap", type=int, default=2000)
     parser.add_argument("--bootstrap-seed", type=int, default=123)
     parser.add_argument("--roll-seed", type=int, default=123)
+    parser.add_argument(
+        "--control",
+        action="append",
+        choices=("identity", "c0"),
+        help="Control family to run. Repeat to combine families.",
+    )
     parser.add_argument("--k-cut", action="append", type=float)
     return parser.parse_args()
 
@@ -67,6 +74,7 @@ def main() -> None:
     args = parse_args()
     from evaluate_nf_conditional_bias_probe import load_vgg_encoder
     from prepare_nf_conditional_u128_config import DATA_ROOT
+    from simdiff_eval.probe_eval import load_heldout_real_slices
 
     project_dir = Path(args.project_dir).resolve()
     data_root = args.data_root or DATA_ROOT
@@ -94,7 +102,12 @@ def main() -> None:
         norm=normalization,
     )
     encoder = load_vgg_encoder(project_dir, encoder_path, args.device)
-    specs = identity_specs()
+    requested_controls = set(args.control or ["identity"])
+    roll_offsets: list[tuple[int, int]] = []
+    if "c0" in requested_controls:
+        specs, roll_offsets = build_c0_specs(args.roll_seed)
+    else:
+        specs = identity_specs()
     predictions = evaluate_transform_specs(
         images,
         theta_raw,
@@ -121,6 +134,7 @@ def main() -> None:
             "roll": int(args.roll_seed),
         },
         arguments=vars(args),
+        extra={"roll_offsets": roll_offsets} if roll_offsets else None,
     )
 
     predictions_path = output_dir / "probe_transform_predictions.csv"
@@ -128,6 +142,15 @@ def main() -> None:
     manifest_path = output_dir / "manifest.json"
     _write_csv(predictions_path, predictions)
     _write_json(metrics_path, metrics)
+    if "c0" in requested_controls:
+        c0_path = output_dir / "c0_symmetry_summary.json"
+        c0_report = c0_symmetry_summary(
+            predictions,
+            n_boot=args.bootstrap,
+            seed=args.bootstrap_seed,
+        )
+        _write_json(c0_path, c0_report)
+        print(f"Wrote {c0_path}")
     _write_json(manifest_path, manifest)
     print(f"Wrote {predictions_path}")
     print(f"Wrote {metrics_path}")
