@@ -46,6 +46,15 @@ def selected_rows(rows: list[dict[str, Any]], run_names: list[str] | None) -> li
     return sorted(rows, key=lambda row: int(row["dataset_size"]))
 
 
+def checkpoint_cli_args(row: dict[str, Any]) -> list[str]:
+    """Pin sampling to a manifest checkpoint when one is explicitly requested."""
+
+    checkpoint_epoch = row.get("checkpoint_epoch")
+    if checkpoint_epoch is None:
+        return []
+    return ["--checkpoint_epoch", str(int(checkpoint_epoch))]
+
+
 def output_path_for(project_dir: Path, row: dict[str, Any], seed: int, k: int, guidance_scale: float | None) -> Path:
     raw = str(row["sample_path"])
     label = guidance_label(guidance_scale)
@@ -77,6 +86,8 @@ def annotate_npz(path: Path, row: dict[str, Any], seed: int, k: int, project_dir
             "run_name": np.array(row["run_name"]),
             "regime": np.array(row["regime"]),
             "dataset_size": np.array(int(row["dataset_size"])),
+            "checkpoint_epoch": np.array(int(row.get("checkpoint_epoch", -1))),
+            "requested_checkpoint": np.array(str(row.get("requested_checkpoint", ""))),
             "cfg_dropout": np.array(float(row.get("cfg_dropout", 0.0))),
             "guidance_scale": np.array(np.nan if guidance_scale is None else float(guidance_scale)),
             "guidance_label": np.array(guidance_label(guidance_scale)),
@@ -156,6 +167,7 @@ def main() -> None:
                 str(args.device),
                 "--verbose",
             ]
+            cmd.extend(checkpoint_cli_args(row))
             if guidance_scale is not None:
                 cmd.extend(["--guidance_scale", str(float(guidance_scale))])
             print("Running:", " ".join(cmd), flush=True)
