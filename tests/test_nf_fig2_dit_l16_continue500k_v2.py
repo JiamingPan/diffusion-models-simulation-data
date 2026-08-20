@@ -816,7 +816,12 @@ def _build_complete_audit_fixture(tmp_path: Path) -> dict[str, Path]:
     _write_csv_rows(
         table_dir / f"{prep.CONTINUE_SWEEP_NAME}_physics_summary.csv",
         [
-            {"dataset_tag": tag, "updates_k": updates // 1000}
+            {
+                "dataset_tag": tag,
+                "updates_k": updates // 1000,
+                "real_pixel_coverage": 1.0,
+                "generated_pixel_coverage": 1.0,
+            }
             for tag in EXPECTED_TAGS
             for updates in final_audit.EXPECTED_UPDATES
         ],
@@ -909,6 +914,23 @@ def test_final_audit_passes_only_complete_attributable_sweep(tmp_path, monkeypat
         (tmp_path / "local" / prep.CONTINUE_SWEEP_NAME / "final_audit.json").read_text()
     )
     assert saved["status"] == "PASS"
+
+
+def test_final_audit_rejects_low_generated_pixel_coverage(tmp_path, monkeypatch):
+    paths = _build_complete_audit_fixture(tmp_path)
+    monkeypatch.setattr(final_audit, "EXPECTED_SAMPLE_SHAPE", (1, 1, 2, 2))
+    rows = final_audit._read_csv(paths["physics"])
+    rows[0]["generated_pixel_coverage"] = "0.998"
+    _write_csv_rows(paths["physics"], rows)
+
+    report = final_audit.audit_results(tmp_path, paths["manifest"])
+
+    assert report["status"] == "FAIL"
+    assert any(
+        "generated pixel coverage below 0.999" in issue
+        and "('d2p06', 300)" in issue
+        for issue in report["issues"]
+    )
 
 
 @pytest.mark.parametrize("missing_kind", ["checkpoint", "sample", "pca", "sscd", "physics"])

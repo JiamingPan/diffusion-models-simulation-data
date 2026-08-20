@@ -9,7 +9,11 @@ from simdiff_eval.dit_diagnostics import (
     patch_boundary_statistics,
     selected_power_bin_statistics,
 )
-from simdiff_eval.metrics import batch_power_spectra, radial_power_spectrum_2d
+from simdiff_eval.metrics import (
+    batch_power_spectra,
+    histogram_probability_and_coverage,
+    radial_power_spectrum_2d,
+)
 
 
 def test_power_spectrum_k_max_none_preserves_legacy_binning_exactly():
@@ -35,6 +39,26 @@ def test_power_spectrum_k_max_excludes_bins_above_nyquist():
     assert spectra.shape == (3, 91)
     assert len(k_bins) == 91
     assert np.all(k_bins <= 64.0)
+
+
+def test_histogram_coverage_is_one_for_in_range_values():
+    probability, coverage = histogram_probability_and_coverage(
+        np.asarray([-1.0, -0.5, 0.0, 0.5, 1.0]),
+        np.linspace(-1.0, 1.0, 5),
+    )
+
+    assert probability.sum() == pytest.approx(1.0)
+    assert coverage == pytest.approx(1.0)
+
+
+def test_histogram_coverage_detects_values_outside_range():
+    probability, coverage = histogram_probability_and_coverage(
+        np.asarray([-1.1, -0.5, 0.0, 0.5, 1.1]),
+        np.linspace(-1.0, 1.0, 5),
+    )
+
+    assert probability.sum() == pytest.approx(1.0)
+    assert coverage == pytest.approx(3.0 / 5.0)
 
 
 def test_bootstrap_mean_interval_is_deterministic():

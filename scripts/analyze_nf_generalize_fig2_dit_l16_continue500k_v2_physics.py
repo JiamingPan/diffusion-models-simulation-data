@@ -25,7 +25,7 @@ from simdiff_eval.dit_diagnostics import (
     summarize_patch_boundary_series,
 )
 from simdiff_eval.io import iter_real_reference_batches_from_config
-from simdiff_eval.metrics import batch_power_spectra
+from simdiff_eval.metrics import batch_power_spectra, histogram_probability_and_coverage
 from validate_nf_generalize_fig2_dit_sample import validate_sample_file
 
 
@@ -137,6 +137,7 @@ def _stream_reference(
     kbins: np.ndarray | None = None
     patch_parts: list[dict[str, np.ndarray]] = []
     n_images = 0
+    total_pixel_count = 0
     for batch in iter_real_reference_batches_from_config(
         config_path, raw_batch_size=raw_batch_size
     ):
@@ -146,6 +147,7 @@ def _stream_reference(
         if not np.isfinite(array).all():
             raise ValueError(f"real-reference batch contains non-finite values: {config_path}")
         histogram += np.histogram(array, bins=hist_edges)[0]
+        total_pixel_count += int(array.size)
         spectra, current_kbins = batch_power_spectra(
             array, nbins=pk_nbins, k_max=k_max
         )
@@ -160,11 +162,15 @@ def _stream_reference(
         n_images += len(array)
     if n_images < 1 or kbins is None or np.any(pk_count == 0):
         raise ValueError(f"incomplete real-reference stream for {config_path}")
-    probability = histogram / histogram.sum()
+    in_range_count = int(histogram.sum())
+    if in_range_count < 1 or total_pixel_count < 1:
+        raise ValueError(f"reference histogram has no in-range pixels: {config_path}")
+    probability = histogram / in_range_count
     patch_series = _concat_patch_series(patch_parts)
     return {
         "n_images": n_images,
         "histogram_probability": probability,
+        "pixel_coverage": float(in_range_count / total_pixel_count),
         "pk_mean": pk_sum / pk_count,
         "kbins": kbins,
         "patch_series": patch_series,
@@ -318,8 +324,9 @@ def analyze(args: argparse.Namespace) -> dict[str, Path]:
             requested_steps=50,
         )
         samples = _load_samples(sample_path)
-        generated_hist = np.histogram(samples, bins=hist_edges)[0]
-        generated_probability = generated_hist / generated_hist.sum()
+        generated_probability, generated_pixel_coverage = histogram_probability_and_coverage(
+            samples, hist_edges
+        )
         hist_l1 = float(
             np.sum(np.abs(reference["histogram_probability"] - generated_probability))
         )
@@ -357,6 +364,8 @@ def analyze(args: argparse.Namespace) -> dict[str, Path]:
                 "n_generated": len(samples),
                 "n_real_exact_subset": int(reference["n_images"]),
                 "k_max": float(args.k_max),
+                "real_pixel_coverage": float(reference["pixel_coverage"]),
+                "generated_pixel_coverage": generated_pixel_coverage,
                 "hist_l1": hist_l1,
                 **power,
                 "patch_boundary_ratio": patch["boundary_to_control_ratio"],
