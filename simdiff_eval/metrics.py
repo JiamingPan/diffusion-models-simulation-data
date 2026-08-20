@@ -7,6 +7,9 @@ from dataclasses import dataclass
 import numpy as np
 
 
+PHYSICAL_HIST_EDGES = np.linspace(-1.0, 1.0, 141, dtype=np.float64)
+
+
 def histogram_probability_and_coverage(
     values: np.ndarray,
     edges: np.ndarray,

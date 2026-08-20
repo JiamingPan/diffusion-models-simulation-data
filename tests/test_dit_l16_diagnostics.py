@@ -10,10 +10,18 @@ from simdiff_eval.dit_diagnostics import (
     selected_power_bin_statistics,
 )
 from simdiff_eval.metrics import (
+    PHYSICAL_HIST_EDGES,
     batch_power_spectra,
     histogram_probability_and_coverage,
     radial_power_spectrum_2d,
 )
+
+
+def test_physical_histogram_edges_are_shared_140_bin_definition():
+    expected = np.linspace(-1.0, 1.0, 141, dtype=np.float64)
+
+    assert PHYSICAL_HIST_EDGES.dtype == np.float64
+    np.testing.assert_array_equal(PHYSICAL_HIST_EDGES, expected)
 
 
 def test_power_spectrum_k_max_none_preserves_legacy_binning_exactly():
