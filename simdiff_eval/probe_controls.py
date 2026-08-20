@@ -18,6 +18,7 @@ from .probe_transforms import (
     Transform,
     compose_transforms,
     dihedral_transform,
+    get_transform,
     roll_transform,
 )
 
@@ -35,6 +36,7 @@ C4_LIMITATION = (
     "They do not match the one-point PDF or higher-order structure, so a "
     "negative result rules out only that two-point deficit as the explanation."
 )
+DEFAULT_K_CUTS = (4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0, 40.0, 52.0, 64.0)
 DESCRIPTOR_COLUMNS = (
     "transform",
     "transform_family",
@@ -105,6 +107,43 @@ def build_c0_specs(seed: int) -> tuple[list[TransformSpec], list[tuple[int, int]
                 )
             )
     return specs, offsets
+
+
+def build_c1_specs(k_cuts: tuple[float, ...] | list[float]) -> list[TransformSpec]:
+    """Build identity, FFT null, and complementary C1 scale-cut arms."""
+    cutoffs = tuple(float(value) for value in k_cuts)
+    if not cutoffs:
+        raise ValueError("At least one C1 cutoff is required")
+    if len(set(cutoffs)) != len(cutoffs):
+        raise ValueError("C1 cutoffs must be unique")
+    if any(not np.isfinite(value) or value <= 0.0 or value > 64.0 for value in cutoffs):
+        raise ValueError("C1 cutoffs must be finite and lie in (0, 64]")
+
+    specs = [
+        TransformSpec("identity", "identity", get_transform("identity")),
+        TransformSpec(
+            "fft_roundtrip_null",
+            "fft_roundtrip_null",
+            get_transform("fft_roundtrip_null"),
+            k_cut=64.0,
+            window="allpass",
+        ),
+    ]
+    for k_cut in cutoffs:
+        label = f"{k_cut:g}"
+        for family in ("lowpass", "highpass"):
+            for window in ("sharp", "hann"):
+                name = f"{family}_kcut{label}_{window}"
+                specs.append(
+                    TransformSpec(
+                        name=name,
+                        family=family,
+                        transform=get_transform(name),
+                        k_cut=k_cut,
+                        window=window,
+                    )
+                )
+    return specs
 
 
 def evaluate_transform_specs(
@@ -449,6 +488,37 @@ def c0_symmetry_summary(
         "per_slice": per_slice,
         "family_summary": family_summary,
         "bootstrap": {"n_resamples": int(n_boot), "seed": int(seed)},
+    }
+
+
+def c1_scale_cut_summary(
+    predictions: pd.DataFrame,
+    *,
+    n_boot: int,
+    seed: int,
+) -> dict[str, Any]:
+    """Return C1 RMSE, bias, and slope curves at both report grains."""
+    allowed = {"identity", "fft_roundtrip_null", "lowpass", "highpass"}
+    table = predictions[predictions["transform_family"].isin(allowed)].copy()
+    if table.empty:
+        raise ValueError("Prediction table contains no C1 transforms")
+    report = aggregate_prediction_table(table, n_boot=int(n_boot), seed=int(seed))
+    out_of_range = (
+        table.groupby("transform", as_index=True)["out_of_range_fraction"]
+        .mean()
+        .to_dict()
+    )
+    curves = report["metrics"]
+    for row in curves:
+        row["out_of_range_fraction"] = float(out_of_range[row["transform"]])
+    return {
+        "curves": curves,
+        "bootstrap": report["bootstrap"],
+        "filter_space": "log/tanh-normalized probe input before the VGG [-1,1] clamp",
+        "interpretation": (
+            "Use low-pass/high-pass asymmetry together with RMSE, signed bias, "
+            "slope, the FFT round-trip null, and out-of-range fraction."
+        ),
     }
 
 

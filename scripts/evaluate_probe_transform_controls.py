@@ -18,11 +18,14 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from simdiff_eval.probe_controls import (  # noqa: E402
+    DEFAULT_K_CUTS,
     TransformSpec,
     aggregate_prediction_table,
     build_c0_specs,
+    build_c1_specs,
     build_run_manifest,
     c0_symmetry_summary,
+    c1_scale_cut_summary,
     evaluate_transform_specs,
 )
 from simdiff_eval.probe_transforms import get_transform  # noqa: E402
@@ -33,6 +36,36 @@ EXPECTED_HELDOUT = np.arange(900, 932, dtype=np.int64)
 
 def identity_specs() -> list[TransformSpec]:
     return [TransformSpec("identity", "identity", get_transform("identity"))]
+
+
+def build_requested_specs(
+    controls: list[str],
+    *,
+    roll_seed: int,
+    k_cuts: list[float] | tuple[float, ...],
+) -> tuple[list[TransformSpec], list[tuple[int, int]]]:
+    requested = set(controls or ["identity"])
+    unknown = requested.difference({"identity", "c0", "c1"})
+    if unknown:
+        raise ValueError(f"Unknown controls: {sorted(unknown)}")
+
+    candidates: list[TransformSpec] = []
+    roll_offsets: list[tuple[int, int]] = []
+    if "c0" in requested:
+        c0_specs, roll_offsets = build_c0_specs(roll_seed)
+        candidates.extend(c0_specs)
+    if "c1" in requested:
+        candidates.extend(build_c1_specs(k_cuts))
+    if not candidates:
+        candidates.extend(identity_specs())
+
+    specs_by_name: dict[str, TransformSpec] = {}
+    for spec in candidates:
+        specs_by_name.setdefault(spec.name, spec)
+    specs = list(specs_by_name.values())
+    if sum(spec.name == "identity" for spec in specs) != 1:
+        raise ValueError("Combined controls must contain identity exactly once")
+    return specs, roll_offsets
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -63,7 +96,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--control",
         action="append",
-        choices=("identity", "c0"),
+        choices=("identity", "c0", "c1"),
         help="Control family to run. Repeat to combine families.",
     )
     parser.add_argument("--k-cut", action="append", type=float)
@@ -103,11 +136,11 @@ def main() -> None:
     )
     encoder = load_vgg_encoder(project_dir, encoder_path, args.device)
     requested_controls = set(args.control or ["identity"])
-    roll_offsets: list[tuple[int, int]] = []
-    if "c0" in requested_controls:
-        specs, roll_offsets = build_c0_specs(args.roll_seed)
-    else:
-        specs = identity_specs()
+    specs, roll_offsets = build_requested_specs(
+        list(requested_controls),
+        roll_seed=args.roll_seed,
+        k_cuts=args.k_cut or DEFAULT_K_CUTS,
+    )
     predictions = evaluate_transform_specs(
         images,
         theta_raw,
@@ -151,6 +184,15 @@ def main() -> None:
         )
         _write_json(c0_path, c0_report)
         print(f"Wrote {c0_path}")
+    if "c1" in requested_controls:
+        c1_path = output_dir / "c1_scale_cut_summary.json"
+        c1_report = c1_scale_cut_summary(
+            predictions,
+            n_boot=args.bootstrap,
+            seed=args.bootstrap_seed,
+        )
+        _write_json(c1_path, c1_report)
+        print(f"Wrote {c1_path}")
     _write_json(manifest_path, manifest)
     print(f"Wrote {predictions_path}")
     print(f"Wrote {metrics_path}")

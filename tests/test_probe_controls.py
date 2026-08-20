@@ -195,6 +195,7 @@ def test_transform_control_cli_help_is_import_safe():
     assert "--encoder" in result.stdout
     assert "--control" in result.stdout
     assert "c0" in result.stdout
+    assert "c1" in result.stdout
 
 
 def test_c0_builds_40_deterministic_views_with_recorded_nonzero_rolls():
@@ -354,3 +355,111 @@ def test_degradation_control_cli_help_is_import_safe():
     assert "degraded real" in result.stdout
     assert "--split-seed" in result.stdout
     assert "--manifest" in result.stdout
+
+
+def test_c1_suite_has_all_required_arms_windows_and_cutoffs():
+    from simdiff_eval.probe_controls import DEFAULT_K_CUTS, build_c1_specs
+
+    assert DEFAULT_K_CUTS == (
+        4.0,
+        6.0,
+        8.0,
+        12.0,
+        16.0,
+        24.0,
+        32.0,
+        40.0,
+        52.0,
+        64.0,
+    )
+    specs = build_c1_specs(DEFAULT_K_CUTS)
+    names = [spec.name for spec in specs]
+    assert names.count("identity") == 1
+    assert names.count("fft_roundtrip_null") == 1
+    for k_cut in DEFAULT_K_CUTS:
+        label = f"{k_cut:g}"
+        for arm in ("lowpass", "highpass"):
+            for window in ("sharp", "hann"):
+                assert f"{arm}_kcut{label}_{window}" in names
+    assert len(specs) == 42
+
+
+def test_c1_summary_reports_three_curves_at_two_grains():
+    from simdiff_eval.probe_controls import (
+        TransformSpec,
+        c1_scale_cut_summary,
+        evaluate_transform_specs,
+    )
+    from simdiff_eval.probe_transforms import get_transform
+
+    images, theta_raw, sim_index, z_index = synthetic_probe_inputs()
+    specs = [
+        TransformSpec("identity", "identity", get_transform("identity")),
+        TransformSpec(
+            "lowpass_kcut2_sharp",
+            "lowpass",
+            get_transform("lowpass_kcut2_sharp"),
+            k_cut=2.0,
+            window="sharp",
+        ),
+        TransformSpec(
+            "highpass_kcut2_sharp",
+            "highpass",
+            get_transform("highpass_kcut2_sharp"),
+            k_cut=2.0,
+            window="sharp",
+        ),
+    ]
+    table = evaluate_transform_specs(
+        images,
+        theta_raw,
+        sim_index,
+        z_index,
+        FakeEncoder(),
+        specs,
+        batch_size=4,
+    )
+    report = c1_scale_cut_summary(table, n_boot=50, seed=47)
+    required = {
+        "rmse",
+        "bias",
+        "slope",
+        "rmse_ci_low",
+        "rmse_ci_high",
+        "bias_ci_low",
+        "bias_ci_high",
+        "slope_ci_low",
+        "slope_ci_high",
+        "grain",
+        "transform_family",
+        "k_cut",
+        "k_cut_over_knyq",
+        "window",
+        "out_of_range_fraction",
+    }
+    assert all(required.issubset(row) for row in report["curves"])
+    assert {row["grain"] for row in report["curves"]} == {
+        "per_slice",
+        "per_cosmology",
+    }
+    assert {row["transform_family"] for row in report["curves"]} == {
+        "identity",
+        "lowpass",
+        "highpass",
+    }
+
+
+def test_combined_c0_c1_suite_deduplicates_identity():
+    from scripts.evaluate_probe_transform_controls import build_requested_specs
+
+    specs, roll_offsets = build_requested_specs(
+        ["c0", "c1"],
+        roll_seed=59,
+        k_cuts=[4.0, 64.0],
+    )
+    names = [spec.name for spec in specs]
+    assert names.count("identity") == 1
+    assert len(roll_offsets) == 4
+    assert "fft_roundtrip_null" in names
+    assert "lowpass_kcut4_hann" in names
+    assert any(name.startswith("dihedral_g7__roll") for name in names)
