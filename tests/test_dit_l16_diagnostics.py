@@ -4,7 +4,9 @@ import numpy as np
 import pytest
 
 from simdiff_eval.dit_diagnostics import (
+    bootstrap_histogram_l1_interval,
     bootstrap_mean_interval,
+    bootstrap_power_log10_mae_interval,
     one_point_l1_common_bins,
     patch_boundary_statistics,
     selected_power_bin_statistics,
@@ -77,6 +79,54 @@ def test_bootstrap_mean_interval_is_deterministic():
 
     assert first == second
     assert first[0] < values.mean() < first[1]
+
+
+def test_scalar_physics_bootstrap_intervals_are_deterministic():
+    rng = np.random.default_rng(31)
+    generated = rng.normal(0.15, 0.55, size=(24, 1, 8, 8))
+    edges = np.linspace(-1.0, 1.0, 15)
+    reference_probability, _ = histogram_probability_and_coverage(
+        rng.normal(0.0, 0.5, size=(40, 1, 8, 8)), edges
+    )
+    generated_probability, _ = histogram_probability_and_coverage(generated, edges)
+    hist_point = float(np.abs(generated_probability - reference_probability).sum())
+
+    hist_first = bootstrap_histogram_l1_interval(
+        generated,
+        reference_probability,
+        edges,
+        n_resamples=300,
+        seed=19,
+    )
+    hist_second = bootstrap_histogram_l1_interval(
+        generated,
+        reference_probability,
+        edges,
+        n_resamples=300,
+        seed=19,
+    )
+
+    generated_power = rng.lognormal(size=(24, 12))
+    real_power = rng.lognormal(size=12)
+    ratio = generated_power.mean(axis=0) / real_power
+    power_point = float(np.mean(np.abs(np.log10(ratio))))
+    power_first = bootstrap_power_log10_mae_interval(
+        generated_power,
+        real_power,
+        n_resamples=300,
+        seed=19,
+    )
+    power_second = bootstrap_power_log10_mae_interval(
+        generated_power,
+        real_power,
+        n_resamples=300,
+        seed=19,
+    )
+
+    assert hist_first == hist_second
+    assert hist_first[0] <= hist_point <= hist_first[1]
+    assert power_first == power_second
+    assert power_first[0] <= power_point <= power_first[1]
 
 
 def test_constant_selected_power_bins_have_zero_variance_and_collapsed_interval():

@@ -19,6 +19,8 @@ if str(PROJECT_IMPORT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_IMPORT_ROOT))
 
 from simdiff_eval.dit_diagnostics import (
+    bootstrap_histogram_l1_interval,
+    bootstrap_power_log10_mae_interval,
     patch_boundary_per_image,
     patch_boundary_statistics,
     selected_power_bin_statistics,
@@ -344,12 +346,25 @@ def analyze(args: argparse.Namespace) -> dict[str, Path]:
         hist_l1 = float(
             np.sum(np.abs(reference["histogram_probability"] - generated_probability))
         )
+        hist_interval = bootstrap_histogram_l1_interval(
+            samples,
+            reference["histogram_probability"],
+            hist_edges,
+            n_resamples=int(args.bootstrap_resamples),
+            seed=int(args.seed),
+        )
         generated_pk, kbins = batch_power_spectra(
             samples, nbins=int(args.pk_nbins), k_max=float(args.k_max)
         )
         if not np.allclose(kbins, reference["kbins"], equal_nan=True):
             raise ValueError(f"{tag} {label}: generated and real k-bins differ")
         power = _power_summary(reference["pk_mean"], generated_pk)
+        power_interval = bootstrap_power_log10_mae_interval(
+            generated_pk,
+            reference["pk_mean"],
+            n_resamples=int(args.bootstrap_resamples),
+            seed=int(args.seed),
+        )
         patch = patch_boundary_statistics(samples, patch_size=8)
         patch_rows.append(
             {
@@ -384,6 +399,12 @@ def analyze(args: argparse.Namespace) -> dict[str, Path]:
                 "real_pixel_coverage": float(reference["pixel_coverage"]),
                 "generated_pixel_coverage": generated_pixel_coverage,
                 "hist_l1": hist_l1,
+                "hist_l1_lo": hist_interval[0],
+                "hist_l1_hi": hist_interval[1],
+                "pk_log10_mae_lo": power_interval[0],
+                "pk_log10_mae_hi": power_interval[1],
+                "bootstrap_resamples": int(args.bootstrap_resamples),
+                "bootstrap_seed": int(args.seed),
                 **power,
                 "patch_boundary_ratio": patch["boundary_to_control_ratio"],
                 "scheduler": audit["scheduler"],
