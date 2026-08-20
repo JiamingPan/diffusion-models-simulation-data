@@ -113,6 +113,22 @@ def test_inserted_block_covers_every_required_diagnostic():
         assert text in source
 
 
+def test_physics_figures_expose_large_ratios_and_bootstrap_overlap():
+    updater = load_updater()
+    source = "\n".join("".join(cell["source"]) for cell in updater.build_cells())
+
+    assert "set_ylim(0, 3.7)" not in source
+    assert "set_yscale('log')" in source
+    assert "hist_l1_lo" in source
+    assert "hist_l1_hi" in source
+    assert "pk_log10_mae_lo" in source
+    assert "pk_log10_mae_hi" in source
+    assert "hist_l1_ci_low" not in source
+    assert "pk_log10_mae_ci_low" not in source
+    assert "intervals_overlap" in source
+    assert "300k/500k 95% CIs" in source
+
+
 def test_real_notebook_has_exactly_one_tagged_block_after_update(tmp_path):
     updater = load_updater()
     original_path = REPO_ROOT / "notebooks" / "nf_generalize_fig2_dit_results.ipynb"
