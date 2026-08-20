@@ -102,8 +102,8 @@ from scripts.dit_300k_scaling_analysis import (
     normalize_generalization_table,
     prepare_stitched_loss_history,
     require_exact_dataset_sweep,
+    resolve_checkpoint_loss_metrics,
     robust_log_ratio_outliers,
-    stage_loss_metrics_from_logs,
     streaming_nearest_neighbors,
     summarize_filtered_power_ratios,
     summarize_n50,
@@ -136,6 +136,7 @@ FEATURE_TITLES = {
 
 LOCAL_DIR = PROJECT_DIR / 'local' / CONT_SWEEP
 LOG_DIR = PROJECT_DIR / 'logs' / CONT_SWEEP
+DURABLE_TRAINING_METRICS_DIR = PROJECT_DIR / 'results' / CONT_SWEEP / 'training_metrics'
 TABLE_DIR = PROJECT_DIR / 'results' / 'nf_generalize_fig2_dit' / 'tables'
 PHYSICS_DIR = PROJECT_DIR / 'results' / 'nf_generalize_fig2_dit' / 'physics'
 SAMPLE_DIR = PROJECT_DIR / 'results' / CONT_SWEEP / 'samples'
@@ -435,31 +436,14 @@ agreement.
 
 
 LOSS_CODE = r"""
-def checkpoint_epoch(path: Path) -> int:
-    match = re.fullmatch(r'checkpoint-epoch-(\d+)', path.name)
-    if match is None:
-        raise ValueError(f'Cannot read checkpoint epoch from {path}')
-    return int(match.group(1))
-
-
 def read_stage_loss_metrics(
     row: pd.Series,
-) -> tuple[dict[str, Any], tuple[Path, ...], int, int]:
-    previous_epoch = checkpoint_epoch(project_path(row['previous_expected_checkpoint']))
-    final_epoch = int(row['expected_final_epoch'])
-    task_index = CONT_TAGS.index(str(row['dataset_tag']))
-    candidates = sorted(LOG_DIR.glob(f'train_stage*_{task_index}.out'))
-    if not candidates:
-        raise FileNotFoundError(
-            f"No continuation training logs found for {row['dataset_tag']} "
-            f"under {LOG_DIR}"
-        )
-    metrics, used_paths = stage_loss_metrics_from_logs(
-        candidates,
-        first_epoch=previous_epoch + 1,
-        final_epoch=final_epoch,
+) -> Any:
+    return resolve_checkpoint_loss_metrics(
+        row.to_dict(),
+        durable_metrics_dir=DURABLE_TRAINING_METRICS_DIR,
+        log_dir=LOG_DIR,
     )
-    return metrics, used_paths, previous_epoch, final_epoch
 
 
 loss_histories = {}
@@ -468,14 +452,20 @@ for tag in CONT_TAGS:
     final_row = continuation_row(tag, 500)
     steps_per_epoch = int(final_row['steps_per_epoch'])
     segments = []
-    metrics_paths = []
+    metric_sources = []
     for updates_k in CONT_UPDATES_K[1:]:
         row = continuation_row(tag, updates_k)
-        metrics, used_paths, previous_epoch, final_epoch = read_stage_loss_metrics(row)
-        stage_start_updates = (previous_epoch + 1) * steps_per_epoch
-        stage_end_updates = (final_epoch + 1) * steps_per_epoch
-        segments.append((metrics, stage_start_updates, stage_end_updates))
-        metrics_paths.extend(str(path) for path in used_paths)
+        resolved = read_stage_loss_metrics(row)
+        stage_start_updates = resolved.first_epoch * steps_per_epoch
+        stage_end_updates = (resolved.final_epoch + 1) * steps_per_epoch
+        segments.append((resolved.metrics, stage_start_updates, stage_end_updates))
+        metric_sources.append({
+            'updates_k': updates_k,
+            'source_kind': resolved.source_kind,
+            'source_paths': [str(path) for path in resolved.source_paths],
+            'first_epoch': resolved.first_epoch,
+            'final_epoch': resolved.final_epoch,
+        })
     history = prepare_stitched_loss_history(
         segments,
         steps_per_epoch=steps_per_epoch,
@@ -490,7 +480,7 @@ for tag in CONT_TAGS:
         'final_update': history['recorded_updates'],
         'stage_recorded_updates': history['stage_recorded_updates'].tolist(),
         'tail_median_loss': history['tail_median_loss'],
-        'training_log_paths': list(dict.fromkeys(metrics_paths)),
+        'metric_sources': metric_sources,
     })
 
 fig, axes = plt.subplots(2, 5, figsize=(19, 8.4), sharex=True, constrained_layout=True)

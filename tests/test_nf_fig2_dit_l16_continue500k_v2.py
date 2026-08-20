@@ -23,6 +23,7 @@ import validate_nf_generalize_fig2_dit_sample as sample_guard
 import audit_nf_generalize_fig2_dit_l16_continue500k_v2_results as final_audit
 import compute_nf_generalize_pca_full_nn as pca_nn
 import compute_nf_generalize_sscd_full_nn as sscd_nn
+from dit_300k_scaling_analysis import resolve_checkpoint_loss_metrics
 
 
 EXPECTED_TAGS = tuple(f"d2p{power:02d}" for power in range(6, 16))
@@ -800,6 +801,32 @@ def _build_complete_audit_fixture(tmp_path: Path) -> dict[str, Path]:
     for row in continuation_rows:
         _write_complete_continuation_checkpoint(Path(row["expected_checkpoint"]))
 
+    durable_metrics_dir = (
+        tmp_path
+        / "results"
+        / prep.CONTINUE_SWEEP_NAME
+        / "training_metrics"
+    )
+    durable_metrics_dir.mkdir(parents=True, exist_ok=True)
+    durable_metrics: dict[tuple[str, int], Path] = {}
+    for row in continuation_rows:
+        target_updates = int(row["target_total_updates"])
+        previous_epoch = int(
+            Path(row["previous_expected_checkpoint"]).name.rsplit("-", 1)[-1]
+        )
+        final_epoch = int(row["expected_final_epoch"])
+        path = durable_metrics_dir / (
+            f"{row['dataset_tag']}_{target_updates // 1000}k_metrics.json"
+        )
+        path.write_text(
+            json.dumps(
+                {"epoch_loss": [1.0] * (final_epoch - previous_epoch)},
+                indent=2,
+            )
+            + "\n"
+        )
+        durable_metrics[(str(row["dataset_tag"]), target_updates)] = path
+
     sample_value = 1.0
     analysis_by_pair = {}
     for row in analysis_rows:
@@ -937,6 +964,7 @@ def _build_complete_audit_fixture(tmp_path: Path) -> dict[str, Path]:
             for row in continuation_rows
             if int(row["target_total_updates"]) < max(prep.TARGET_UPDATES)
         ],
+        "durable_metrics": durable_metrics,
         "final_checkpoint": Path(
             next(
                 row["expected_checkpoint"]
@@ -993,8 +1021,64 @@ def test_final_audit_allows_analysis_when_only_intermediate_weights_are_missing(
     assert report["counts"]["valid_intermediate_checkpoints"] == 0
     assert report["counts"]["missing_intermediate_checkpoints"] == 40
     assert len(report["retention_missing_paths"]) == 40
+    assert report["counts"]["valid_loss_metric_sources"] == 50
+    assert {
+        row["source_kind"] for row in report["loss_metric_sources"]
+    } == {"repaired_copy"}
     assert not report["issues"]
     assert not report["missing_paths"]
+
+
+def test_final_audit_fails_when_purged_checkpoint_has_no_durable_loss_source(
+    tmp_path, monkeypatch
+):
+    import shutil
+
+    paths = _build_complete_audit_fixture(tmp_path)
+    monkeypatch.setattr(final_audit, "EXPECTED_SAMPLE_SHAPE", (1, 1, 2, 2))
+    pair = ("d2p06", 340_000)
+    paths["durable_metrics"][pair].unlink()
+    checkpoint = next(
+        path
+        for path in paths["intermediate_checkpoints"]
+        if "d2p06" in str(path) and path.name == "checkpoint-epoch-42499"
+    )
+    shutil.rmtree(checkpoint)
+
+    report = final_audit.audit_results(tmp_path, paths["manifest"])
+
+    assert report["status"] == "FAIL"
+    assert report["analysis_status"] == "FAIL"
+    assert report["checkpoint_retention_status"] == "INCOMPLETE"
+    assert report["counts"]["valid_loss_metric_sources"] == 49
+    assert any(
+        "d2p06 at 340k" in issue and "no durable loss metrics cover" in issue
+        for issue in report["issues"]
+    )
+
+
+def test_notebook_loss_resolver_works_after_checkpoint_purge(tmp_path):
+    paths = _build_complete_audit_fixture(tmp_path)
+    pair = ("d2p06", 340_000)
+    manifest_rows = json.loads(paths["manifest"].read_text())
+    row = next(
+        item
+        for item in manifest_rows
+        if item["dataset_tag"] == pair[0]
+        and int(item["target_total_updates"]) == pair[1]
+    )
+
+    resolved = resolve_checkpoint_loss_metrics(
+        row,
+        durable_metrics_dir=paths["durable_metrics"][pair].parent,
+        log_dir=tmp_path / "missing-logs",
+    )
+
+    assert resolved.source_kind == "repaired_copy"
+    assert len(resolved.metrics["epoch_loss"]) == (
+        int(row["expected_final_epoch"])
+        - int(Path(row["previous_expected_checkpoint"]).name.rsplit("-", 1)[-1])
+    )
 
 
 def test_final_audit_fails_analysis_when_a_final_weight_is_missing(
