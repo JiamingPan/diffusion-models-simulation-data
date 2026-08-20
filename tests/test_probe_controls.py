@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -265,3 +266,91 @@ def test_c0_reports_separate_families_and_within_simulation_baseline():
         report["baseline"]["definition"]
         == "identity Omega_m spread across z-slices within each simulation"
     )
+
+
+def test_c4_split_is_deterministic_disjoint_and_complete():
+    from simdiff_eval.probe_controls import deterministic_cosmology_split
+
+    heldout = np.arange(900, 932)
+    derive_a, evaluate_a = deterministic_cosmology_split(heldout, seed=41)
+    derive_b, evaluate_b = deterministic_cosmology_split(heldout, seed=41)
+    np.testing.assert_array_equal(derive_a, derive_b)
+    np.testing.assert_array_equal(evaluate_a, evaluate_b)
+    assert len(derive_a) == len(evaluate_a) == 16
+    assert set(derive_a).isdisjoint(evaluate_a)
+    assert set(derive_a) | set(evaluate_a) == set(heldout)
+
+
+def test_gaussian_fit_recovers_known_smoothing_scale():
+    from simdiff_eval.probe_controls import fit_gaussian_smoothing
+
+    k = np.linspace(1.0, 20.0, 25)
+    expected_sigma = 0.08
+    ratio = np.exp(-(expected_sigma * k) ** 2)
+    fitted = fit_gaussian_smoothing(k, ratio)
+    assert fitted == pytest.approx(expected_sigma, rel=1e-3)
+
+
+def test_measured_transfer_builds_finite_real_degraded_maps():
+    from simdiff_eval.probe_controls import power_ratio_transfer
+    from simdiff_eval.probe_transforms import transfer_transform
+
+    rng = np.random.default_rng(51)
+    real = rng.normal(size=(6, 1, 16, 16)).astype(np.float32)
+    generated = (0.7 * real + 0.1 * rng.normal(size=real.shape)).astype(np.float32)
+    k, real_mean, generated_mean, ratio, transfer = power_ratio_transfer(
+        real,
+        generated,
+        nbins=8,
+    )
+    degraded, diagnostics = transfer_transform(k, transfer)(real)
+    assert degraded.shape == real.shape
+    assert degraded.dtype == np.float32
+    assert not np.iscomplexobj(degraded)
+    assert np.isfinite(degraded).all()
+    assert np.isfinite(real_mean).all()
+    assert np.isfinite(generated_mean).all()
+    assert np.isfinite(ratio).all()
+    assert diagnostics["out_of_range_fraction"] >= 0.0
+
+
+def test_generated_cosmology_subset_preserves_sample_target_pairing():
+    from simdiff_eval.probe_controls import subset_generated_cosmologies
+
+    heldout = np.array([900, 901, 902])
+    samples = np.arange(6 * 4, dtype=np.float32).reshape(6, 1, 2, 2)
+    theta = np.arange(3 * 6, dtype=np.float32).reshape(3, 6)
+    selected, repeated_theta, sim_index, sample_index = subset_generated_cosmologies(
+        samples,
+        theta,
+        heldout,
+        samples_per_cosmology=2,
+        selected_simulations=np.array([900, 902]),
+    )
+    np.testing.assert_array_equal(selected, samples[[0, 1, 4, 5]])
+    np.testing.assert_array_equal(repeated_theta, theta[[0, 0, 2, 2]])
+    np.testing.assert_array_equal(sim_index, [900, 900, 902, 902])
+    np.testing.assert_array_equal(sample_index, [0, 1, 0, 1])
+
+
+def test_c4_limitation_prevents_overreading_two_point_negative_result():
+    from simdiff_eval.probe_controls import C4_LIMITATION
+
+    assert "two-point" in C4_LIMITATION
+    assert "one-point PDF" in C4_LIMITATION
+    assert "higher-order" in C4_LIMITATION
+    assert "only" in C4_LIMITATION
+
+
+def test_degradation_control_cli_help_is_import_safe():
+    result = subprocess.run(
+        [sys.executable, "scripts/evaluate_probe_degradation_control.py", "--help"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "degraded real" in result.stdout
+    assert "--split-seed" in result.stdout
+    assert "--manifest" in result.stdout
