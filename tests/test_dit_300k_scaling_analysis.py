@@ -25,6 +25,7 @@ from scripts.dit_300k_scaling_analysis import (
     prepare_stitched_loss_history,
     require_exact_dataset_sweep,
     robust_log_ratio_outliers,
+    stage_loss_metrics_from_logs,
     summarize_filtered_power_ratios,
     streaming_nearest_neighbors,
     summarize_n50,
@@ -267,6 +268,45 @@ def test_checkpoint_metric_candidates_selects_only_the_exact_checkpoint(tmp_path
         local_metrics,
         exact_metrics,
     ]
+
+
+def test_stage_loss_metrics_from_logs_reconstructs_exact_epoch_interval(tmp_path: Path):
+    first_log = tmp_path / "train_stage100_0.out"
+    second_log = tmp_path / "train_stage200_0.out"
+    first_log.write_text(
+        "Epoch 99 - avg loss: 9.9\n"
+        "Epoch 100 - avg loss: 1.0\n"
+        "Epoch 101 — avg loss: 0.8\n"
+    )
+    second_log.write_text(
+        "Epoch 102 — avg loss: 6.0e-1\n"
+        "Epoch 103 - avg loss: 0.4\n"
+        "Epoch 104 - avg loss: 0.2\n"
+    )
+
+    metrics, used_paths = stage_loss_metrics_from_logs(
+        [second_log, first_log],
+        first_epoch=100,
+        final_epoch=103,
+    )
+
+    assert metrics["epoch_loss"] == pytest.approx([1.0, 0.8, 0.6, 0.4])
+    assert used_paths == (first_log, second_log)
+
+
+def test_stage_loss_metrics_from_logs_rejects_missing_epoch(tmp_path: Path):
+    log_path = tmp_path / "train_stage100_0.out"
+    log_path.write_text(
+        "Epoch 100 - avg loss: 1.0\n"
+        "Epoch 102 - avg loss: 0.6\n"
+    )
+
+    with pytest.raises(ValueError, match="missing 1 of 3 expected epochs.*101"):
+        stage_loss_metrics_from_logs(
+            [log_path],
+            first_epoch=100,
+            final_epoch=102,
+        )
 
 
 def test_prepare_stitched_loss_history_places_stage_local_metrics_on_global_axis():

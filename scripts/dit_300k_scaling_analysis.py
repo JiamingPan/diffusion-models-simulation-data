@@ -453,6 +453,67 @@ def checkpoint_metric_candidates(checkpoint_path: str | Path) -> list[Path]:
     return list(dict.fromkeys(candidates))
 
 
+_EPOCH_LOSS_PATTERN = re.compile(
+    r"^Epoch\s+(\d+)\s+.*?avg loss:\s*"
+    r"([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)\s*$"
+)
+
+
+def stage_loss_metrics_from_logs(
+    log_paths: Sequence[str | Path],
+    *,
+    first_epoch: int,
+    final_epoch: int,
+) -> tuple[dict[str, list[float]], tuple[Path, ...]]:
+    """Reconstruct one exact continuation stage from Slurm epoch-loss logs."""
+
+    first_epoch = int(first_epoch)
+    final_epoch = int(final_epoch)
+    if final_epoch < first_epoch:
+        raise ValueError(f"invalid epoch interval [{first_epoch}, {final_epoch}]")
+
+    existing = [Path(path) for path in log_paths if Path(path).is_file()]
+    if not existing:
+        raise FileNotFoundError("no Slurm training logs were found")
+    ordered_paths = sorted(
+        set(existing),
+        key=lambda path: (path.stat().st_mtime_ns, str(path)),
+    )
+
+    losses_by_epoch: dict[int, float] = {}
+    source_by_epoch: dict[int, Path] = {}
+    for path in ordered_paths:
+        with path.open(errors="replace") as handle:
+            for raw_line in handle:
+                match = _EPOCH_LOSS_PATTERN.match(raw_line.strip())
+                if match is None:
+                    continue
+                epoch = int(match.group(1))
+                if not first_epoch <= epoch <= final_epoch:
+                    continue
+                loss = float(match.group(2))
+                if not np.isfinite(loss):
+                    raise ValueError(f"non-finite loss for epoch {epoch} in {path}")
+                losses_by_epoch[epoch] = loss
+                source_by_epoch[epoch] = path
+
+    expected_epochs = list(range(first_epoch, final_epoch + 1))
+    missing_epochs = [epoch for epoch in expected_epochs if epoch not in losses_by_epoch]
+    if missing_epochs:
+        preview = ", ".join(str(epoch) for epoch in missing_epochs[:10])
+        if len(missing_epochs) > 10:
+            preview += ", ..."
+        raise ValueError(
+            f"missing {len(missing_epochs)} of {len(expected_epochs)} expected epochs "
+            f"in [{first_epoch}, {final_epoch}]: {preview}"
+        )
+
+    used_path_set = {source_by_epoch[epoch] for epoch in expected_epochs}
+    used_paths = tuple(path for path in ordered_paths if path in used_path_set)
+    metrics = {"epoch_loss": [losses_by_epoch[epoch] for epoch in expected_epochs]}
+    return metrics, used_paths
+
+
 def prepare_stitched_loss_history(
     segments: Sequence[tuple[Mapping[str, Any], int, int]],
     *,
