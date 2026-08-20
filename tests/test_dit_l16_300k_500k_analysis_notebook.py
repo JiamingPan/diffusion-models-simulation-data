@@ -126,6 +126,47 @@ def test_notebook_enforces_complete_audited_checkpoint_specific_inputs():
     assert "Final artifact audit: **PASS_WITH_WARNINGS**" not in source
 
 
+def test_notebook_audits_corrected_physics_definitions():
+    source = notebook_source()
+    required = (
+        "corrected_metric_audit",
+        "Corrected physical-statistics definition audit",
+        "k_max",
+        "real_pixel_coverage",
+        "generated_pixel_coverage",
+        "hist_l1_lo",
+        "hist_l1_hi",
+        "pk_log10_mae_lo",
+        "pk_log10_mae_hi",
+        "real_vs_real_hist_l1",
+        "real_vs_real_pk_log10_mae",
+        "bootstrap_resamples",
+    )
+    for text in required:
+        assert text in source
+
+
+def test_evidence_summary_is_uncertainty_aware_and_includes_sensitivity_results():
+    source = notebook_source()
+    required = (
+        "results_digest",
+        "results_digest.csv",
+        "classify_interval_change",
+        "CI-separated improvement",
+        "CI-separated degradation",
+        "CI-overlapping / unresolved",
+        "hist_reaches_real_floor_500k",
+        "pk_reaches_real_floor_500k",
+        "filtered_hist_l1_500k",
+        "filtered_pk_log10_mae_500k",
+        "outliers_removed_500k",
+        "PCA_novelty_delta_500k_minus_300k",
+        "SSCD_novelty_delta_500k_minus_300k",
+    )
+    for text in required:
+        assert text in source
+
+
 def test_notebook_contains_every_requested_diagnostic():
     source = notebook_source()
     required = (
