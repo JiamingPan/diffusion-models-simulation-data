@@ -163,6 +163,29 @@ def _audit_physics_outputs(project_dir: Path) -> tuple[dict[str, int], list[str]
         counts["physics_summary_rows"] = len(rows)
         if len(rows) != 60 or pairs != expected_pairs:
             issues.append("physics summary does not contain all 60 dataset/checkpoint rows")
+        low_coverage: list[tuple[str, int]] = []
+        invalid_coverage: list[tuple[str, int]] = []
+        for row in rows:
+            pair = (row.get("dataset_tag", ""), int(row.get("updates_k", -1)))
+            try:
+                coverage = float(row["generated_pixel_coverage"])
+            except (KeyError, TypeError, ValueError):
+                invalid_coverage.append(pair)
+                continue
+            if not np.isfinite(coverage):
+                invalid_coverage.append(pair)
+            elif coverage < 0.999:
+                low_coverage.append(pair)
+        if invalid_coverage:
+            issues.append(
+                "missing or invalid generated pixel coverage: "
+                f"{sorted(invalid_coverage)}"
+            )
+        if low_coverage:
+            issues.append(
+                "generated pixel coverage below 0.999: "
+                f"{sorted(low_coverage)}"
+            )
 
     if not selected_path.is_file():
         issues.append(f"missing selected-bin table: {selected_path}")

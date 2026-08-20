@@ -7,6 +7,31 @@ from dataclasses import dataclass
 import numpy as np
 
 
+def histogram_probability_and_coverage(
+    values: np.ndarray,
+    edges: np.ndarray,
+) -> tuple[np.ndarray, float]:
+    """Return in-range histogram probabilities and the retained pixel fraction."""
+    values_arr = np.asarray(values)
+    edges_arr = np.asarray(edges, dtype=np.float64)
+    if values_arr.size < 1:
+        raise ValueError("Cannot histogram an empty array.")
+    if not np.isfinite(values_arr).all():
+        raise ValueError("Histogram values must all be finite.")
+    if edges_arr.ndim != 1 or len(edges_arr) < 2:
+        raise ValueError("Histogram edges must be a one-dimensional array of length >= 2.")
+    if not np.isfinite(edges_arr).all() or np.any(np.diff(edges_arr) <= 0):
+        raise ValueError("Histogram edges must be finite and strictly increasing.")
+
+    histogram = np.histogram(values_arr, bins=edges_arr)[0]
+    in_range_count = int(histogram.sum())
+    if in_range_count < 1:
+        raise ValueError("No values fall inside the requested histogram range.")
+    probability = histogram.astype(np.float64) / in_range_count
+    coverage = in_range_count / int(values_arr.size)
+    return probability, float(coverage)
+
+
 def radial_power_spectrum_2d(
     field: np.ndarray,
     nbins: int = 25,
