@@ -25,6 +25,7 @@ from simdiff_eval.dit_diagnostics import (
     patch_boundary_statistics,
     selected_power_bin_statistics,
     summarize_patch_boundary_series,
+    two_sample_selected_power_ratio_statistics,
 )
 from simdiff_eval.io import iter_real_reference_batches_from_config
 from simdiff_eval.metrics import (
@@ -43,6 +44,7 @@ SUMMARY_NAME = "nf_generalize_fig2_dit_l16_continue500k_v2_physics_summary.csv"
 SELECTED_NAME = "nf_generalize_fig2_dit_l16_continue500k_v2_pk_selected_bins.csv"
 PATCH_NAME = "nf_generalize_fig2_dit_l16_continue500k_v2_patch_boundaries.csv"
 CURVES_NAME = "nf_generalize_fig2_dit_l16_continue500k_v2_curves.npz"
+SELECTED_K_BINS = (20, 40, 60)
 
 
 def _project_path(project_dir: Path, value: str | Path) -> Path:
@@ -142,6 +144,7 @@ def _stream_reference(
     pk_count = np.zeros(pk_nbins, dtype=np.int64)
     kbins: np.ndarray | None = None
     patch_parts: list[dict[str, np.ndarray]] = []
+    selected_pk_parts: list[np.ndarray] = []
     n_images = 0
     total_pixel_count = 0
     for batch in iter_real_reference_batches_from_config(
@@ -164,6 +167,9 @@ def _stream_reference(
         finite = np.isfinite(spectra)
         pk_sum += np.where(finite, spectra, 0.0).sum(axis=0)
         pk_count += finite.sum(axis=0)
+        if max(SELECTED_K_BINS) >= spectra.shape[1]:
+            raise ValueError("power spectrum has too few bins for selected-k analysis")
+        selected_pk_parts.append(spectra[:, SELECTED_K_BINS])
         patch_parts.append(patch_boundary_per_image(array, patch_size=8))
         n_images += len(array)
     if n_images < 1 or kbins is None or np.any(pk_count == 0):
@@ -178,6 +184,7 @@ def _stream_reference(
         "histogram_probability": probability,
         "pixel_coverage": float(in_range_count / total_pixel_count),
         "pk_mean": pk_sum / pk_count,
+        "selected_pk": np.concatenate(selected_pk_parts, axis=0),
         "kbins": kbins,
         "patch_series": patch_series,
         "patch_summary": summarize_patch_boundary_series(patch_series, patch_size=8),
@@ -417,15 +424,16 @@ def analyze(args: argparse.Namespace) -> dict[str, Path]:
         ratio_samples = generated_pk / np.clip(reference["pk_mean"][None, :], 1.0e-30, None)
         raw_stats = selected_power_bin_statistics(
             generated_pk,
-            bin_indices=(20, 40, 60),
+            bin_indices=SELECTED_K_BINS,
             n_resamples=int(args.bootstrap_resamples),
             seed=int(args.seed),
         )
-        ratio_stats = selected_power_bin_statistics(
-            ratio_samples,
-            bin_indices=(20, 40, 60),
+        ratio_stats = two_sample_selected_power_ratio_statistics(
+            generated_pk,
+            reference["selected_pk"],
+            bin_indices=SELECTED_K_BINS,
             n_resamples=int(args.bootstrap_resamples),
-            seed=int(args.seed) + 1000,
+            seed=int(args.seed),
         )
         for raw, ratio in zip(raw_stats, ratio_stats):
             index = int(raw["k_bin"])
@@ -438,8 +446,13 @@ def analyze(args: argparse.Namespace) -> dict[str, Path]:
                     "k_bin": index,
                     "k_value": float(kbins[index]),
                     "real_reference_mean": float(reference["pk_mean"][index]),
+                    "real_pk_sem": ratio["real_pk_sem"],
                     **{f"generated_{key}": value for key, value in raw.items() if key != "k_bin"},
-                    **{f"ratio_{key}": value for key, value in ratio.items() if key not in {"k_bin", "n_samples"}},
+                    **{
+                        f"ratio_{key}": value
+                        for key, value in ratio.items()
+                        if key not in {"k_bin", "real_pk_sem"}
+                    },
                 }
             )
 

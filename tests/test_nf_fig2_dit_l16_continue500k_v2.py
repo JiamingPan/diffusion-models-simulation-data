@@ -641,6 +641,9 @@ def test_physics_analysis_is_exact_subset_and_fails_on_missing_samples():
     assert '"bootstrap_resamples": int(args.bootstrap_resamples)' in source
     assert '"bootstrap_seed": int(args.seed)' in source
     assert "selected_power_bin_statistics" in source
+    assert "two_sample_selected_power_ratio_statistics" in source
+    assert '"real_pk_sem": ratio["real_pk_sem"]' in source
+    assert "seed=int(args.seed) + 1000" not in source
     assert "patch_boundary_statistics" in source
     assert "--baseline-manifest" in source
     assert "skip-missing" not in source

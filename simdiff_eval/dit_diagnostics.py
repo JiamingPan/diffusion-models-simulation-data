@@ -186,6 +186,87 @@ def selected_power_bin_statistics(
     return rows
 
 
+def two_sample_selected_power_ratio_statistics(
+    generated_power_spectra: np.ndarray,
+    real_selected_power: np.ndarray,
+    *,
+    bin_indices: Iterable[int] = (20, 40, 60),
+    confidence: float = 0.95,
+    n_resamples: int = 2000,
+    seed: int = 123,
+) -> list[dict[str, float | int]]:
+    """Bootstrap selected-k generated/real ratios by resampling both samples."""
+    generated = np.asarray(generated_power_spectra, dtype=np.float64)
+    real = np.asarray(real_selected_power, dtype=np.float64)
+    indices = tuple(int(index) for index in bin_indices)
+    if generated.ndim != 2 or generated.shape[0] < 1:
+        raise ValueError("generated_power_spectra must have shape (n_samples, n_bins)")
+    if real.ndim != 2 or real.shape != (real.shape[0], len(indices)) or real.shape[0] < 1:
+        raise ValueError(
+            "real_selected_power must have shape (n_real_samples, len(bin_indices))"
+        )
+    if not np.isfinite(generated).all() or not np.isfinite(real).all():
+        raise ValueError("selected power samples must be finite")
+    n_resamples = int(n_resamples)
+    if n_resamples < 1:
+        raise ValueError("n_resamples must be positive")
+
+    rows: list[dict[str, float | int]] = []
+    for offset, index in enumerate(indices):
+        if index < 0 or index >= generated.shape[1]:
+            raise ValueError(
+                f"k-bin {index} is outside the valid range 0..{generated.shape[1] - 1}"
+            )
+        generated_values = generated[:, index]
+        real_values = real[:, offset]
+        real_mean = float(real_values.mean())
+        if real_mean <= 0:
+            raise ValueError(f"real mean power at k-bin {index} must be positive")
+
+        rng = np.random.default_rng(int(seed) + offset)
+        ratios = np.empty(n_resamples, dtype=np.float64)
+        max_elements = 2_000_000
+        chunk_size = max(
+            1,
+            max_elements // (len(generated_values) + len(real_values)),
+        )
+        for start in range(0, n_resamples, chunk_size):
+            stop = min(n_resamples, start + chunk_size)
+            generated_indices = rng.integers(
+                0,
+                len(generated_values),
+                size=(stop - start, len(generated_values)),
+            )
+            real_indices = rng.integers(
+                0,
+                len(real_values),
+                size=(stop - start, len(real_values)),
+            )
+            generated_means = generated_values[generated_indices].mean(axis=1)
+            real_means = real_values[real_indices].mean(axis=1)
+            if np.any(real_means <= 0):
+                raise ValueError(f"bootstrap real mean at k-bin {index} is not positive")
+            ratios[start:stop] = generated_means / real_means
+
+        interval = _percentile_interval(ratios, confidence)
+        rows.append(
+            {
+                "k_bin": index,
+                "n_generated": int(len(generated_values)),
+                "n_real": int(len(real_values)),
+                "mean": float(generated_values.mean() / real_mean),
+                "mean_ci_low": interval[0],
+                "mean_ci_high": interval[1],
+                "real_pk_sem": (
+                    float(real_values.std(ddof=1) / np.sqrt(len(real_values)))
+                    if len(real_values) > 1
+                    else 0.0
+                ),
+            }
+        )
+    return rows
+
+
 def one_point_l1_common_bins(
     real: np.ndarray,
     generated: np.ndarray,
