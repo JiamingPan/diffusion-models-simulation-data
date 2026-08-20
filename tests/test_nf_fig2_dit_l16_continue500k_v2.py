@@ -634,6 +634,12 @@ def test_physics_analysis_is_exact_subset_and_fails_on_missing_samples():
     assert '"hist_bins": int(args.hist_bins)' in source
     assert '"hist_min": float(hist_edges[0])' in source
     assert '"hist_max": float(hist_edges[-1])' in source
+    assert '"hist_l1_lo": hist_interval[0]' in source
+    assert '"hist_l1_hi": hist_interval[1]' in source
+    assert '"pk_log10_mae_lo": power_interval[0]' in source
+    assert '"pk_log10_mae_hi": power_interval[1]' in source
+    assert '"bootstrap_resamples": int(args.bootstrap_resamples)' in source
+    assert '"bootstrap_seed": int(args.seed)' in source
     assert "selected_power_bin_statistics" in source
     assert "patch_boundary_statistics" in source
     assert "--baseline-manifest" in source

@@ -49,6 +49,100 @@ def bootstrap_mean_interval(
     return float(low), float(high)
 
 
+def _percentile_interval(
+    values: np.ndarray,
+    confidence: float,
+) -> tuple[float, float]:
+    confidence = float(confidence)
+    if not 0.0 < confidence < 1.0:
+        raise ValueError("confidence must lie strictly between zero and one")
+    alpha = 0.5 * (1.0 - confidence)
+    low, high = np.quantile(values, [alpha, 1.0 - alpha])
+    return float(low), float(high)
+
+
+def bootstrap_histogram_l1_interval(
+    generated: np.ndarray,
+    reference_probability: np.ndarray,
+    hist_edges: np.ndarray,
+    *,
+    confidence: float = 0.95,
+    n_resamples: int = 2000,
+    seed: int = 123,
+) -> tuple[float, float]:
+    """Bootstrap map-level uncertainty in one-point histogram L1 distance."""
+    images = np.asarray(generated)
+    reference = _finite_vector(reference_probability, "reference_probability")
+    edges = _finite_vector(hist_edges, "hist_edges")
+    if images.ndim < 2 or images.shape[0] < 1:
+        raise ValueError("generated must contain at least one image")
+    if not np.isfinite(images).all():
+        raise ValueError("generated contains non-finite values")
+    if len(edges) != len(reference) + 1 or np.any(np.diff(edges) <= 0):
+        raise ValueError("hist_edges must define reference_probability bins")
+    if not np.isclose(reference.sum(), 1.0):
+        raise ValueError("reference_probability must sum to one")
+    n_resamples = int(n_resamples)
+    if n_resamples < 1:
+        raise ValueError("n_resamples must be positive")
+
+    counts = np.stack(
+        [np.histogram(image, bins=edges)[0] for image in images]
+    ).astype(np.float64)
+    if counts.sum() < 1:
+        raise ValueError("generated images contain no in-range histogram values")
+    rng = np.random.default_rng(seed)
+    statistics = np.empty(n_resamples, dtype=np.float64)
+    max_elements = 2_000_000
+    chunk_size = max(1, max_elements // (len(images) * len(reference)))
+    for start in range(0, n_resamples, chunk_size):
+        stop = min(n_resamples, start + chunk_size)
+        indices = rng.integers(0, len(images), size=(stop - start, len(images)))
+        resampled_counts = counts[indices].sum(axis=1)
+        totals = resampled_counts.sum(axis=1)
+        if np.any(totals <= 0):
+            raise ValueError("a bootstrap resample contains no in-range pixels")
+        probabilities = resampled_counts / totals[:, None]
+        statistics[start:stop] = np.abs(probabilities - reference).sum(axis=1)
+    return _percentile_interval(statistics, confidence)
+
+
+def bootstrap_power_log10_mae_interval(
+    generated_power_spectra: np.ndarray,
+    real_mean_power: np.ndarray,
+    *,
+    confidence: float = 0.95,
+    n_resamples: int = 2000,
+    seed: int = 123,
+) -> tuple[float, float]:
+    """Bootstrap map-level uncertainty in mean absolute log10 power error."""
+    spectra = np.asarray(generated_power_spectra, dtype=np.float64)
+    real_mean = _finite_vector(real_mean_power, "real_mean_power")
+    if spectra.ndim != 2 or spectra.shape[0] < 1:
+        raise ValueError("generated_power_spectra must have shape (n_samples, n_bins)")
+    if spectra.shape[1] != len(real_mean):
+        raise ValueError("generated and real power spectra must have the same bins")
+    if not np.isfinite(spectra).all() or np.any(real_mean <= 0):
+        raise ValueError("power spectra must be finite and real mean power positive")
+    n_resamples = int(n_resamples)
+    if n_resamples < 1:
+        raise ValueError("n_resamples must be positive")
+
+    rng = np.random.default_rng(seed)
+    statistics = np.empty(n_resamples, dtype=np.float64)
+    max_elements = 2_000_000
+    chunk_size = max(1, max_elements // spectra.size)
+    for start in range(0, n_resamples, chunk_size):
+        stop = min(n_resamples, start + chunk_size)
+        indices = rng.integers(0, len(spectra), size=(stop - start, len(spectra)))
+        means = spectra[indices].mean(axis=1)
+        ratios = means / real_mean[None, :]
+        statistics[start:stop] = np.abs(
+            np.log10(np.clip(ratios, 1.0e-30, None))
+        ).mean(axis=1)
+    return _percentile_interval(statistics, confidence)
+
+
 def selected_power_bin_statistics(
     power_spectra: np.ndarray,
     bin_indices: Iterable[int] = (20, 40, 60),
