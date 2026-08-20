@@ -243,10 +243,28 @@ The black one-point and power-spectrum references are recomputed from the **exac
         _code(
             "l16c500-physical-summary",
             r"""
+def intervals_overlap(low_a, high_a, low_b, high_b):
+    values = np.asarray([low_a, high_a, low_b, high_b], dtype=float)
+    if not np.isfinite(values).all():
+        raise RuntimeError('Bootstrap interval contains a non-finite endpoint.')
+    return max(low_a, low_b) <= min(high_a, high_b)
+
+
 def _metric_heatmap(axis, frame, column, title, colorbar_label):
+    low_column = f'{column}_lo'
+    high_column = f'{column}_hi'
+    missing = [name for name in (column, low_column, high_column) if name not in frame.columns]
+    if missing:
+        raise KeyError(f'Missing mandatory heatmap columns: {missing}')
     matrix = (
         frame.pivot(index='updates_k', columns='dataset_size', values=column)
         .reindex(index=CONT_UPDATES_K, columns=[2**i for i in range(6, 16)])
+    )
+    low = frame.pivot(index='updates_k', columns='dataset_size', values=low_column).reindex(
+        index=CONT_UPDATES_K, columns=[2**i for i in range(6, 16)]
+    )
+    high = frame.pivot(index='updates_k', columns='dataset_size', values=high_column).reindex(
+        index=CONT_UPDATES_K, columns=[2**i for i in range(6, 16)]
     )
     image = axis.imshow(matrix.to_numpy(dtype=float), aspect='auto', origin='lower', cmap='magma')
     axis.set_title(title, fontsize=17, fontweight='semibold')
@@ -254,7 +272,29 @@ def _metric_heatmap(axis, frame, column, title, colorbar_label):
     axis.set_ylabel('Optimizer updates')
     axis.set_xticks(range(10), [rf'$2^{{{i}}}$' for i in range(6, 16)])
     axis.set_yticks(range(6), [f'{value}k' for value in CONT_UPDATES_K])
+    for column_index, dataset_size in enumerate([2**i for i in range(6, 16)]):
+        overlap = intervals_overlap(
+            low.loc[300, dataset_size], high.loc[300, dataset_size],
+            low.loc[500, dataset_size], high.loc[500, dataset_size],
+        )
+        axis.text(
+            column_index, CONT_UPDATES_K.index(500), 'o' if overlap else 'x',
+            ha='center', va='center', color='white', fontsize=14, fontweight='bold',
+        )
+    axis.text(
+        0.0, -0.20, '500k row: o = overlapping, x = separated 300k/500k 95% CIs',
+        transform=axis.transAxes, fontsize=10.5, color='0.25',
+    )
     plt.colorbar(image, ax=axis, shrink=0.85, label=colorbar_label)
+
+required_ci_columns = (
+    'hist_l1_lo', 'hist_l1_hi', 'pk_log10_mae_lo', 'pk_log10_mae_hi',
+)
+missing_ci_columns = [
+    column for column in required_ci_columns if column not in continuation_physics.columns
+]
+if missing_ci_columns:
+    raise KeyError(f'Missing mandatory bootstrap CI columns: {missing_ci_columns}')
 
 fig, axes = plt.subplots(1, 2, figsize=(17, 6.4), constrained_layout=True)
 _metric_heatmap(axes[0], continuation_physics, 'hist_l1', 'One-point PDF error', r'$L_1$ error')
@@ -269,6 +309,14 @@ hist_edges = continuation_curves['histogram_edges']
 hist_centers = 0.5 * (hist_edges[:-1] + hist_edges[1:])
 
 def plot_physical_checkpoint(updates_k: int):
+    checkpoint_ratios = [
+        np.asarray(continuation_curves[f'{tag}_{updates_k}k_pk_ratio'], dtype=float)
+        for tag in CONT_TAGS
+    ]
+    ratio_values = np.concatenate([ratio.reshape(-1) for ratio in checkpoint_ratios])
+    if not np.isfinite(ratio_values).all() or np.any(ratio_values <= 0):
+        raise RuntimeError(f'Invalid non-positive P(k) ratio at {updates_k}k updates.')
+    ratio_limits = (float(ratio_values.min() / 1.15), float(ratio_values.max() * 1.15))
     fig, axes = plt.subplots(4, 5, figsize=(19, 13.5), constrained_layout=True)
     for column, tag in enumerate(CONT_TAGS[:5]):
         for block, current_tag in enumerate((tag, CONT_TAGS[column + 5])):
@@ -282,7 +330,8 @@ def plot_physical_checkpoint(updates_k: int):
             kbins = continuation_curves[f'{key}_kbins']
             axes[row + 1, column].plot(kbins, continuation_curves[f'{key}_pk_ratio'], color='#b83280', marker='o', ms=2.8, lw=1.8)
             axes[row + 1, column].axhline(1.0, color='black', lw=1.1, ls='--')
-            axes[row + 1, column].set_ylim(0, 3.7)
+            axes[row + 1, column].set_yscale('log')
+            axes[row + 1, column].set_ylim(*ratio_limits)
             axes[row + 1, column].set_xlabel(r'$k$ bin')
     axes[0, 0].set_ylabel('Pixel probability')
     axes[1, 0].set_ylabel(r'$P_{generated}/P_{real}$')
