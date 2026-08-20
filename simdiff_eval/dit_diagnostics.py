@@ -267,6 +267,52 @@ def two_sample_selected_power_ratio_statistics(
     return rows
 
 
+def split_reference_physics_floor(
+    *,
+    histogram_a: np.ndarray,
+    histogram_b: np.ndarray,
+    pk_sum_a: np.ndarray,
+    pk_count_a: np.ndarray,
+    pk_sum_b: np.ndarray,
+    pk_count_b: np.ndarray,
+    n_images_a: int,
+    n_images_b: int,
+) -> dict[str, float | int]:
+    """Compute real-vs-real fidelity floors from two streaming half summaries."""
+    hist_a = _finite_vector(histogram_a, "histogram_a")
+    hist_b = _finite_vector(histogram_b, "histogram_b")
+    sum_a = _finite_vector(pk_sum_a, "pk_sum_a")
+    sum_b = _finite_vector(pk_sum_b, "pk_sum_b")
+    count_a = _finite_vector(pk_count_a, "pk_count_a")
+    count_b = _finite_vector(pk_count_b, "pk_count_b")
+    if len(hist_a) != len(hist_b):
+        raise ValueError("split histograms must have the same bins")
+    if not (len(sum_a) == len(sum_b) == len(count_a) == len(count_b)):
+        raise ValueError("split power-spectrum summaries must have the same bins")
+    if hist_a.sum() <= 0 or hist_b.sum() <= 0:
+        raise ValueError("each split histogram must contain in-range pixels")
+    if np.any(count_a <= 0) or np.any(count_b <= 0):
+        raise ValueError("each split power-spectrum bin must contain observations")
+    n_images_a = int(n_images_a)
+    n_images_b = int(n_images_b)
+    if n_images_a < 1 or n_images_b < 1:
+        raise ValueError("each real-reference split must contain images")
+
+    probability_a = hist_a / hist_a.sum()
+    probability_b = hist_b / hist_b.sum()
+    mean_a = sum_a / count_a
+    mean_b = sum_b / count_b
+    if np.any(mean_a <= 0) or np.any(mean_b <= 0):
+        raise ValueError("split mean power must be positive")
+    ratio = mean_a / mean_b
+    return {
+        "real_half_a_count": n_images_a,
+        "real_half_b_count": n_images_b,
+        "real_vs_real_hist_l1": float(np.abs(probability_a - probability_b).sum()),
+        "real_vs_real_pk_log10_mae": float(np.abs(np.log10(ratio)).mean()),
+    }
+
+
 def one_point_l1_common_bins(
     real: np.ndarray,
     generated: np.ndarray,

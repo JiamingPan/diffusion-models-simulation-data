@@ -24,6 +24,7 @@ from simdiff_eval.dit_diagnostics import (
     patch_boundary_per_image,
     patch_boundary_statistics,
     selected_power_bin_statistics,
+    split_reference_physics_floor,
     summarize_patch_boundary_series,
     two_sample_selected_power_ratio_statistics,
 )
@@ -147,6 +148,10 @@ def _stream_reference(
     selected_pk_parts: list[np.ndarray] = []
     n_images = 0
     total_pixel_count = 0
+    split_histogram = np.zeros((2, len(hist_edges) - 1), dtype=np.int64)
+    split_pk_sum = np.zeros((2, pk_nbins), dtype=np.float64)
+    split_pk_count = np.zeros((2, pk_nbins), dtype=np.int64)
+    split_image_count = np.zeros(2, dtype=np.int64)
     for batch in iter_real_reference_batches_from_config(
         config_path, raw_batch_size=raw_batch_size
     ):
@@ -167,6 +172,21 @@ def _stream_reference(
         finite = np.isfinite(spectra)
         pk_sum += np.where(finite, spectra, 0.0).sum(axis=0)
         pk_count += finite.sum(axis=0)
+        global_indices = n_images + np.arange(len(array))
+        for split_index in (0, 1):
+            split_mask = (global_indices % 2) == split_index
+            if not np.any(split_mask):
+                continue
+            split_histogram[split_index] += np.histogram(
+                array[split_mask], bins=hist_edges
+            )[0]
+            split_finite = finite[split_mask]
+            split_spectra = spectra[split_mask]
+            split_pk_sum[split_index] += np.where(
+                split_finite, split_spectra, 0.0
+            ).sum(axis=0)
+            split_pk_count[split_index] += split_finite.sum(axis=0)
+            split_image_count[split_index] += int(split_mask.sum())
         if max(SELECTED_K_BINS) >= spectra.shape[1]:
             raise ValueError("power spectrum has too few bins for selected-k analysis")
         selected_pk_parts.append(spectra[:, SELECTED_K_BINS])
@@ -179,6 +199,16 @@ def _stream_reference(
         raise ValueError(f"reference histogram has no in-range pixels: {config_path}")
     probability = histogram / in_range_count
     patch_series = _concat_patch_series(patch_parts)
+    real_floor = split_reference_physics_floor(
+        histogram_a=split_histogram[0],
+        histogram_b=split_histogram[1],
+        pk_sum_a=split_pk_sum[0],
+        pk_count_a=split_pk_count[0],
+        pk_sum_b=split_pk_sum[1],
+        pk_count_b=split_pk_count[1],
+        n_images_a=int(split_image_count[0]),
+        n_images_b=int(split_image_count[1]),
+    )
     return {
         "n_images": n_images,
         "histogram_probability": probability,
@@ -189,6 +219,7 @@ def _stream_reference(
         "patch_series": patch_series,
         "patch_summary": summarize_patch_boundary_series(patch_series, patch_size=8),
         "data_signature": _data_signature(config_path),
+        **real_floor,
     }
 
 
@@ -412,6 +443,10 @@ def analyze(args: argparse.Namespace) -> dict[str, Path]:
                 "pk_log10_mae_hi": power_interval[1],
                 "bootstrap_resamples": int(args.bootstrap_resamples),
                 "bootstrap_seed": int(args.seed),
+                "real_vs_real_hist_l1": reference["real_vs_real_hist_l1"],
+                "real_vs_real_pk_log10_mae": reference["real_vs_real_pk_log10_mae"],
+                "n_real_half_a": reference["real_half_a_count"],
+                "n_real_half_b": reference["real_half_b_count"],
                 **power,
                 "patch_boundary_ratio": patch["boundary_to_control_ratio"],
                 "scheduler": audit["scheduler"],
