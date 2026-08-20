@@ -569,6 +569,20 @@ def test_metric_repair_submission_reruns_only_metrics_and_final_audit():
     assert "sample_nf_generalize" not in text
 
 
+def test_final_audit_job_accepts_analysis_ready_retention_warning():
+    script = (
+        ROOT
+        / "scripts"
+        / "slurm"
+        / "audit_nf_generalize_fig2_dit_l16_continue500k_v2.sbatch"
+    )
+    text = script.read_text()
+
+    assert 'report.get("analysis_status") != "PASS"' in text
+    assert "checkpoint_retention_status" in text
+    assert 'report.get("status") != "PASS"' not in text
+
+
 def test_dpm_sampling_array_uses_fixed_auditable_protocol():
     script = (
         ROOT
@@ -918,7 +932,19 @@ def _build_complete_audit_fixture(tmp_path: Path) -> dict[str, Path]:
     return {
         "manifest": manifest,
         "sample": tmp_path / analysis_rows[0]["sample_path"],
-        "checkpoint": Path(continuation_rows[0]["expected_checkpoint"]),
+        "intermediate_checkpoints": [
+            Path(row["expected_checkpoint"])
+            for row in continuation_rows
+            if int(row["target_total_updates"]) < max(prep.TARGET_UPDATES)
+        ],
+        "final_checkpoint": Path(
+            next(
+                row["expected_checkpoint"]
+                for row in continuation_rows
+                if row["dataset_tag"] == EXPECTED_TAGS[0]
+                and int(row["target_total_updates"]) == max(prep.TARGET_UPDATES)
+            )
+        ),
         "pca": table_dir
         / f"{prep.CONTINUE_SWEEP_NAME}_300k_pca_full_nn_metrics.csv",
         "sscd": table_dir
@@ -934,13 +960,59 @@ def test_final_audit_passes_only_complete_attributable_sweep(tmp_path, monkeypat
     report = final_audit.audit_results(tmp_path, paths["manifest"])
 
     assert report["status"] == "PASS"
+    assert report["analysis_status"] == "PASS"
+    assert report["checkpoint_retention_status"] == "PASS"
     assert report["counts"]["valid_checkpoints"] == 50
+    assert report["counts"]["valid_final_checkpoints"] == 10
+    assert report["counts"]["valid_intermediate_checkpoints"] == 40
     assert report["counts"]["valid_sample_files"] == 64
     assert report["counts"]["valid_metric_tables"] == 12
     saved = json.loads(
         (tmp_path / "local" / prep.CONTINUE_SWEEP_NAME / "final_audit.json").read_text()
     )
     assert saved["status"] == "PASS"
+
+
+def test_final_audit_allows_analysis_when_only_intermediate_weights_are_missing(
+    tmp_path, monkeypatch
+):
+    import shutil
+
+    paths = _build_complete_audit_fixture(tmp_path)
+    monkeypatch.setattr(final_audit, "EXPECTED_SAMPLE_SHAPE", (1, 1, 2, 2))
+    for checkpoint in paths["intermediate_checkpoints"]:
+        shutil.rmtree(checkpoint)
+
+    report = final_audit.audit_results(tmp_path, paths["manifest"])
+
+    assert report["status"] == "PASS_WITH_WARNINGS"
+    assert report["analysis_status"] == "PASS"
+    assert report["checkpoint_retention_status"] == "INCOMPLETE"
+    assert report["counts"]["valid_checkpoints"] == 10
+    assert report["counts"]["valid_final_checkpoints"] == 10
+    assert report["counts"]["valid_intermediate_checkpoints"] == 0
+    assert report["counts"]["missing_intermediate_checkpoints"] == 40
+    assert len(report["retention_missing_paths"]) == 40
+    assert not report["issues"]
+    assert not report["missing_paths"]
+
+
+def test_final_audit_fails_analysis_when_a_final_weight_is_missing(
+    tmp_path, monkeypatch
+):
+    import shutil
+
+    paths = _build_complete_audit_fixture(tmp_path)
+    monkeypatch.setattr(final_audit, "EXPECTED_SAMPLE_SHAPE", (1, 1, 2, 2))
+    shutil.rmtree(paths["final_checkpoint"])
+
+    report = final_audit.audit_results(tmp_path, paths["manifest"])
+
+    assert report["status"] == "FAIL"
+    assert report["analysis_status"] == "FAIL"
+    assert report["checkpoint_retention_status"] == "INCOMPLETE"
+    assert report["counts"]["valid_final_checkpoints"] == 9
+    assert str(paths["final_checkpoint"]) in report["missing_paths"]
 
 
 def test_final_audit_rejects_low_generated_pixel_coverage(tmp_path, monkeypatch):
@@ -960,7 +1032,9 @@ def test_final_audit_rejects_low_generated_pixel_coverage(tmp_path, monkeypatch)
     )
 
 
-@pytest.mark.parametrize("missing_kind", ["checkpoint", "sample", "pca", "sscd", "physics"])
+@pytest.mark.parametrize(
+    "missing_kind", ["final_checkpoint", "sample", "pca", "sscd", "physics"]
+)
 def test_final_audit_fails_closed_for_missing_artifact(
     tmp_path, monkeypatch, missing_kind
 ):

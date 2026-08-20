@@ -99,9 +99,12 @@ def test_notebook_enforces_complete_audited_checkpoint_specific_inputs():
     source = notebook_source()
     required = (
         "final_audit.json",
-        "status') != 'PASS'",
+        "analysis_status') != 'PASS'",
+        "checkpoint_retention_status",
         "expected_metric_tables",
         "valid_metric_tables",
+        "expected_final_checkpoints",
+        "valid_final_checkpoints",
         "analysis_manifest.json",
         "expected_pairs",
         "expected_sample_label",
@@ -119,6 +122,8 @@ def test_notebook_enforces_complete_audited_checkpoint_specific_inputs():
         assert str(updates) in source
     for tag in EXPECTED_TAGS:
         assert tag in source
+    assert "'valid_checkpoints': 50" not in source
+    assert "Final artifact audit: **PASS_WITH_WARNINGS**" not in source
 
 
 def test_notebook_contains_every_requested_diagnostic():

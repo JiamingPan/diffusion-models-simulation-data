@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Fail closed unless every DiT-L16 continuation artifact is complete and attributable."""
+"""Audit DiT-L16 analysis readiness separately from checkpoint retention."""
 
 from __future__ import annotations
 
@@ -264,11 +264,16 @@ def audit_results(project_dir: Path, manifest_path: Path) -> dict[str, Any]:
     report: dict[str, Any] = {
         "sweep_name": SWEEP,
         "status": "FAIL",
+        "analysis_status": "FAIL",
+        "checkpoint_retention_status": "INCOMPLETE",
         "counts": {},
         "missing_paths": [],
+        "retention_missing_paths": [],
         "provenance_mismatches": [],
         "duplicate_hashes": [],
         "issues": [],
+        "retention_issues": [],
+        "warnings": [],
     }
 
     try:
@@ -282,21 +287,53 @@ def audit_results(project_dir: Path, manifest_path: Path) -> dict[str, Any]:
         _atomic_json(report_path, report)
         return report
 
-    checkpoint_issues: list[str] = []
+    final_target = max(prep.TARGET_UPDATES)
     valid_checkpoints = 0
-    for row in continuation.values():
+    valid_final_checkpoints = 0
+    valid_intermediate_checkpoints = 0
+    for (_, updates), row in sorted(continuation.items()):
         issues = _audit_checkpoint(Path(row["expected_checkpoint"]))
-        checkpoint_issues.extend(issues)
         if not issues:
             valid_checkpoints += 1
+            if updates == final_target:
+                valid_final_checkpoints += 1
+            else:
+                valid_intermediate_checkpoints += 1
+            continue
+
+        report["retention_issues"].extend(issues)
+        missing = [
+            issue.removeprefix("missing checkpoint directory: ")
+            for issue in issues
+            if issue.startswith("missing checkpoint directory")
+        ]
+        report["retention_missing_paths"].extend(missing)
+        if updates == final_target:
+            report["issues"].extend(issues)
+            report["missing_paths"].extend(missing)
+
     report["counts"]["expected_checkpoints"] = 50
     report["counts"]["valid_checkpoints"] = valid_checkpoints
-    report["missing_paths"].extend(
-        issue.removeprefix("missing checkpoint directory: ")
-        for issue in checkpoint_issues
-        if issue.startswith("missing checkpoint directory")
+    report["counts"]["expected_final_checkpoints"] = len(EXPECTED_TAGS)
+    report["counts"]["valid_final_checkpoints"] = valid_final_checkpoints
+    report["counts"]["expected_intermediate_checkpoints"] = (
+        len(EXPECTED_TAGS) * (len(prep.TARGET_UPDATES) - 1)
     )
-    report["issues"].extend(checkpoint_issues)
+    report["counts"]["valid_intermediate_checkpoints"] = (
+        valid_intermediate_checkpoints
+    )
+    report["counts"]["missing_intermediate_checkpoints"] = (
+        report["counts"]["expected_intermediate_checkpoints"]
+        - valid_intermediate_checkpoints
+    )
+    if report["retention_issues"]:
+        report["warnings"].append(
+            "Checkpoint retention is incomplete. Derived artifacts remain analyzable "
+            "only when analysis_status is PASS; missing snapshots cannot be regenerated "
+            "or resumed from their exact weights."
+        )
+    else:
+        report["checkpoint_retention_status"] = "PASS"
 
     sample_paths: list[Path] = []
     sample_hashes: dict[str, tuple[Path, str]] = {}
@@ -401,10 +438,15 @@ def audit_results(project_dir: Path, manifest_path: Path) -> dict[str, Any]:
     report["issues"].extend(physics_issues)
 
     report["missing_paths"] = sorted(set(report["missing_paths"]))
+    report["retention_missing_paths"] = sorted(
+        set(report["retention_missing_paths"])
+    )
     report["provenance_mismatches"] = sorted(
         set(report["provenance_mismatches"])
     )
     report["issues"] = sorted(set(report["issues"]))
+    report["retention_issues"] = sorted(set(report["retention_issues"]))
+    report["warnings"] = sorted(set(report["warnings"]))
 
     if not (
         report["issues"]
@@ -412,7 +454,12 @@ def audit_results(project_dir: Path, manifest_path: Path) -> dict[str, Any]:
         or report["provenance_mismatches"]
         or report["duplicate_hashes"]
     ):
-        report["status"] = "PASS"
+        report["analysis_status"] = "PASS"
+        report["status"] = (
+            "PASS"
+            if report["checkpoint_retention_status"] == "PASS"
+            else "PASS_WITH_WARNINGS"
+        )
     _atomic_json(report_path, report)
     return report
 
@@ -430,7 +477,7 @@ def main() -> None:
     args = parse_args()
     report = audit_results(Path(args.project_dir), Path(args.manifest))
     print(json.dumps(report, indent=2, sort_keys=True))
-    if report["status"] != "PASS":
+    if report["analysis_status"] != "PASS":
         raise SystemExit(1)
 
 

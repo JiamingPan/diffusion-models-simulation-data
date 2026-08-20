@@ -1,6 +1,6 @@
 # DiT-L16 300k-to-500k Continuation Runbook
 
-This workflow continues the ten clean `fresh300k_v2` DiT-L16 runs for training sizes `2^6` through `2^15`. It restores complete training state, samples every 40k updates, runs PCA/SSCD and physical diagnostics, and fails closed unless all expected artifacts pass the final audit.
+This workflow continues the ten clean `fresh300k_v2` DiT-L16 runs for training sizes `2^6` through `2^15`. It restores complete training state, samples every 40k updates, and runs PCA/SSCD and physical diagnostics. The final audit fails closed for missing final weights, samples, metrics, physical-statistics outputs, or provenance errors. Historical intermediate-weight retention is tracked separately from analysis readiness.
 
 ## Start on Great Lakes
 
@@ -28,7 +28,13 @@ Do not treat an empty `squeue` result as success. Confirm every job with `sacct`
 cat local/nf_generalize_fig2_dit_l16_continue500k_v2/final_audit.json
 ```
 
-The required terminal state is `"status": "PASS"`.
+The preferred terminal state is `"status": "PASS"`. A result of
+`"status": "PASS_WITH_WARNINGS"` is analysis-ready only when
+`"analysis_status": "PASS"`; inspect `checkpoint_retention_status` and
+`retention_missing_paths` before proceeding. Missing intermediate 340k--460k
+weights prevent exact resumption or resampling at those checkpoints, even when
+their already-generated samples and derived statistics remain valid. Missing
+500k weights always make `analysis_status` fail.
 
 ## Restart
 
@@ -43,16 +49,16 @@ The restart path refuses to proceed when a required prior checkpoint, sample, or
 
 ## Notebook
 
-After the final audit passes, rerun the existing results notebook:
+After the final analysis audit passes, rerun the standalone results notebook:
 
 ```bash
 cd /home/jiamingp/diffusion_models_repo
 jupyter nbconvert --execute --to notebook --inplace \
   --ExecutePreprocessor.timeout=-1 \
-  notebooks/nf_generalize_fig2_dit_results.ipynb
+  notebooks/nf_generalize_fig2_dit_l16_300k_500k_analysis.ipynb
 ```
 
-The tagged section `dit-l16-continue500k-v2` reads the final audit before plotting. It covers loss, PCA/SSCD novelty, exact-subset one-point and power-spectrum statistics, k-bin 20/40/60 variance, DPM50 versus DDPM500 controls, patch-boundary artifacts, and nearest-training matches.
+The notebook reads `analysis_status` before plotting and displays any checkpoint-retention warning. It covers loss, PCA/SSCD novelty, exact-subset one-point and power-spectrum statistics, k-bin 20/40/60 variance, DPM50 versus DDPM500 controls, patch-boundary artifacts, and nearest-training matches.
 
 ## Storage
 
