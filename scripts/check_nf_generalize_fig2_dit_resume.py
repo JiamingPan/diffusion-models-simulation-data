@@ -89,6 +89,7 @@ def main() -> None:
     loaded = load_checkpoint_preserving_class(str(checkpoint))
     model = loaded[0]
     optimizer = loaded[2]
+    lr_scheduler = loaded[3]
     actual_class = type(model).__name__
     if actual_class != args.expected_class:
         raise RuntimeError(
@@ -109,6 +110,10 @@ def main() -> None:
     }
     if not optimizer_parameter_ids or not optimizer_parameter_ids.issubset(model_parameter_ids):
         raise RuntimeError("Checkpoint optimizer is not bound to the reconstructed DiT parameters")
+    if not optimizer.state:
+        raise RuntimeError("Checkpoint optimizer has no saved moment state")
+    if not hasattr(lr_scheduler, "optimizer") or lr_scheduler.optimizer is not optimizer:
+        raise RuntimeError("Checkpoint learning-rate scheduler is not bound to the restored optimizer")
 
     parameter_count = sum(parameter.numel() for parameter in model.parameters())
     print(f"checkpoint: {checkpoint}")
@@ -116,8 +121,10 @@ def main() -> None:
     print(f"reconstructed class: {actual_class}")
     print(f"parameters: {parameter_count:,}")
     print(f"training API: semantics={semantics}, start_epoch={start_epoch}")
+    print(f"scheduler last_epoch: {getattr(lr_scheduler, 'last_epoch', 'unknown')}")
     print("PASS: installed training API supports exact-target resume.")
     print("PASS: checkpoint resume loader reconstructed DiT without meta parameters.")
+    print("PASS: optimizer moments and scheduler progress were restored.")
 
 
 if __name__ == "__main__":

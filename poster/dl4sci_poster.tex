@@ -1,0 +1,265 @@
+% =================================================================
+% 2026 Dl4Sci Workshop poster  --  36 x 24 in, landscape
+% Nicholas Kern, Jiaming Pan, Dragan Huterer (U. Michigan)
+% Compile:  pdflatex dl4sci_poster.tex   (run from this folder)
+% Drop exported notebook PNGs into  figs/  -- slots fill themselves.
+%
+
+% =================================================================
+\documentclass{article}
+\usepackage[paperwidth=91.44cm,paperheight=60.96cm,margin=1.0cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{helvet}\renewcommand{\familydefault}{\sfdefault}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{graphicx}
+\usepackage{enumitem}
+\usepackage{tikz}
+\usetikzlibrary{calc}
+\usepackage[most]{tcolorbox}
+\usepackage{qrcode}
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+
+% ---- Palette (matches the roadmap figure) -----------------------
+\definecolor{ink}{HTML}{1B2A4A}
+\definecolor{subgray}{HTML}{5A6678}
+\definecolor{paramBlue}{HTML}{2E5EAA}
+\definecolor{diffPurple}{HTML}{6B4FA0}
+\definecolor{fieldTeal}{HTML}{0E7C72}
+\definecolor{vggOrange}{HTML}{C25E12}
+\definecolor{loopRed}{HTML}{B0303C}
+\definecolor{paleBg}{HTML}{F4F6FA}
+
+% ---- Type sizes (x0.85 of the 40x30 original) --------------------
+\newcommand{\TitleFont}{\fontsize{63}{70}\selectfont\bfseries}
+\newcommand{\AuthorFont}{\fontsize{31.5}{38}\selectfont}
+\newcommand{\BoxTitleFont}{\fontsize{30.5}{34}\selectfont\bfseries}
+\newcommand{\BodyFont}{\fontsize{22}{27.5}\selectfont}
+\newcommand{\SmallFont}{\fontsize{17.5}{22}\selectfont}
+\newcommand{\TinyPosterFont}{\fontsize{15.5}{19}\selectfont}
+
+% ---- Section box style (spacings x0.80) --------------------------
+\tcbset{
+  secbox/.style 2 args={
+    enhanced, breakable=false,
+    colback=white, colframe=#1,
+    boxrule=1.5pt, arc=5mm,
+    left=6mm, right=6mm, top=3.2mm, bottom=3.6mm,
+    title={\BoxTitleFont #2},
+    coltitle=white, colbacktitle=#1,
+    toptitle=2.4mm, bottomtitle=2.4mm, lefttitle=6.5mm,
+    drop fuzzy shadow=black!35,
+    before skip=0mm, after skip=3.8mm
+  }
+}
+
+% ---- Figure slot: shows the PNG if present, else instructions ----
+% \figslot{<width>}{<height if placeholder>}{<file>}{<where to export it>}
+\newcommand{\figslot}[4]{%
+  \IfFileExists{figs/#3}{%
+    {\centering\includegraphics[width=#1,height=#2,keepaspectratio]{figs/#3}\par}%
+  }{%
+    \begin{tikzpicture}
+      \draw[dashed, line width=1.5pt, subgray, rounded corners=4mm, fill=paleBg]
+        (0,0) rectangle (#1,#2);
+      \node[align=center, text=subgray, text width={\dimexpr#1-3.4cm\relax}] at (0.5*#1,0.5*#2)
+        {\SmallFont\bfseries missing figure:\ {\ttfamily\detokenize{figs/#3}}\\[2.5mm]\SmallFont #4};
+    \end{tikzpicture}%
+  }%
+}
+
+\newcommand{\hl}[2]{{\color{#1}\bfseries #2}}
+
+\begin{document}\BodyFont\color{ink}
+
+% ================== HEADER BAND ===================================
+\begin{tikzpicture}
+  \node[anchor=north west, fill=ink, rounded corners=7mm,
+        minimum width=89.3cm, minimum height=9.0cm] (hdr) at (0,0) {};
+  \node[anchor=west, text=white, text width=58.7cm, align=left]
+    at ($(hdr.west)+(1.5cm,0.8cm)$)
+    {\TitleFont Understanding the Transition from Memorization\\[2mm]
+     \TitleFont\color{white!75!ink} to Generalization in Diffusion Models for Cosmology};
+  \node[anchor=west, text=white!88!ink, text width=58.7cm, align=left]
+    at ($(hdr.south west)+(1.5cm,1.3cm)$)
+    {\AuthorFont Nicholas Kern\,$^{1}$\quad Jiaming Pan\,$^{1}$\quad Dragan Huterer\,$^{1}$
+     \quad{\SmallFont $^{1}$Department of Physics, University of Michigan
+     \;\;\textbullet\;\; nkern@umich.edu \;\;\textbullet\;\; 2026 DL4Sci School, LBNL}};
+  \node[anchor=east, fill=white, rounded corners=3.5mm, inner sep=3.2mm,
+        minimum width=14.0cm, minimum height=4.3cm]
+    (litp) at ($(hdr.east)+(-9.0cm,0cm)$)
+    {\includegraphics[width=13.0cm,height=3.6cm,keepaspectratio]{figs/litp_logo.pdf}};
+  \node[anchor=east, fill=white, rounded corners=3.5mm, inner sep=4mm]
+    (qr) at ($(hdr.east)+(-1.2cm,0)$)
+    {\qrcode[height=6.0cm]{https://github.com/JiamingPan/diffusion-models-simulation-data}};
+\end{tikzpicture}
+
+% Suppress the \baselineskip glue TeX would insert between the header box and
+% the column row; set the gap explicitly instead (see \vspace below).
+\nointerlineskip
+\vspace{5mm}
+
+% ================== THREE COLUMNS =================================
+\newlength{\colw}\setlength{\colw}{28.6cm}
+\begin{minipage}[t]{\colw}\vspace{0pt}
+% ----------------------------------------------------------- COL 1
+
+\begin{tcolorbox}[secbox={paramBlue}{The question}]
+\SmallFont
+\begin{minipage}[t]{15.5cm}
+\vspace{0pt}
+For inference, a trained diffusion model $s_\theta(x)$ becomes a prior over cosmological fields $x$.
+If the model has memorized its training data (black points), its score (pink) will
+not accurately reflect the true prior score, pushing inference to local clumps in
+data space. When confronted with observational data (blue), the inferred posterior
+distribution $p(x|y)$ will therefore be biased and overly confident.
+
+\begin{enumerate}[leftmargin=7.5mm, itemsep=1.5mm, label=\textcolor{paramBlue}{\textbf{\arabic*.}}]
+\item \hl{loopRed}{Novelty:} when do generated samples memorize training samples w.r.t. $N_{\rm train}$?
+\item \hl{diffPurple}{Conditioning:} can we recover accurate posteriors on cosmological parameters, $\theta$?
+\item \hl{fieldTeal}{Fidelity:} do samples retain accurate statistical properties (1 \& 2-pt functions)?
+\end{enumerate}
+\end{minipage}\hfill
+\begin{minipage}[t]{11.5cm}
+\vspace{2.5mm}
+\centering
+\figslot{11.5cm}{11.5cm}{inference_manifold_implication.pdf}
+  {conceptual manifold schematic: learned prior, data constraint, posterior}
+\end{minipage}
+\end{tcolorbox}
+
+\begin{tcolorbox}[secbox={diffPurple}{Data \& models}]
+\SmallFont
+\begin{itemize}[leftmargin=9mm, itemsep=1.8mm, label=\textcolor{diffPurple}{$\blacktriangleright$}]
+\item \textbf{CAMELS Multifield Dataset} (IllustrisTNG; Villaescusa-Navarro
+      et al.\ 2021): 1000 simulations $\to$ 128 slices each $\to$
+      128k HI (neutral hydrogen) maps of size $128\times128$.
+\item Six cosmological parameters:
+      $\bm{\theta}=(\Omega_m,\sigma_8,A_{\mathrm{SN1}},A_{\mathrm{AGN1}},
+      A_{\mathrm{SN2}},A_{\mathrm{AGN2}})$.
+\item \textbf{Diffusion objective.} We corrupt a real map with noise and
+      train a UNet to predict the velocity target at every noise level,
+      with the cosmology $\bm{\theta}$ as conditioning.
+
+\vspace{-1mm}
+\begingroup
+\fontsize{25.5}{30.5}\selectfont
+\[
+\begin{aligned}
+x_t &= \sqrt{\bar{\alpha}_t}\,x_0+\sqrt{1-\bar{\alpha}_t}\,\epsilon,
+\qquad \epsilon\sim\mathcal{N}(0,I),\\[1mm]
+\mathcal{L}_{\rm diff}
+&=\mathbb{E}_{x_0,\epsilon,t}\left\|
+s_{\theta}(x_t,t,\bm{\theta})-\epsilon\right\|_2^2 .
+\end{aligned}
+\]
+\endgroup
+%{\TinyPosterFont\color{subgray}
+%Here we use \texttt{v\_prediction}:
+%$\mathrm{target}=v_t=\sqrt{\bar{\alpha}_t}\epsilon-\sqrt{1-\bar{\alpha}_t}x_0$.
+%Ho et al. 2020 (DDPM).}
+\item \textbf{Sampling}: 50-step DPM-Solver, $8\times$ faster than the
+      500-step DDPM baseline.
+\item \textbf{Training-set sweep}: Train 3 models of increasing depth (3,4,5 layer UNet), each with 6 different training set sizes: $N_{\rm train}=2^{6} \to 2^{15}$.
+\end{itemize}
+\end{tcolorbox}
+
+\begin{tcolorbox}[secbox={fieldTeal}{Detecting memorization}]
+\SmallFont
+After training, we generate 100 novel 2D HI maps $x_j$, compare them to every
+map in the model's training set $y_i$, and keep the closest match:
+\begingroup
+\fontsize{29.5}{36.5}\selectfont
+\[
+s_j = \max_i\, \mathrm{sim}(x_j,\, y_i)
+\]
+\endgroup
+A high $s_j$ means $x_j$ is nearly a copy of one of its training map. Separately, we train a PCA encoder to map 2D images into a vector space for classification.
+Here, $\mathrm{sim}$ is {\bfseries cosine similarity} (larger = more alike) measured in either pixel or PCA latent space.
+For a fixed model size, the generated samples will transition from memorization to generalization at some $N_{\rm train}$ threshold.
+
+\vspace{1.5mm}
+\figslot{21.5cm}{9.9cm}{nf_generalize_fig2_u64_generated_vs_pixel_nn.png}
+  {generated / nearest-train visual}
+\end{tcolorbox}
+
+\end{minipage}\hfill
+\begin{minipage}[t]{\colw}\vspace{0pt}
+% ----------------------------------------------------------- COL 2
+
+\begin{tcolorbox}[secbox={loopRed}{Inference: do we get the correct cosmology $\theta$?}]
+We ask a conditional diffusion model to generate a sample with a given cosmology $\theta_{\rm ask}$.
+We pass those 2D samples to a classifier (VGG16) with an MLP head $\rightarrow\theta_{\rm rec}$, trained on our full 128k dataset.
+Thus, we are able to compare the actual cosmology generated by the diffusion models $\theta_{\rm rec}$ when conditioned on an input cosmology $\theta_{\rm ask}$, which we probe as a function of training set size and model capacity.
+
+\vspace{3mm}
+\begin{center}
+\includegraphics[width=21.5cm]{figs/calibration_roadmap_v2.pdf}
+\end{center}
+
+\end{tcolorbox}
+
+\begin{tcolorbox}[secbox={diffPurple}{Memorization $\to$ generalization transition}]
+\figslot{22.1cm}{9.6cm}{nf_generalize_fig2_poster_pca_generalization_q95_serif_clean.png}
+  {quickcheck notebook $\to$ PCA generalization curves with q95 threshold}
+
+\vspace{1mm}
+For each case we generate 1000 samples: the generalization score is the fraction of generated maps that are
+\emph{not} close to any training map,
+\begin{center}
+\vspace{1mm}
+\scalebox{1.7}{$\mathrm{G} = \Pr[\, s_j < \tau \,]$\,,}
+\vspace{1mm}
+\end{center}
+based on the cosine similarity score $s_j$, with $\tau$ (the ``memorization gap'') set by the 95th percentile of train-vs-train closest-match similarity.
+\begin{itemize}[leftmargin=9mm, itemsep=1.6mm, label=\textcolor{diffPurple}{$\blacktriangleright$}]
+\item $\mathrm{G} \approx 0$: generated samples = training samples (\hl{loopRed}{memorization}).
+\item $\mathrm{G} \approx 1$: generated samples are unique to training samples.
+\item The transition happens at larger $N_{\rm train}$ for larger models (is this regime predictable and universal?) {\color{subgray}(Zhang et al.\ 2024; Kadkhodaie et al.\ 2024; Yoon et
+      al.\ 2023)}. Currently exploring DiTs and other cosmo datasets.
+\end{itemize}
+\end{tcolorbox}
+
+\end{minipage}\hfill
+\begin{minipage}[t]{\colw}\vspace{0pt}
+% ----------------------------------------------------------- COL 3
+
+\begin{tcolorbox}[secbox={vggOrange}{Inference results}]
+\begin{center}
+\figslot{25.3cm}{15.9cm}{bias_probe_omega_m_best_vgg_poster.png}
+  {VGG notebook $\to$ recovered vs requested $\Omega_m$ bias probe}
+\end{center}
+
+\vspace{1mm}
+\SmallFont
+\hl{vggOrange}{Main result:} we generate 1000 $\Omega_m$-conditional samples from two models and predict the actual $\Omega_m$ in the maps: the errorbars show 16--84\% scatter at fixed $\bm{\theta}_{\rm ask}$.
+In the generalization regime (blue), the recovered $\Omega_m$ is within the true $\Omega_m$ 95\% of the time.
+In the memorization regime (orange), the recovered parameters are more biased and overconfident.
+The VGG+MLP encoder has $R^2=0.91$ on real held-out $\Omega_m$, so the difference is a true reflection of the diffusion model.
+\end{tcolorbox}
+
+\begin{tcolorbox}[secbox={fieldTeal}{Statistical fidelity}]
+\begin{center}
+\figslot{25.5cm}{10.8cm}{learning_process_pk_parallel_poster.png}
+  {epoch snapshot notebook $\to$ generated and real $P(k)$ across training}
+\end{center}
+\vspace{1mm}
+\SmallFont
+Here we show that our diffusion models are indeed retaining accurate statistical information in the maps (via the 2-pt function aka power spectrum).
+During training, we show it first learns low-frequency features and fills in high-frequency features later in training.
+\end{tcolorbox}
+
+\begin{tcolorbox}[secbox={loopRed}{Takeaways}]
+\SmallFont
+\begin{enumerate}[leftmargin=10mm, itemsep=1.6mm, label=\textcolor{loopRed}{\textbf{\arabic*.}}]
+\item \textbf{The generalization transition appears in cosmological data.} The known
+      memorization-to-generalization transition also occurs in CAMELS cosmological maps.
+\item \textbf{It biases inference.} Small training sets yield models that memorize: inference looks precise but is biased toward the training
+      values. Past the transition, recovered cosmology $\bm{\theta}$ has better calibrated posteriors.
+\item \textbf{Heuristic for practitioners.} Larger models generalize at bigger training set sizes: can we predict this transition across model \& dataset types?
+\end{enumerate}
+\end{tcolorbox}
+
+\end{minipage}
+
+\end{document}
