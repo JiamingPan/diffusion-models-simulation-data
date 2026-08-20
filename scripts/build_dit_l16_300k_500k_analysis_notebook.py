@@ -222,10 +222,12 @@ AUDIT_MARKDOWN = r"""
 ## 1. Scope, provenance, and mandatory audit
 
 The final sweep audit is a hard prerequisite, not a display-only status check.
-It verifies checkpoint, sample, corrected checkpoint-specific novelty table,
-physical-statistics, selected-$k$, patch-boundary, and sampler-control artifacts.
-The code below also checks the manifest pairs and confirms that each PCA/SSCD
-table points to the sample label for its own checkpoint.
+It verifies final 500k weights, samples, corrected checkpoint-specific novelty
+tables, physical statistics, selected-$k$, patch-boundary, and sampler-control
+artifacts. Intermediate weight retention is reported separately: missing
+historical weights prevent exact resumption, but do not invalidate already
+audited samples and statistics. The code below also checks the manifest pairs
+and confirms that each PCA/SSCD table points to its own checkpoint sample.
 """
 
 
@@ -236,13 +238,14 @@ if not audit_path.is_file() or not manifest_path.is_file():
     raise FileNotFoundError('Missing final_audit.json or analysis_manifest.json')
 
 continuation_audit = json.loads(audit_path.read_text())
-if continuation_audit.get('status') != 'PASS':
-    raise RuntimeError('Mandatory continuation audit did not pass:\n' + json.dumps(continuation_audit, indent=2))
+if continuation_audit.get('analysis_status') != 'PASS':
+    raise RuntimeError('Mandatory continuation analysis audit did not pass:\n' + json.dumps(continuation_audit, indent=2))
 
 audit_counts = continuation_audit.get('counts', {})
 expected_counts = {
     'expected_checkpoints': 50,
-    'valid_checkpoints': 50,
+    'expected_final_checkpoints': 10,
+    'valid_final_checkpoints': 10,
     'expected_dpm_samples': 60,
     'expected_ddpm_controls': 4,
     'valid_sample_files': 64,
@@ -348,7 +351,14 @@ for tag in CONT_TAGS:
     info = configured_training_reference_info(source_config_for_row(row))
     reference_audit.append({'dataset_tag': tag, 'dataset_size': int(row['dataset_size']), **info})
 
-display(Markdown('### Final artifact audit: **PASS**'))
+display(Markdown(f"### Final analysis audit: **{continuation_audit['status']}**"))
+if continuation_audit.get('checkpoint_retention_status') != 'PASS':
+    display(Markdown(
+        '**Checkpoint-retention warning:** intermediate 340k--460k weight '
+        'directories are incomplete. The audited samples, novelty tables, and '
+        'physics products remain usable, but those exact intermediate models '
+        'cannot be resumed or sampled again without retraining.'
+    ))
 display(pd.DataFrame(metric_audit_rows))
 display(pd.DataFrame(reference_audit))
 """

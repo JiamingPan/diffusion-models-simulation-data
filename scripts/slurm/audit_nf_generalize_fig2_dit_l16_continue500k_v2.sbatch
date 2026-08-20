@@ -34,7 +34,12 @@ from pathlib import Path
 
 path = Path("local/nf_generalize_fig2_dit_l16_continue500k_v2/final_audit.json")
 report = json.loads(path.read_text())
-if report.get("status") != "PASS":
-    raise SystemExit(f"final audit did not pass: {report.get('status')}")
-print("PASS: full DiT-L16 continuation artifact audit")
+if report.get("analysis_status") != "PASS":
+    raise SystemExit(
+        f"final analysis audit did not pass: {report.get('analysis_status')}"
+    )
+print(
+    f"{report.get('status')}: DiT-L16 analysis artifacts are valid; "
+    f"checkpoint retention={report.get('checkpoint_retention_status')}"
+)
 PY
