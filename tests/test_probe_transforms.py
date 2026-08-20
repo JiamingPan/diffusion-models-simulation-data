@@ -105,6 +105,26 @@ def test_unit_transfer_is_roundtrip_identity():
     assert diagnostics["out_of_range_fraction"] == 0.0
 
 
+def test_gaussian_smoothing_uses_exact_frequency_response():
+    from simdiff_eval.probe_transforms import gaussian_smoothing_transform
+
+    size = 32
+    mode = 5
+    sigma = 0.11
+    x = np.arange(size, dtype=np.float64)
+    wave = np.cos(2.0 * np.pi * mode * x / size)
+    images = np.broadcast_to(wave, (1, 1, size, size)).astype(np.float32).copy()
+    output, diagnostics = gaussian_smoothing_transform(sigma)(images)
+    expected_attenuation = np.exp(-0.5 * (sigma * mode) ** 2)
+    np.testing.assert_allclose(
+        output,
+        images * np.float32(expected_attenuation),
+        rtol=2e-6,
+        atol=2e-6,
+    )
+    assert diagnostics["gaussian_sigma"] == sigma
+
+
 def test_sharp_window_rings_more_than_hann_on_binary_edge():
     images = np.full((1, 1, 32, 32), -1.0, dtype=np.float32)
     images[:, :, 8:24, 8:24] = 1.0

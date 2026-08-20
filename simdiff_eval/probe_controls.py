@@ -383,7 +383,13 @@ def c0_symmetry_summary(
     if int(n_boot) < 1:
         raise ValueError("n_boot must be positive")
 
-    identity = omega[omega["transform"] == "identity"]
+    c0 = omega[
+        omega[["dihedral_g", "roll_dx", "roll_dy"]].notna().all(axis=1)
+    ].copy()
+    if c0.empty:
+        raise ValueError("Prediction table contains no C0 descriptor rows")
+
+    identity = c0[c0["transform"] == "identity"]
     baseline = (
         identity.groupby("sim_index", as_index=False)
         .agg(
@@ -400,14 +406,14 @@ def c0_symmetry_summary(
     )
     baseline_lookup = baseline.set_index("sim_index").to_dict("index")
 
-    no_roll = omega[(omega["roll_dx"] == 0) & (omega["roll_dy"] == 0)]
+    no_roll = c0[(c0["roll_dx"] == 0) & (c0["roll_dy"] == 0)]
     dihedral = _spread_table(no_roll, ["sim_index", "z_index"])
     if not (dihedral["n_views"] == 8).all():
         raise ValueError("Each C0 dihedral slice must contain eight no-roll views")
     dihedral["family"] = "dihedral"
 
     roll_by_element = _spread_table(
-        omega,
+        c0,
         ["sim_index", "z_index", "dihedral_g"],
     )
     if not (roll_by_element["n_views"] == 5).all():
@@ -676,17 +682,21 @@ def _artifact_record(path: str | Path) -> dict[str, str]:
     return {"path": str(artifact), "sha256": file_sha256(artifact)}
 
 
-def _json_value(value: Any) -> Any:
+def json_safe(value: Any) -> Any:
+    """Recursively convert a report payload to strict JSON-compatible values."""
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, np.ndarray):
-        return value.tolist()
+        return json_safe(value.tolist())
+    if isinstance(value, (float, np.floating)):
+        scalar = float(value)
+        return scalar if np.isfinite(scalar) else None
     if isinstance(value, np.generic):
-        return value.item()
+        return json_safe(value.item())
     if isinstance(value, dict):
-        return {str(key): _json_value(item) for key, item in value.items()}
+        return {str(key): json_safe(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
-        return [_json_value(item) for item in value]
+        return [json_safe(item) for item in value]
     return value
 
 
@@ -718,12 +728,12 @@ def build_run_manifest(
         "scikit_learn_version": installed_sklearn_version(),
         "heldout_indices": heldout.astype(int).tolist(),
         "slices_per_sim": int(slices_per_sim),
-        "transforms": _json_value(transforms),
-        "seeds": _json_value(seeds),
-        "arguments": _json_value(arguments),
+        "transforms": json_safe(transforms),
+        "seeds": json_safe(seeds),
+        "arguments": json_safe(arguments),
     }
     if head_path is not None:
         manifest["head"] = _artifact_record(head_path)
     if extra:
-        manifest.update(_json_value(extra))
+        manifest.update(json_safe(extra))
     return manifest

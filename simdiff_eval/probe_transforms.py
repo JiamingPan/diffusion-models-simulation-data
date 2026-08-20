@@ -223,6 +223,23 @@ def transfer_transform(
     return transform
 
 
+def gaussian_smoothing_transform(sigma: float) -> Transform:
+    """Apply the analytic amplitude response exp(-0.5 sigma^2 k^2)."""
+    sigma = float(sigma)
+    if not np.isfinite(sigma) or sigma < 0.0:
+        raise ValueError("sigma must be finite and non-negative")
+
+    def transform(images: np.ndarray) -> tuple[np.ndarray, dict[str, float]]:
+        array = _images(images)
+        k_radius = _frequency_grid(array.shape[-2], array.shape[-1])
+        response = np.exp(-0.5 * (sigma * k_radius) ** 2)
+        output, diagnostics = _finish(_apply_response(array, response))
+        diagnostics["gaussian_sigma"] = sigma
+        return output, diagnostics
+
+    return transform
+
+
 def get_transform(
     name: str,
     *,

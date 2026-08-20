@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -182,6 +183,41 @@ def test_manifest_records_frozen_encoder_environment_and_seeds(tmp_path, monkeyp
     assert manifest["seeds"] == {"bootstrap": 17, "roll": 23}
 
 
+def test_json_safe_replaces_nested_nonfinite_values():
+    from simdiff_eval.probe_controls import json_safe
+
+    payload = {
+        "nan": np.nan,
+        "positive_infinity": np.inf,
+        "nested": [np.float32(-np.inf), Path("artifact.npz")],
+    }
+    safe = json_safe(payload)
+    encoded = json.dumps(safe, allow_nan=False)
+    decoded = json.loads(encoded)
+    assert decoded == {
+        "nan": None,
+        "positive_infinity": None,
+        "nested": [None, "artifact.npz"],
+    }
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    [
+        "evaluate_probe_transform_controls",
+        "evaluate_probe_degradation_control",
+    ],
+)
+def test_report_json_writers_emit_strict_json(module_name, tmp_path):
+    module = __import__(module_name)
+    output = tmp_path / f"{module_name}.json"
+    module._write_json(output, {"finite": 1.0, "missing": np.nan})
+    raw = output.read_text()
+    assert "NaN" not in raw
+    assert "Infinity" not in raw
+    assert json.loads(raw) == {"finite": 1.0, "missing": None}
+
+
 def test_transform_control_cli_help_is_import_safe():
     result = subprocess.run(
         [sys.executable, "scripts/evaluate_probe_transform_controls.py", "--help"],
@@ -269,6 +305,33 @@ def test_c0_reports_separate_families_and_within_simulation_baseline():
     )
 
 
+def test_combined_c0_c1_predictions_produce_uncontaminated_c0_summary():
+    from evaluate_probe_transform_controls import build_requested_specs
+    from simdiff_eval.probe_controls import c0_symmetry_summary, evaluate_transform_specs
+
+    images, theta_raw, sim_index, z_index = synthetic_probe_inputs()
+    specs, _ = build_requested_specs(
+        ["c0", "c1"],
+        roll_seed=23,
+        k_cuts=[2.0, 3.0],
+    )
+    predictions = evaluate_transform_specs(
+        images,
+        theta_raw,
+        sim_index,
+        z_index,
+        FakeEncoder(),
+        specs,
+        batch_size=4,
+    )
+    report = c0_symmetry_summary(predictions, n_boot=10, seed=31)
+    assert {row["family"] for row in report["per_slice"]} == {
+        "dihedral",
+        "roll",
+    }
+    assert len(report["per_slice"]) == len(images) * 2
+
+
 def test_c4_split_is_deterministic_disjoint_and_complete():
     from simdiff_eval.probe_controls import deterministic_cosmology_split
 
@@ -313,6 +376,46 @@ def test_measured_transfer_builds_finite_real_degraded_maps():
     assert np.isfinite(generated_mean).all()
     assert np.isfinite(ratio).all()
     assert diagnostics["out_of_range_fraction"] >= 0.0
+
+
+def test_c4_same_size_runs_have_distinct_metric_groups():
+    from evaluate_probe_degradation_control import c4_transform_names
+    from simdiff_eval.probe_controls import (
+        TransformSpec,
+        aggregate_prediction_table,
+        evaluate_transform_specs,
+    )
+    from simdiff_eval.probe_transforms import get_transform
+
+    images, theta_raw, sim_index, z_index = synthetic_probe_inputs()
+    base = evaluate_transform_specs(
+        images,
+        theta_raw,
+        sim_index,
+        z_index,
+        FakeEncoder(),
+        [TransformSpec("identity", "identity", get_transform("identity"))],
+        batch_size=4,
+    )
+    tables = []
+    for run_name in ("run_a", "run_b"):
+        table = base.copy()
+        table["transform"] = c4_transform_names(run_name, 64)["measured"]
+        table["transform_family"] = "transfer"
+        tables.append(table)
+    report = aggregate_prediction_table(
+        pd.concat(tables, ignore_index=True),
+        n_boot=10,
+        seed=53,
+    )
+    omega_slice = [
+        row
+        for row in report["metrics"]
+        if row["parameter"] == "Omega_m" and row["grain"] == "per_slice"
+    ]
+    assert len(omega_slice) == 2
+    assert {row["n"] for row in omega_slice} == {len(images)}
+    assert len({row["transform"] for row in omega_slice}) == 2
 
 
 def test_generated_cosmology_subset_preserves_sample_target_pairing():
@@ -463,3 +566,15 @@ def test_combined_c0_c1_suite_deduplicates_identity():
     assert "fft_roundtrip_null" in names
     assert "lowpass_kcut4_hann" in names
     assert any(name.startswith("dihedral_g7__roll") for name in names)
+
+
+def test_unrequested_control_summaries_are_removed(tmp_path):
+    from evaluate_probe_transform_controls import remove_unrequested_summaries
+
+    c0 = tmp_path / "c0_symmetry_summary.json"
+    c1 = tmp_path / "c1_scale_cut_summary.json"
+    c0.write_text("stale c0")
+    c1.write_text("current c1")
+    remove_unrequested_summaries(tmp_path, {"c1"})
+    assert not c0.exists()
+    assert c1.exists()
