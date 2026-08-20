@@ -16,6 +16,94 @@ def _finite_vector(values: np.ndarray, name: str) -> np.ndarray:
     return vector
 
 
+def interpolate_threshold_crossings(
+    sample_sizes: np.ndarray,
+    values: np.ndarray,
+    *,
+    threshold: float = 0.5,
+) -> dict[str, object]:
+    """Audit all threshold crossings before reporting a scalar transition size."""
+    x = np.asarray(sample_sizes, dtype=np.float64).reshape(-1)
+    y = np.asarray(values, dtype=np.float64).reshape(-1)
+    if x.shape != y.shape:
+        raise ValueError("sample_sizes and values must have the same shape")
+    threshold = float(threshold)
+    if not np.isfinite(threshold):
+        raise ValueError("threshold must be finite")
+
+    finite = np.isfinite(x) & np.isfinite(y) & (x > 0)
+    x = x[finite]
+    y = y[finite]
+    empty = {
+        "status": "missing",
+        "n_cross": np.nan,
+        "log2_n_cross": np.nan,
+        "crossings": [],
+        "n_crossings": 0,
+        "monotone": False,
+    }
+    if x.size == 0:
+        return empty
+
+    order = np.argsort(x)
+    x = x[order]
+    y = y[order]
+    if np.any(np.diff(x) <= 0):
+        raise ValueError("sample_sizes must be unique")
+
+    monotone = bool(np.all(np.diff(y) >= -1.0e-12))
+    base = {
+        "n_cross": np.nan,
+        "log2_n_cross": np.nan,
+        "crossings": [],
+        "n_crossings": 0,
+        "monotone": monotone,
+    }
+    if np.all(y >= threshold):
+        return {"status": "left_censored", **base}
+    if np.all(y <= threshold):
+        return {"status": "right_censored", **base}
+
+    log_x = np.log2(x)
+    delta = y - threshold
+    zero = np.isclose(delta, 0.0, rtol=0.0, atol=1.0e-12)
+    crossings: list[float] = []
+    for index in range(len(y) - 1):
+        if zero[index] and (index == 0 or not zero[index - 1]):
+            crossings.append(float(log_x[index]))
+        if delta[index] * delta[index + 1] < 0.0:
+            fraction = (threshold - y[index]) / (y[index + 1] - y[index])
+            crossings.append(
+                float(log_x[index] + fraction * (log_x[index + 1] - log_x[index]))
+            )
+    if zero[-1] and (len(y) == 1 or not zero[-2]):
+        crossings.append(float(log_x[-1]))
+
+    crossings = sorted(
+        crossing
+        for offset, crossing in enumerate(crossings)
+        if offset == 0 or not np.isclose(crossing, crossings[offset - 1])
+    )
+    result = {
+        **base,
+        "crossings": crossings,
+        "n_crossings": len(crossings),
+    }
+    if len(crossings) == 1 and monotone:
+        log2_n_cross = crossings[0]
+        return {
+            "status": "interpolated",
+            **result,
+            "n_cross": float(2.0**log2_n_cross),
+            "log2_n_cross": log2_n_cross,
+        }
+    if len(crossings) > 1:
+        return {"status": "multiple_crossings", **result}
+    if len(crossings) == 1:
+        return {"status": "nonmonotone_crossing", **result}
+    return {"status": "not_found", **result}
+
+
 def bootstrap_mean_interval(
     values: np.ndarray,
     confidence: float = 0.95,
