@@ -98,13 +98,12 @@ if str(PROJECT_DIR) not in sys.path:
 
 from scripts.dit_300k_scaling_analysis import (
     build_historical_unet_metric_table,
-    checkpoint_metric_candidates,
     evenly_spaced_indices,
-    flatten_numeric,
     normalize_generalization_table,
     prepare_stitched_loss_history,
     require_exact_dataset_sweep,
     robust_log_ratio_outliers,
+    stage_loss_metrics_from_logs,
     streaming_nearest_neighbors,
     summarize_filtered_power_ratios,
     summarize_n50,
@@ -136,6 +135,7 @@ FEATURE_TITLES = {
 }
 
 LOCAL_DIR = PROJECT_DIR / 'local' / CONT_SWEEP
+LOG_DIR = PROJECT_DIR / 'logs' / CONT_SWEEP
 TABLE_DIR = PROJECT_DIR / 'results' / 'nf_generalize_fig2_dit' / 'tables'
 PHYSICS_DIR = PROJECT_DIR / 'results' / 'nf_generalize_fig2_dit' / 'physics'
 SAMPLE_DIR = PROJECT_DIR / 'results' / CONT_SWEEP / 'samples'
@@ -426,9 +426,11 @@ LOSS_MARKDOWN = r"""
 ## 2. Optimization history
 
 Each panel shows the cycle-averaged denoising loss for one training-set size.
-The x-axis is restricted to the audited continuation interval. Falling loss
-shows that the optimizer is still changing the denoising objective; it does not
-by itself establish novelty or physical agreement.
+The history is reconstructed from the exact epoch interval in the completed
+Slurm logs for each 40k continuation stage; overwritten run-level metric files
+are not used. Falling loss shows that the optimizer is still changing the
+denoising objective; it does not by itself establish novelty or physical
+agreement.
 """
 
 
@@ -440,22 +442,24 @@ def checkpoint_epoch(path: Path) -> int:
     return int(match.group(1))
 
 
-def read_checkpoint_metrics(row: pd.Series) -> tuple[dict[str, Any], Path]:
-    checkpoint = project_path(row['expected_checkpoint'])
-    candidates = checkpoint_metric_candidates(checkpoint)
+def read_stage_loss_metrics(
+    row: pd.Series,
+) -> tuple[dict[str, Any], tuple[Path, ...], int, int]:
+    previous_epoch = checkpoint_epoch(project_path(row['previous_expected_checkpoint']))
+    final_epoch = int(row['expected_final_epoch'])
+    task_index = CONT_TAGS.index(str(row['dataset_tag']))
+    candidates = sorted(LOG_DIR.glob(f'train_stage*_{task_index}.out'))
     if not candidates:
         raise FileNotFoundError(
-            f"No checkpoint-specific metrics found for {row['dataset_tag']} "
-            f"at {int(row['updates_k'])}k: {checkpoint}"
+            f"No continuation training logs found for {row['dataset_tag']} "
+            f"under {LOG_DIR}"
         )
-    payloads = [(json.loads(path.read_text()), path) for path in candidates]
-    return max(
-        payloads,
-        key=lambda item: (
-            len(flatten_numeric(item[0].get('epoch_loss'))),
-            item[1].stat().st_mtime,
-        ),
+    metrics, used_paths = stage_loss_metrics_from_logs(
+        candidates,
+        first_epoch=previous_epoch + 1,
+        final_epoch=final_epoch,
     )
+    return metrics, used_paths, previous_epoch, final_epoch
 
 
 loss_histories = {}
@@ -467,13 +471,11 @@ for tag in CONT_TAGS:
     metrics_paths = []
     for updates_k in CONT_UPDATES_K[1:]:
         row = continuation_row(tag, updates_k)
-        metrics, metrics_path = read_checkpoint_metrics(row)
-        previous_epoch = checkpoint_epoch(project_path(row['previous_expected_checkpoint']))
-        final_epoch = int(row['expected_final_epoch'])
+        metrics, used_paths, previous_epoch, final_epoch = read_stage_loss_metrics(row)
         stage_start_updates = (previous_epoch + 1) * steps_per_epoch
         stage_end_updates = (final_epoch + 1) * steps_per_epoch
         segments.append((metrics, stage_start_updates, stage_end_updates))
-        metrics_paths.append(str(metrics_path))
+        metrics_paths.extend(str(path) for path in used_paths)
     history = prepare_stitched_loss_history(
         segments,
         steps_per_epoch=steps_per_epoch,
@@ -488,7 +490,7 @@ for tag in CONT_TAGS:
         'final_update': history['recorded_updates'],
         'stage_recorded_updates': history['stage_recorded_updates'].tolist(),
         'tail_median_loss': history['tail_median_loss'],
-        'metrics_paths': metrics_paths,
+        'training_log_paths': list(dict.fromkeys(metrics_paths)),
     })
 
 fig, axes = plt.subplots(2, 5, figsize=(19, 8.4), sharex=True, constrained_layout=True)
