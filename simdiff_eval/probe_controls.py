@@ -13,6 +13,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from .metrics import batch_power_spectra
 from .probe_transforms import (
     Transform,
     compose_transforms,
@@ -28,6 +29,11 @@ PARAM_NAMES = (
     "A_AGN1",
     "A_SN2",
     "A_AGN2",
+)
+C4_LIMITATION = (
+    "The transfer controls match only the measured two-point power deficit. "
+    "They do not match the one-point PDF or higher-order structure, so a "
+    "negative result rules out only that two-point deficit as the explanation."
 )
 DESCRIPTOR_COLUMNS = (
     "transform",
@@ -444,6 +450,121 @@ def c0_symmetry_summary(
         "family_summary": family_summary,
         "bootstrap": {"n_resamples": int(n_boot), "seed": int(seed)},
     }
+
+
+def deterministic_cosmology_split(
+    sim_indices: np.ndarray,
+    *,
+    seed: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Split unique cosmologies into deterministic equal derivation/evaluation halves."""
+    indices = np.asarray(sim_indices, dtype=np.int64).reshape(-1)
+    if len(indices) < 2 or len(indices) % 2:
+        raise ValueError("sim_indices must contain an even number of cosmologies")
+    if len(np.unique(indices)) != len(indices):
+        raise ValueError("sim_indices must be unique")
+    permutation = np.random.default_rng(int(seed)).permutation(indices)
+    midpoint = len(permutation) // 2
+    return np.sort(permutation[:midpoint]), np.sort(permutation[midpoint:])
+
+
+def fit_gaussian_smoothing(k_bins: np.ndarray, power_ratio: np.ndarray) -> float:
+    """Fit log R(k) = -sigma^2 k^2 through the physical zero intercept."""
+    k = np.asarray(k_bins, dtype=np.float64).reshape(-1)
+    ratio = np.asarray(power_ratio, dtype=np.float64).reshape(-1)
+    if k.shape != ratio.shape or len(k) == 0:
+        raise ValueError("k_bins and power_ratio must be non-empty equal-length vectors")
+    valid = np.isfinite(k) & np.isfinite(ratio) & (k > 0.0) & (ratio > 0.0)
+    if not valid.any():
+        raise ValueError("No finite positive power-ratio bins are available")
+    k2 = k[valid] ** 2
+    log_ratio = np.log(np.clip(ratio[valid], 1.0e-30, None))
+    denominator = float(np.dot(k2, k2))
+    if denominator <= 0.0:
+        raise ValueError("Gaussian fit has zero k leverage")
+    sigma_squared = max(0.0, -float(np.dot(k2, log_ratio)) / denominator)
+    return float(np.sqrt(sigma_squared))
+
+
+def power_ratio_transfer(
+    real_images: np.ndarray,
+    generated_images: np.ndarray,
+    *,
+    nbins: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Measure R(k)=P_generated/P_real and return its amplitude transfer."""
+    real = np.asarray(real_images, dtype=np.float32)
+    generated = np.asarray(generated_images, dtype=np.float32)
+    if real.ndim != 4 or generated.ndim != 4:
+        raise ValueError("real_images and generated_images must have shape (N,C,H,W)")
+    if real.shape[1:] != generated.shape[1:]:
+        raise ValueError("Real and generated image shapes must match")
+    if len(real) == 0 or len(generated) == 0:
+        raise ValueError("Real and generated image sets must be non-empty")
+    real_power, k_bins = batch_power_spectra(real, nbins=int(nbins))
+    generated_power, generated_k = batch_power_spectra(generated, nbins=int(nbins))
+    if not np.allclose(k_bins, generated_k, equal_nan=True):
+        raise ValueError("Real and generated power bins differ")
+    real_mean = np.nanmean(real_power, axis=0)
+    generated_mean = np.nanmean(generated_power, axis=0)
+    ratio = generated_mean / np.clip(real_mean, 1.0e-30, None)
+    if not (
+        np.isfinite(k_bins).all()
+        and np.isfinite(real_mean).all()
+        and np.isfinite(generated_mean).all()
+        and np.isfinite(ratio).all()
+    ):
+        raise ValueError("Power-ratio transfer contains non-finite bins")
+    transfer = np.sqrt(np.clip(ratio, 0.0, None))
+    return k_bins, real_mean, generated_mean, ratio, transfer
+
+
+def subset_generated_cosmologies(
+    samples: np.ndarray,
+    theta_raw: np.ndarray,
+    heldout_indices: np.ndarray,
+    *,
+    samples_per_cosmology: int,
+    selected_simulations: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Select complete generated blocks while preserving sample/target pairing."""
+    array = np.asarray(samples, dtype=np.float32)
+    theta = np.asarray(theta_raw, dtype=np.float32)
+    heldout = np.asarray(heldout_indices, dtype=np.int64).reshape(-1)
+    selected = set(
+        np.asarray(selected_simulations, dtype=np.int64).reshape(-1).astype(int).tolist()
+    )
+    count = int(samples_per_cosmology)
+    if count < 1:
+        raise ValueError("samples_per_cosmology must be positive")
+    if len(array) != len(heldout) * count:
+        raise ValueError("Generated samples do not match heldout block ordering")
+    if theta.ndim != 2 or theta.shape[0] != len(heldout):
+        raise ValueError("theta_raw must contain one parameter row per heldout cosmology")
+    if not selected.issubset(set(heldout.astype(int).tolist())):
+        raise ValueError("selected_simulations contains an unknown cosmology")
+
+    sample_blocks: list[np.ndarray] = []
+    theta_blocks: list[np.ndarray] = []
+    sim_rows: list[int] = []
+    sample_rows: list[int] = []
+    for heldout_offset, sim_index in enumerate(heldout):
+        if int(sim_index) not in selected:
+            continue
+        start = heldout_offset * count
+        stop = start + count
+        sample_blocks.append(array[start:stop])
+        theta_blocks.append(np.repeat(theta[heldout_offset : heldout_offset + 1], count, axis=0))
+        sim_rows.extend([int(sim_index)] * count)
+        sample_rows.extend(range(count))
+    if not sample_blocks:
+        raise ValueError("selected_simulations retained no generated samples")
+    return (
+        np.concatenate(sample_blocks, axis=0),
+        np.concatenate(theta_blocks, axis=0),
+        np.asarray(sim_rows, dtype=np.int64),
+        np.asarray(sample_rows, dtype=np.int64),
+    )
 
 
 def file_sha256(path: str | Path, block_size: int = 1 << 20) -> str:
