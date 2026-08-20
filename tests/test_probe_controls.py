@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -50,3 +51,143 @@ def test_load_heldout_real_slices_reproduces_legacy_pair_order(monkeypatch):
     np.testing.assert_array_equal(theta_raw, params[expected_pairs[:, 0]])
     np.testing.assert_array_equal(images, expected_raw * np.float32(0.5))
     assert images.dtype == np.float32
+
+
+class FakeEncoder:
+    model_path = Path("fake-head.pkl")
+
+    def predict_norm(self, images, batch_size=512):
+        means = np.asarray(images, dtype=np.float32).mean(axis=(1, 2, 3))
+        return np.stack([means + offset for offset in range(6)], axis=1)
+
+    def norm_to_raw(self, theta_norm):
+        return np.asarray(theta_norm, dtype=np.float32)
+
+
+def synthetic_probe_inputs():
+    images = np.arange(8 * 8 * 8, dtype=np.float32).reshape(8, 1, 8, 8)
+    images = images / images.max()
+    sim_index = np.repeat(np.array([900, 901]), 4)
+    z_index = np.tile(np.arange(4), 2)
+    theta_raw = np.stack(
+        [
+            np.linspace(0.1 + parameter, 0.2 + parameter, 8, dtype=np.float32)
+            for parameter in range(6)
+        ],
+        axis=1,
+    )
+    return images, theta_raw, sim_index, z_index
+
+
+def test_transform_evaluation_has_required_long_columns_and_one_identity():
+    from simdiff_eval.probe_controls import TransformSpec, evaluate_transform_specs
+    from simdiff_eval.probe_transforms import get_transform
+
+    images, theta_raw, sim_index, z_index = synthetic_probe_inputs()
+    specs = [
+        TransformSpec("identity", "identity", get_transform("identity")),
+        TransformSpec("flip_h", "dihedral", get_transform("flip_h")),
+    ]
+    table = evaluate_transform_specs(
+        images,
+        theta_raw,
+        sim_index,
+        z_index,
+        FakeEncoder(),
+        specs,
+        batch_size=4,
+    )
+    required = {
+        "transform",
+        "transform_family",
+        "k_cut",
+        "k_cut_over_knyq",
+        "window",
+        "sim_index",
+        "z_index",
+        "parameter",
+        "theta_true",
+        "theta_pred",
+        "out_of_range_fraction",
+    }
+    assert required.issubset(table.columns)
+    assert table[table["transform"] == "identity"].shape[0] == 8 * 6
+    assert table.shape[0] == 2 * 8 * 6
+
+
+def test_aggregation_reports_per_slice_and_per_cosmology_with_bootstrap():
+    from simdiff_eval.probe_controls import (
+        TransformSpec,
+        aggregate_prediction_table,
+        evaluate_transform_specs,
+    )
+    from simdiff_eval.probe_transforms import get_transform
+
+    images, theta_raw, sim_index, z_index = synthetic_probe_inputs()
+    table = evaluate_transform_specs(
+        images,
+        theta_raw,
+        sim_index,
+        z_index,
+        FakeEncoder(),
+        [TransformSpec("identity", "identity", get_transform("identity"))],
+        batch_size=4,
+    )
+    report = aggregate_prediction_table(table, n_boot=50, seed=17)
+    grains = {row["grain"] for row in report["metrics"]}
+    assert grains == {"per_slice", "per_cosmology"}
+    omega_rows = [row for row in report["metrics"] if row["parameter"] == "Omega_m"]
+    assert {row["n"] for row in omega_rows} == {2, 8}
+    assert all("rmse_ci_low" in row and "slope_ci_high" in row for row in omega_rows)
+
+
+def test_manifest_records_frozen_encoder_environment_and_seeds(tmp_path, monkeypatch):
+    from simdiff_eval import probe_controls
+
+    encoder_path = tmp_path / "encoder.npz"
+    head_path = tmp_path / "head.pkl"
+    encoder_path.write_bytes(b"encoder artifact")
+    head_path.write_bytes(b"head artifact")
+    monkeypatch.setattr(
+        probe_controls,
+        "installed_sklearn_version",
+        lambda: "9.9.9",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        probe_controls,
+        "git_state",
+        lambda project_dir: {"revision": "abc123", "dirty": True},
+        raising=False,
+    )
+    manifest = probe_controls.build_run_manifest(
+        project_dir=tmp_path,
+        encoder_path=encoder_path,
+        head_path=head_path,
+        heldout_indices=np.arange(900, 932),
+        slices_per_sim=128,
+        transforms=[{"name": "identity", "family": "identity"}],
+        seeds={"bootstrap": 17, "roll": 23},
+        arguments={"device": "cpu"},
+    )
+    assert manifest["git"] == {"revision": "abc123", "dirty": True}
+    assert manifest["encoder"]["path"] == str(encoder_path.resolve())
+    assert len(manifest["encoder"]["sha256"]) == 64
+    assert manifest["head"]["path"] == str(head_path.resolve())
+    assert len(manifest["head"]["sha256"]) == 64
+    assert manifest["scikit_learn_version"] == "9.9.9"
+    assert manifest["heldout_indices"] == list(range(900, 932))
+    assert manifest["seeds"] == {"bootstrap": 17, "roll": 23}
+
+
+def test_transform_control_cli_help_is_import_safe():
+    result = subprocess.run(
+        [sys.executable, "scripts/evaluate_probe_transform_controls.py", "--help"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "frozen VGG" in result.stdout
+    assert "--encoder" in result.stdout
