@@ -7,6 +7,7 @@ from simdiff_eval.dit_diagnostics import (
     bootstrap_histogram_l1_interval,
     bootstrap_mean_interval,
     bootstrap_power_log10_mae_interval,
+    interpolate_threshold_crossings,
     one_point_l1_common_bins,
     patch_boundary_statistics,
     split_reference_physics_floor,
@@ -81,6 +82,44 @@ def test_bootstrap_mean_interval_is_deterministic():
 
     assert first == second
     assert first[0] < values.mean() < first[1]
+
+
+def test_threshold_crossing_reports_every_recrossing_without_scalar_n50():
+    result = interpolate_threshold_crossings(
+        np.asarray([2**6, 2**7, 2**8], dtype=float),
+        np.asarray([0.2, 0.8, 0.2]),
+        threshold=0.5,
+    )
+
+    assert result["status"] == "multiple_crossings"
+    assert result["n_crossings"] == 2
+    assert result["monotone"] is False
+    assert result["crossings"] == pytest.approx([6.5, 7.5])
+    assert np.isnan(result["n_cross"])
+    assert np.isnan(result["log2_n_cross"])
+
+
+@pytest.mark.parametrize(
+    ("values", "expected_status"),
+    [
+        ([0.6, 0.7, 0.8], "left_censored"),
+        ([0.1, 0.2, 0.3], "right_censored"),
+    ],
+)
+def test_threshold_crossing_censored_curves_have_no_scalar_n50(
+    values, expected_status
+):
+    result = interpolate_threshold_crossings(
+        np.asarray([2**6, 2**7, 2**8], dtype=float),
+        np.asarray(values),
+        threshold=0.5,
+    )
+
+    assert result["status"] == expected_status
+    assert result["n_crossings"] == 0
+    assert result["crossings"] == []
+    assert np.isnan(result["n_cross"])
+    assert np.isnan(result["log2_n_cross"])
 
 
 def test_scalar_physics_bootstrap_intervals_are_deterministic():
