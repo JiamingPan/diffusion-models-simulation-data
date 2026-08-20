@@ -9,6 +9,11 @@ from pathlib import Path
 from textwrap import dedent
 from typing import Any
 
+try:
+    from scripts.update_dit_l16_300k_500k_outlier_notebook import transform_notebook
+except ModuleNotFoundError:  # Direct execution places scripts/ on sys.path.
+    from update_dit_l16_300k_500k_outlier_notebook import transform_notebook
+
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT_PATH = ROOT / "notebooks" / "nf_generalize_fig2_dit_l16_300k_500k_analysis.ipynb"
@@ -1384,7 +1389,7 @@ def build_notebook() -> dict[str, Any]:
         markdown(SUMMARY_MARKDOWN, section="16-summary"),
         code(SUMMARY_CODE, section="16-summary"),
     ]
-    return {
+    notebook = {
         "cells": cells,
         "metadata": {
             "kernelspec": {
@@ -1403,6 +1408,7 @@ def build_notebook() -> dict[str, Any]:
         "nbformat": 4,
         "nbformat_minor": 5,
     }
+    return transform_notebook(notebook)
 
 
 def main() -> None:
