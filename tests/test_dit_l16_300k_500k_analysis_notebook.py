@@ -328,6 +328,20 @@ def test_notebook_contains_every_requested_diagnostic():
         assert text in source
 
 
+def test_architecture_context_uses_a_dedicated_legend_band():
+    source = notebook_source()
+    required = (
+        "architecture_grid = fig.add_gridspec",
+        "architecture_legend_axis = fig.add_subplot(architecture_grid[0, :])",
+        "architecture_legend_axis.axis('off')",
+        "architecture_legend_axis.legend(",
+    )
+    for text in required:
+        assert text in source
+    assert "bbox_to_anchor=(0.5, 0.98)" not in source
+    assert "fig.legend(handles, labels" not in source
+
+
 def test_builder_includes_outlier_excluded_analysis():
     builder = load_builder()
     source = "\n".join(
