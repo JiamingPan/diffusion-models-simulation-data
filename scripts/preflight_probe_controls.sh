@@ -45,15 +45,18 @@ for path in "${required_files[@]}"; do
   [[ -f "${path}" ]] || { echo "Missing required file: ${path}" >&2; exit 1; }
 done
 
-cd "${PROJECT_DIR}"
+cd "${CODE_ROOT}"
 "${PYTHON_BIN}" -c '
 import sys
 import torch
 import torchvision
+from pathlib import Path
 from simdiff_eval import probe_controls, probe_transforms
 bad = set(filter(None, __import__("os").environ["PROBE_CONTROLS_INCOMPATIBLE_PATHS"].split(__import__("os").pathsep)))
 assert not (bad & set(sys.path)), (bad, sys.path)
 print(f"[probe-preflight] torch={torch.__version__} torchvision={torchvision.__version__}")
+print(f"[probe-preflight] probe_controls={Path(probe_controls.__file__).resolve()}")
+print(f"[probe-preflight] probe_transforms={Path(probe_transforms.__file__).resolve()}")
 print("[probe-preflight] sanitized imports passed")
 '
 "${PYTHON_BIN}" "${CODE_ROOT}/scripts/evaluate_probe_transform_controls.py" --help >/dev/null
