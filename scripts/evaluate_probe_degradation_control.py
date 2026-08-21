@@ -105,6 +105,10 @@ def parse_args() -> argparse.Namespace:
         description="Run degraded real-map controls with an existing frozen VGG probe."
     )
     parser.add_argument("--project-dir", default=".")
+    parser.add_argument(
+        "--source-project-dir",
+        help="Checkout whose Git state is recorded in the output manifest; defaults to --project-dir.",
+    )
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--run-name", action="append")
     parser.add_argument("--data-root")
@@ -136,6 +140,7 @@ def main() -> None:
     from simdiff_eval.probe_eval import load_heldout_real_slices
 
     project_dir = Path(args.project_dir).resolve()
+    source_project_dir = Path(args.source_project_dir or args.project_dir).resolve()
     data_root = args.data_root or DATA_ROOT
     encoder_path = Path(args.encoder)
     if not encoder_path.is_absolute():
@@ -361,7 +366,7 @@ def main() -> None:
     metrics["limitation"] = C4_LIMITATION
 
     manifest = build_run_manifest(
-        project_dir=project_dir,
+        project_dir=source_project_dir,
         encoder_path=encoder_path,
         head_path=encoder.model_path,
         heldout_indices=heldout,

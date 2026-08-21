@@ -102,6 +102,10 @@ def parse_args() -> argparse.Namespace:
         description="Run input-only controls with an existing frozen VGG cosmology probe."
     )
     parser.add_argument("--project-dir", default=".")
+    parser.add_argument(
+        "--source-project-dir",
+        help="Checkout whose Git state is recorded in the output manifest; defaults to --project-dir.",
+    )
     parser.add_argument("--data-root")
     parser.add_argument("--encoder", default="results/nf_conditional_bias_probe/encoder/vgg_mlp_encoder.npz")
     parser.add_argument("--device", default="auto")
@@ -127,6 +131,7 @@ def main() -> None:
     from simdiff_eval.probe_eval import load_heldout_real_slices
 
     project_dir = Path(args.project_dir).resolve()
+    source_project_dir = Path(args.source_project_dir or args.project_dir).resolve()
     data_root = args.data_root or DATA_ROOT
     encoder_path = Path(args.encoder)
     if not encoder_path.is_absolute():
@@ -173,7 +178,7 @@ def main() -> None:
         seed=args.bootstrap_seed,
     )
     manifest = build_run_manifest(
-        project_dir=project_dir,
+        project_dir=source_project_dir,
         encoder_path=encoder_path,
         head_path=encoder.model_path,
         heldout_indices=heldout,
