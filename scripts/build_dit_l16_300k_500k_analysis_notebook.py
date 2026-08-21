@@ -335,6 +335,28 @@ continuation_selected_bins = pd.read_csv(selected_bins_path)
 continuation_patch = pd.read_csv(patch_path)
 continuation_curves = np.load(curves_path)
 
+
+def physics_k_max(dataset_tag: str, updates_k: int) -> float:
+    rows = continuation_physics[
+        (continuation_physics['dataset_tag'] == dataset_tag)
+        & (continuation_physics['updates_k'] == int(updates_k))
+    ]
+    if len(rows) != 1:
+        raise RuntimeError(
+            f'Expected exactly one physics row for {dataset_tag}/{updates_k}k; found {len(rows)}'
+        )
+    try:
+        value = float(rows.iloc[0]['k_max'])
+    except (KeyError, TypeError, ValueError) as error:
+        raise RuntimeError(
+            f'Invalid k_max for {dataset_tag}/{updates_k}k; expected a finite positive value'
+        ) from error
+    if not np.isfinite(value) or value <= 0:
+        raise RuntimeError(
+            f'Invalid k_max for {dataset_tag}/{updates_k}k; expected a finite positive value'
+        )
+    return value
+
 if len(continuation_novelty) != 120:
     raise RuntimeError(f'Expected 120 novelty rows; found {len(continuation_novelty)}')
 if len(continuation_physics) != audit_counts['physics_summary_rows']:
@@ -879,7 +901,12 @@ for updates_k in CONT_UPDATES_K:
         key = f'{tag}_{updates_k}k'
         real_pk = np.asarray(continuation_curves[f'{key}_real_pk_mean'], dtype=float)
         expected_kbins = np.asarray(continuation_curves[f'{key}_kbins'], dtype=float)
-        generated_pk, kbins = batch_power_spectra(samples, nbins=len(real_pk))
+        k_max = physics_k_max(tag, updates_k)
+        generated_pk, kbins = batch_power_spectra(
+            samples,
+            nbins=len(real_pk),
+            k_max=k_max,
+        )
         if not np.allclose(kbins, expected_kbins, equal_nan=True):
             raise RuntimeError(f'k-bin mismatch for {tag}/{updates_k}k')
         pk_ratio = generated_pk / np.clip(real_pk[None, :], 1e-30, None)
@@ -1113,13 +1140,18 @@ for case_index, (axis, (tag, updates_k)) in enumerate(zip(axes.flat, sampler_cas
     kbins = continuation_curves[f'{key}_kbins']
     real_pk = continuation_curves[f'{key}_real_pk_mean']
     sample_arrays = {}
+    k_max = physics_k_max(tag, updates_k)
     for path, label, color, expected_steps, expected_scheduler in (
         (dpm_path, 'DPM-Solver 50', '#0072B2', 50, 'DPMSolverMultistepScheduler'),
         (ddpm_path, 'DDPM 500', '#D55E00', 500, 'DDPMScheduler'),
     ):
         samples = load_samples(path)
         sample_arrays[label] = samples
-        spectra, current_kbins = batch_power_spectra(samples, nbins=len(real_pk))
+        spectra, current_kbins = batch_power_spectra(
+            samples,
+            nbins=len(real_pk),
+            k_max=k_max,
+        )
         if not np.allclose(current_kbins, kbins, equal_nan=True):
             raise RuntimeError(f'k-bin mismatch for {path}')
         ratio = np.nanmean(spectra, axis=0) / np.clip(real_pk, 1e-30, None)
