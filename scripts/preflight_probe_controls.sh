@@ -48,10 +48,10 @@ done
 cd "${CODE_ROOT}"
 "${PYTHON_BIN}" -c '
 import sys
-import torch
-import torchvision
 from pathlib import Path
 from simdiff_eval import probe_controls, probe_transforms
+import torch
+import torchvision
 bad = set(filter(None, __import__("os").environ["PROBE_CONTROLS_INCOMPATIBLE_PATHS"].split(__import__("os").pathsep)))
 assert not (bad & set(sys.path)), (bad, sys.path)
 print(f"[probe-preflight] torch={torch.__version__} torchvision={torchvision.__version__}")
