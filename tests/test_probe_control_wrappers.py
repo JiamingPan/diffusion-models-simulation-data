@@ -217,6 +217,90 @@ def test_preflight_imports_simdiff_eval_from_code_root_not_artifacts(tmp_path):
     assert str(stale_simdiff) not in result.stdout
 
 
+def test_preflight_imports_pandas_like_dependency_before_torch(tmp_path):
+    code_root = tmp_path / "pinned-code"
+    code_scripts = code_root / "scripts"
+    code_simdiff = code_root / "simdiff_eval"
+    code_scripts.mkdir(parents=True)
+    code_simdiff.mkdir()
+    shutil.copy(SCRIPTS / "probe_controls_runtime.py", code_scripts)
+    shutil.copy(SCRIPTS / "probe_controls_runtime.sh", code_scripts)
+    (code_simdiff / "__init__.py").write_text("")
+    (code_simdiff / "probe_controls.py").write_text("import pandas\n")
+    (code_simdiff / "probe_transforms.py").write_text("")
+    for name in ("evaluate_probe_transform_controls.py", "evaluate_probe_degradation_control.py"):
+        (code_scripts / name).write_text("print('help')\n")
+    marker = tmp_path / "pandas-loaded"
+    (code_root / "pandas.py").write_text(
+        "from pathlib import Path\n"
+        "import os\n"
+        "Path(os.environ['PANDAS_MARKER']).write_text('loaded')\n"
+    )
+    (code_root / "torch.py").write_text(
+        "from pathlib import Path\n"
+        "import os\n"
+        "if not Path(os.environ['PANDAS_MARKER']).exists():\n"
+        "    raise RuntimeError('torch imported before pandas-like dependency')\n"
+        "__version__ = 'fake'\n"
+    )
+    (code_root / "torchvision.py").write_text(
+        "from pathlib import Path\n"
+        "import os\n"
+        "if not Path(os.environ['PANDAS_MARKER']).exists():\n"
+        "    raise RuntimeError('torchvision imported before pandas-like dependency')\n"
+        "__version__ = 'fake'\n"
+    )
+
+    artifact_root = tmp_path / "artifacts"
+    encoder_root = artifact_root / "results/nf_conditional_bias_probe/encoder"
+    sample_root = artifact_root / "results/nf_conditional_bias_probe/samples"
+    encoder_root.mkdir(parents=True)
+    sample_root.mkdir(parents=True)
+    (encoder_root / "vgg_mlp_encoder.npz").write_bytes(b"encoder")
+    (encoder_root / "vgg_mlp_encoder.pkl").write_bytes(b"head")
+    (artifact_root / "local/nf_conditional_bias_probe").mkdir(parents=True)
+    (artifact_root / "local/nf_conditional_bias_probe/manifest.json").write_text("{}")
+    for name in (
+        "nf_cond_bias_hi_u128_d2p07_n128_200k_seed123_dpm50_heldout_k64.npz",
+        "nf_cond_bias_hi_u128_d2p14_n16384_200k_seed123_dpm50_heldout_k64.npz",
+    ):
+        (sample_root / name).write_bytes(b"sample")
+    torch_cache = tmp_path / "torch-cache/hub/checkpoints"
+    torch_cache.mkdir(parents=True)
+    (torch_cache / "vgg16-397923af.pth").write_bytes(b"weights")
+
+    subprocess.run(["git", "init", "-q", str(code_root)], check=True)
+    subprocess.run(["git", "-C", str(code_root), "config", "user.email", "test@example.invalid"], check=True)
+    subprocess.run(["git", "-C", str(code_root), "config", "user.name", "Test"], check=True)
+    subprocess.run(["git", "-C", str(code_root), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(code_root), "commit", "-qm", "pinned code"], check=True)
+    expected_commit = subprocess.check_output(
+        ["git", "-C", str(code_root), "rev-parse", "HEAD"], text=True
+    ).strip()
+
+    env = os.environ.copy()
+    env.update(
+        CODE_ROOT=str(code_root),
+        PROJECT_DIR=str(artifact_root),
+        PYTHON_BIN=sys.executable,
+        TORCH_HOME=str(tmp_path / "torch-cache"),
+        EXPECTED_COMMIT=expected_commit,
+        PANDAS_MARKER=str(marker),
+        MPLCONFIGDIR=str(tmp_path / "matplotlib"),
+    )
+    result = subprocess.run(
+        ["bash", str(SCRIPTS / "preflight_probe_controls.sh")],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert marker.exists()
+
+
 @pytest.mark.parametrize(
     "script_name",
     ["evaluate_probe_transform_controls.py", "evaluate_probe_degradation_control.py"],
