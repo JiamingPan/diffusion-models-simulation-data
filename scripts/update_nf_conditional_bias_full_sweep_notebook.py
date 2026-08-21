@@ -61,6 +61,13 @@ import sys
 import pandas as pd
 from IPython.display import Image, Markdown, display
 
+# Resolve the repository independently so this cell is safe to run by itself.
+PROJECT_DIR = Path.cwd().resolve()
+while PROJECT_DIR != PROJECT_DIR.parent and not (PROJECT_DIR / '.git').exists():
+    PROJECT_DIR = PROJECT_DIR.parent
+if not (PROJECT_DIR / '.git').exists():
+    raise RuntimeError(f'Could not locate the repository root from {Path.cwd().resolve()}')
+
 full_sweep_root = PROJECT_DIR / 'results' / 'nf_conditional_bias_fresh_full_sweep_200k' / 'calibration_vgg'
 full_points_path = full_sweep_root / 'bias_probe_per_cosmology_points.csv'
 full_slopes_path = full_sweep_root / 'bias_probe_regime_slopes.csv'

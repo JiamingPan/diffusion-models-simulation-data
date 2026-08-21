@@ -200,6 +200,23 @@ def test_results_notebook_contains_full_sweep_section():
     assert "missing dataset sizes" in source
     assert "all ten generators are trained from clean initializations" in source
     assert "checkpoints are reused" not in source
+    assert "PROJECT_DIR = Path.cwd().resolve()" in source
+    assert "while PROJECT_DIR != PROJECT_DIR.parent" in source
+
+
+def test_full_sweep_cell_does_not_depend_on_an_earlier_root_variable():
+    notebook = json.loads((ROOT / "notebooks/nf_conditional_bias_vgg_results.ipynb").read_text())
+    sweep_cells = [
+        cell
+        for cell in notebook.get("cells", [])
+        if "conditional-full-sweep" in cell.get("metadata", {}).get("tags", [])
+        and cell.get("cell_type") == "code"
+    ]
+    assert len(sweep_cells) == 1
+    source = "".join(sweep_cells[0].get("source", []))
+    assignment = source.index("PROJECT_DIR = Path.cwd().resolve()")
+    first_use = source.index("full_sweep_root = PROJECT_DIR")
+    assert assignment < first_use
 
 
 def test_plot_module_imports_in_notebook_package_mode():
