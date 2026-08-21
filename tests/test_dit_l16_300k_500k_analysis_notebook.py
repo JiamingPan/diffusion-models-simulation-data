@@ -1,14 +1,22 @@
 import ast
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from simdiff_eval.metrics import batch_power_spectra
+
+
 BUILDER_PATH = REPO_ROOT / "scripts" / "build_dit_l16_300k_500k_analysis_notebook.py"
+UPDATER_PATH = REPO_ROOT / "scripts" / "update_dit_l16_continue500k_notebook.py"
 NOTEBOOK_PATH = REPO_ROOT / "notebooks" / "nf_generalize_fig2_dit_l16_300k_500k_analysis.ipynb"
 EXPECTED_UPDATES = (300, 340, 380, 420, 460, 500)
 EXPECTED_TAGS = tuple(f"d2p{power:02d}" for power in range(6, 16))
@@ -16,6 +24,14 @@ EXPECTED_TAGS = tuple(f"d2p{power:02d}" for power in range(6, 16))
 
 def load_builder():
     spec = importlib.util.spec_from_file_location("dit_l16_trajectory_builder", BUILDER_PATH)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_updater():
+    spec = importlib.util.spec_from_file_location("dit_l16_continue500k_notebook", UPDATER_PATH)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
@@ -30,8 +46,8 @@ def notebook_source() -> str:
     return "\n".join("".join(cell.get("source", [])) for cell in notebook()["cells"])
 
 
-def notebook_function(name: str):
-    for cell in notebook()["cells"]:
+def function_from_cells(cells: list[dict], name: str):
+    for cell in cells:
         if cell["cell_type"] != "code":
             continue
         tree = ast.parse("".join(cell["source"]))
@@ -39,12 +55,52 @@ def notebook_function(name: str):
             if isinstance(node, ast.FunctionDef) and node.name == name:
                 namespace = {
                     "Path": Path,
+                    "np": np,
                     "pd": pd,
                     "project_path": lambda value: Path(str(value)),
                 }
                 exec(compile(ast.Module(body=[node], type_ignores=[]), "<notebook>", "exec"), namespace)
                 return namespace[name]
     raise AssertionError(f"Notebook function not found: {name}")
+
+
+def notebook_function(name: str):
+    return function_from_cells(notebook()["cells"], name)
+
+
+def generated_notebook_variants() -> list[tuple[str, list[dict]]]:
+    builder = load_builder()
+    updater = load_updater()
+    return [
+        ("analysis notebook", notebook()["cells"]),
+        ("analysis builder", builder.build_notebook()["cells"]),
+        ("continuation updater", updater.build_cells()),
+    ]
+
+
+def spectrum_recomputations(cells: list[dict]) -> list[tuple[str, bool]]:
+    calls = []
+    for cell in cells:
+        if cell["cell_type"] != "code":
+            continue
+        tree = ast.parse("".join(cell["source"]))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not isinstance(node.func, ast.Name) or node.func.id != "batch_power_spectra":
+                continue
+            nbins = next((keyword.value for keyword in node.keywords if keyword.arg == "nbins"), None)
+            if not (
+                isinstance(nbins, ast.Call)
+                and isinstance(nbins.func, ast.Name)
+                and nbins.func.id == "len"
+                and len(nbins.args) == 1
+                and isinstance(nbins.args[0], ast.Name)
+                and nbins.args[0].id == "real_pk"
+            ):
+                continue
+            calls.append((cell["id"], any(keyword.arg == "k_max" for keyword in node.keywords)))
+    return calls
 
 
 def test_builder_and_standalone_notebook_exist():
@@ -124,6 +180,61 @@ def test_notebook_enforces_complete_audited_checkpoint_specific_inputs():
         assert tag in source
     assert "'valid_checkpoints': 50" not in source
     assert "Final artifact audit: **PASS_WITH_WARNINGS**" not in source
+
+
+def test_every_generated_notebook_real_pk_recomputation_passes_k_max():
+    observed = []
+    for label, cells in generated_notebook_variants():
+        calls = spectrum_recomputations(cells)
+        assert calls, f"No real_pk spectrum recomputations found in {label}"
+        observed.extend((label, cell_id, has_k_max) for cell_id, has_k_max in calls)
+    assert observed
+    assert [entry for entry in observed if not entry[2]] == []
+
+
+def test_physics_k_max_keeps_archived_bins_and_exposes_legacy_mismatch():
+    builder = load_builder()
+    helper = function_from_cells(builder.build_notebook()["cells"], "physics_k_max")
+    helper.__globals__["continuation_physics"] = pd.DataFrame(
+        [{"dataset_tag": "d2p06", "updates_k": 300, "k_max": 64.0}]
+    )
+    samples = np.random.default_rng(123).normal(size=(4, 1, 128, 128))
+
+    expected_spectra, expected_kbins = batch_power_spectra(samples, nbins=91, k_max=64.0)
+    real_pk = expected_spectra.mean(axis=0)
+    generated_pk, generated_kbins = batch_power_spectra(
+        samples,
+        nbins=len(real_pk),
+        k_max=helper("d2p06", 300),
+    )
+    _, legacy_kbins = batch_power_spectra(samples, nbins=len(real_pk))
+
+    np.testing.assert_allclose(generated_kbins, expected_kbins)
+    assert not np.allclose(legacy_kbins, expected_kbins)
+    assert generated_pk.shape == expected_spectra.shape
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        [],
+        [
+            {"dataset_tag": "d2p06", "updates_k": 300, "k_max": 64.0},
+            {"dataset_tag": "d2p06", "updates_k": 300, "k_max": 64.0},
+        ],
+        [{"dataset_tag": "d2p06", "updates_k": 300, "k_max": 0.0}],
+        [{"dataset_tag": "d2p06", "updates_k": 300, "k_max": -1.0}],
+        [{"dataset_tag": "d2p06", "updates_k": 300, "k_max": np.nan}],
+        [{"dataset_tag": "d2p06", "updates_k": 300, "k_max": np.inf}],
+    ],
+)
+def test_every_physics_k_max_helper_fails_closed_for_invalid_rows(rows):
+    table = pd.DataFrame(rows, columns=["dataset_tag", "updates_k", "k_max"])
+    for _, cells in generated_notebook_variants()[1:]:
+        helper = function_from_cells(cells, "physics_k_max")
+        helper.__globals__["continuation_physics"] = table
+        with pytest.raises(RuntimeError):
+            helper("d2p06", 300)
 
 
 def test_notebook_audits_corrected_physics_definitions():
