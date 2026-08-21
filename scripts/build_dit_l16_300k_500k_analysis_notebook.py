@@ -679,7 +679,13 @@ historical_dit_paths = {
     for feature in CONT_FEATURES
 }
 
-fig, axes = plt.subplots(1, 2, figsize=(17, 6.2), sharey=True, constrained_layout=True)
+fig = plt.figure(figsize=(17, 7.2), constrained_layout=True)
+architecture_grid = fig.add_gridspec(2, 2, height_ratios=(0.16, 1.0))
+architecture_legend_axis = fig.add_subplot(architecture_grid[0, :])
+architecture_legend_axis.axis('off')
+left_axis = fig.add_subplot(architecture_grid[1, 0])
+right_axis = fig.add_subplot(architecture_grid[1, 1], sharey=left_axis)
+axes = np.asarray((left_axis, right_axis))
 for axis, feature in zip(axes, CONT_FEATURES):
     unet = build_historical_unet_metric_table(pd.read_csv(unet_paths[feature]), feature=feature)
     historical_dit = normalize_generalization_table(
@@ -713,8 +719,16 @@ for axis, feature in zip(axes, CONT_FEATURES):
     axis.grid(alpha=0.16)
 axes[0].set_ylabel('q95 novelty score')
 handles, labels = axes[0].get_legend_handles_labels()
-fig.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, 0.98), ncol=4, frameon=False)
-fig.suptitle('Historical architecture context only: unequal optimizer budgets', y=1.08, fontsize=21, fontweight='semibold')
+architecture_legend_axis.legend(
+    handles,
+    labels,
+    loc='center',
+    ncol=4,
+    frameon=False,
+    columnspacing=1.8,
+    handlelength=2.4,
+)
+fig.suptitle('Historical architecture context only: unequal optimizer budgets', fontsize=21, fontweight='semibold')
 save_figure(fig, 'architecture_context.png')
 plt.show()
 """
