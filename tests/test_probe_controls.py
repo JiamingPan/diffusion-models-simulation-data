@@ -229,6 +229,7 @@ def test_transform_control_cli_help_is_import_safe():
     assert result.returncode == 0, result.stderr
     assert "frozen VGG" in result.stdout
     assert "--encoder" in result.stdout
+    assert "--source-project-dir" in result.stdout
     assert "--control" in result.stdout
     assert "c0" in result.stdout
     assert "c1" in result.stdout
@@ -458,6 +459,7 @@ def test_degradation_control_cli_help_is_import_safe():
     assert "degraded real" in result.stdout
     assert "--split-seed" in result.stdout
     assert "--manifest" in result.stdout
+    assert "--source-project-dir" in result.stdout
 
 
 def test_c1_suite_has_all_required_arms_windows_and_cutoffs():
