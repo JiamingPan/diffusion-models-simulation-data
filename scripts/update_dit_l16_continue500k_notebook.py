@@ -133,6 +133,28 @@ continuation_selected_bins = pd.read_csv(selected_bins_path)
 continuation_patch = pd.read_csv(patch_table_path)
 continuation_curves = np.load(physics_curves_path)
 
+
+def physics_k_max(dataset_tag: str, updates_k: int) -> float:
+    rows = continuation_physics[
+        (continuation_physics['dataset_tag'] == dataset_tag)
+        & (continuation_physics['updates_k'] == int(updates_k))
+    ]
+    if len(rows) != 1:
+        raise RuntimeError(
+            f'Expected exactly one physics row for {dataset_tag}/{updates_k}k; found {len(rows)}'
+        )
+    try:
+        value = float(rows.iloc[0]['k_max'])
+    except (KeyError, TypeError, ValueError) as error:
+        raise RuntimeError(
+            f'Invalid k_max for {dataset_tag}/{updates_k}k; expected a finite positive value'
+        ) from error
+    if not np.isfinite(value) or value <= 0:
+        raise RuntimeError(
+            f'Invalid k_max for {dataset_tag}/{updates_k}k; expected a finite positive value'
+        )
+    return value
+
 if len(continuation_physics) != 60:
     raise RuntimeError(f'Expected 60 physics rows; found {len(continuation_physics)}')
 if len(continuation_selected_bins) != 180:
@@ -420,9 +442,14 @@ for axis, (tag, updates_k) in zip(axes.flat, [(tag, updates) for tag in ('d2p08'
     key = f'{tag}_{updates_k}k'
     real_pk = continuation_curves[f'{key}_real_pk_mean']
     kbins = continuation_curves[f'{key}_kbins']
+    k_max = physics_k_max(tag, updates_k)
     for path, label, color in ((dpm_path, 'DPM-Solver 50', '#0072B2'), (ddpm_path, 'DDPM 500', '#D55E00')):
         samples = load_npz_array(path)
-        spectra, current_kbins = batch_power_spectra(samples, nbins=len(real_pk))
+        spectra, current_kbins = batch_power_spectra(
+            samples,
+            nbins=len(real_pk),
+            k_max=k_max,
+        )
         if not np.allclose(current_kbins, kbins, equal_nan=True):
             raise RuntimeError(f'k-bin mismatch for {path}')
         ratio = np.nanmean(spectra, axis=0) / np.clip(real_pk, 1e-30, None)
