@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
 from pathlib import Path
 
 
@@ -14,6 +16,41 @@ NOTEBOOK = (
 def notebook_source() -> str:
     notebook = json.loads(NOTEBOOK.read_text())
     return "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
+
+
+def test_notebook_setup_uses_production_c4_limitation():
+    from simdiff_eval.probe_controls import C4_LIMITATION
+
+    notebook = json.loads(NOTEBOOK.read_text())
+    setup = next(
+        cell for cell in notebook["cells"]
+        if cell["cell_type"] == "code" and "PROJECT_DIR =" in "".join(cell["source"])
+    )
+    namespace = {}
+    display_module = types.ModuleType("IPython.display")
+    display_module.Markdown = lambda value: value
+    display_module.display = lambda *args, **kwargs: None
+    ipython_module = types.ModuleType("IPython")
+    ipython_module.display = display_module
+    previous = {name: sys.modules.get(name) for name in ("IPython", "IPython.display")}
+    sys.modules["IPython"] = ipython_module
+    sys.modules["IPython.display"] = display_module
+    try:
+        exec("".join(setup["source"]), namespace)
+    finally:
+        for name, module in previous.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+    assert namespace["C4_LIMITATION"] == C4_LIMITATION
+
+
+def test_notebook_cells_have_unique_nonempty_ids():
+    notebook = json.loads(NOTEBOOK.read_text())
+    ids = [cell.get("id") for cell in notebook["cells"]]
+    assert all(isinstance(cell_id, str) and cell_id for cell_id in ids)
+    assert len(ids) == len(set(ids))
 
 
 def test_probe_validation_notebook_has_reader_facing_sections_and_compilable_code():
