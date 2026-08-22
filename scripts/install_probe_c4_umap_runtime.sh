@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install only the two missing, pinned C4 UMAP packages into an isolated folder.
+# Install the exact C4 UMAP stack into an isolated folder.
 
 set -euo pipefail
 trap 'rc=$?; echo "[c4-umap-install] failed at line ${LINENO}: ${BASH_COMMAND} (exit ${rc})" >&2' ERR
@@ -22,14 +22,22 @@ validate_runtime() {
   "${PYTHON_BIN}" -c '
 import os
 from pathlib import Path
+import llvmlite
+import numba
+import numpy
 import pynndescent
 import umap
 
 runtime = Path(os.environ["UMAP_SITE_PACKAGES"]).resolve()
+assert numpy.__version__ == "1.26.4", numpy.__version__
 assert umap.__version__ == "0.5.5", umap.__version__
 assert pynndescent.__version__ == "0.5.10", pynndescent.__version__
+assert numba.__version__ == "0.59.1", numba.__version__
+assert llvmlite.__version__ == "0.42.0", llvmlite.__version__
 assert Path(umap.__file__).resolve().is_relative_to(runtime), umap.__file__
 assert Path(pynndescent.__file__).resolve().is_relative_to(runtime), pynndescent.__file__
+assert Path(numba.__file__).resolve().is_relative_to(runtime), numba.__file__
+assert Path(llvmlite.__file__).resolve().is_relative_to(runtime), llvmlite.__file__
 print("[c4-umap-install] validated", runtime)
 '
 }
@@ -60,7 +68,9 @@ trap cleanup EXIT
   --no-deps \
   --target "${TEMP_DIR}" \
   "umap-learn==0.5.5" \
-  "pynndescent==0.5.10"
+  "pynndescent==0.5.10" \
+  "numba==0.59.1" \
+  "llvmlite==0.42.0"
 
 UMAP_SITE_PACKAGES="${TEMP_DIR}" validate_runtime
 mv "${TEMP_DIR}" "${UMAP_SITE_PACKAGES}"

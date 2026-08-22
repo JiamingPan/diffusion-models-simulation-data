@@ -193,20 +193,29 @@ def test_long_umap_job_has_frozen_code_and_new_output_guards():
     assert "UMAP_SITE_PACKAGES" in source
     assert 'umap.__version__ == "0.5.5"' in source
     assert 'pynndescent.__version__ == "0.5.10"' in source
+    assert 'numba.__version__ == "0.59.1"' in source
+    assert 'llvmlite.__version__ == "0.42.0"' in source
     assert "Path(umap.__file__).resolve().is_relative_to(runtime)" in source
     assert "Path(pynndescent.__file__).resolve().is_relative_to(runtime)" in source
+    assert "Path(numba.__file__).resolve().is_relative_to(runtime)" in source
+    assert "Path(llvmlite.__file__).resolve().is_relative_to(runtime)" in source
 
 
 def test_umap_runtime_installer_is_pinned_isolated_and_does_not_modify_the_venv():
     source = INSTALL_PATH.read_text()
     assert "umap-learn==0.5.5" in source
     assert "pynndescent==0.5.10" in source
+    assert "numba==0.59.1" in source
+    assert "llvmlite==0.42.0" in source
     assert "--no-deps" in source
     assert "--target" in source
     assert "mktemp -d" in source
     assert "UMAP_SITE_PACKAGES" in source
     assert 'umap.__version__ == "0.5.5"' in source
     assert 'pynndescent.__version__ == "0.5.10"' in source
+    assert 'numba.__version__ == "0.59.1"' in source
+    assert 'llvmlite.__version__ == "0.42.0"' in source
+    assert 'numpy.__version__ == "1.26.4"' in source
     assert '--target "${TEMP_DIR}"' in source
     assert "--upgrade" not in source
 
