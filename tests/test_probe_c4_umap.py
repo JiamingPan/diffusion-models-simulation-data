@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import importlib.util
 import pickle
 import sys
@@ -181,13 +182,44 @@ def test_analysis_applies_saved_c4_parameters_and_never_rederives_them():
     assert "scaler.fit(" not in MODULE_PATH.read_text()
 
 
+def test_main_uses_the_requested_device_before_the_load_report_exists():
+    tree = ast.parse(SCRIPT_PATH.read_text())
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "load_frozen_vgg_and_head"
+    ]
+    assert len(calls) == 1
+    device = next(keyword.value for keyword in calls[0].keywords if keyword.arg == "device")
+    assert isinstance(device, ast.Attribute)
+    assert isinstance(device.value, ast.Name)
+    assert (device.value.id, device.attr) == ("args", "device")
+
+
+def test_repaired_c4_run_records_the_v2_analysis_identity():
+    script = load_script_module()
+    config = script._analysis_config(
+        types.SimpleNamespace(
+            umap_neighbors=30,
+            umap_min_dist=0.1,
+            seed=123,
+            knn_k=15,
+            bootstrap=2000,
+        ),
+        [{"run_name": "run-a"}],
+    )
+    assert config["analysis"] == "c4_frozen_vgg_umap_seed123_v2"
+
+
 def test_long_umap_job_has_frozen_code_and_new_output_guards():
     source = SBATCH_PATH.read_text()
     assert "#SBATCH --gres=gpu:1" in source
     assert "#SBATCH --time=02:00:00" in source
     assert "EXPECTED_COMMIT" in source
     assert 'git -C "${CODE_ROOT}" status --porcelain' in source
-    assert "c4_frozen_vgg_umap_seed123_v1" in source
+    assert "c4_frozen_vgg_umap_seed123_v2" in source
     assert 'test ! -e "${OUTPUT_DIR}"' in source
     assert "--expected-results-revision" in source
     assert "UMAP_SITE_PACKAGES" in source

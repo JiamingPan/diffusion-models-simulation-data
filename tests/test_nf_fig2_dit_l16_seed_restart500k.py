@@ -95,7 +95,7 @@ def source_rows(project_dir: Path):
         for profile_index in (0, 1):
             torch.save(
                 {
-                    "step": torch.tensor(ema_step),
+                    "step": torch.tensor(ema_step, dtype=torch.float16),
                     "initted": torch.tensor(True),
                     "ema_model.weight": torch.tensor([float(profile_index)]),
                 },

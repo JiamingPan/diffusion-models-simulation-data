@@ -249,7 +249,7 @@ def validate_c4_sample_path(saved: dict[str, Any], actual_path: Path) -> None:
 
 def _analysis_config(args: argparse.Namespace, rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {
-        "analysis": "c4_frozen_vgg_umap_seed123_v1",
+        "analysis": "c4_frozen_vgg_umap_seed123_v2",
         "heldout_indices": EXPECTED_HELDOUT.astype(int).tolist(),
         "run_names": [row["run_name"] for row in rows],
         "sources": list(SOURCES),
@@ -482,7 +482,7 @@ def main() -> None:
     vgg, head, explicit_load_report = load_frozen_vgg_and_head(
         weights_path=args.vgg_weights_path,
         head_path=head_path,
-        device=explicit_load_report["device"],
+        device=args.device,
     )
     encoder = VGGEncoder(
         vgg=vgg,

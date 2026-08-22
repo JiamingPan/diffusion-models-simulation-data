@@ -131,8 +131,12 @@ class DitCheckpointResumeTests(unittest.TestCase):
             ema_dir.mkdir()
             source = FakePostHocEMA((1.25, -0.75))
             for profile_index, profile in enumerate(source.ema_models):
+                checkpoint_state = {
+                    key: value.to(torch.float16)
+                    for key, value in profile.state_dict().items()
+                }
                 torch.save(
-                    profile.state_dict(),
+                    checkpoint_state,
                     ema_dir / f"{profile_index}.299000.pt",
                 )
 
@@ -857,7 +861,7 @@ class DitCheckpointResumeTests(unittest.TestCase):
             for profile in (0, 1):
                 torch.save(
                     {
-                        "step": torch.tensor(1_359_000),
+                        "step": torch.tensor(1_359_000, dtype=torch.float16),
                         "initted": torch.tensor(True),
                         "ema_model.weight": torch.ones(1),
                     },
