@@ -33,6 +33,7 @@ if [[ "${REUSE_EXISTING_MANIFEST}" == "1" ]]; then
   "${PYTHON_BIN}" "${PREPARE}" \
     --project-dir "${PROJECT_DIR}" \
     --use-existing-manifest \
+    --upgrade-existing-manifest \
     --check-only
 else
   test ! -e "${PROJECT_DIR}/local/${SWEEP}/manifest.json"

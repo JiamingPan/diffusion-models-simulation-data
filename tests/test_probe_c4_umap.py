@@ -14,6 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = REPO_ROOT / "simdiff_eval" / "probe_c4_umap.py"
 SCRIPT_PATH = REPO_ROOT / "scripts" / "evaluate_probe_c4_umap.py"
 SBATCH_PATH = REPO_ROOT / "scripts" / "slurm" / "probe_c4_frozen_vgg_umap.sbatch"
+INSTALL_PATH = REPO_ROOT / "scripts" / "install_probe_c4_umap_runtime.sh"
 
 
 def load_module():
@@ -189,6 +190,25 @@ def test_long_umap_job_has_frozen_code_and_new_output_guards():
     assert "c4_frozen_vgg_umap_seed123_v1" in source
     assert 'test ! -e "${OUTPUT_DIR}"' in source
     assert "--expected-results-revision" in source
+    assert "UMAP_SITE_PACKAGES" in source
+    assert 'umap.__version__ == "0.5.5"' in source
+    assert 'pynndescent.__version__ == "0.5.10"' in source
+    assert "Path(umap.__file__).resolve().is_relative_to(runtime)" in source
+    assert "Path(pynndescent.__file__).resolve().is_relative_to(runtime)" in source
+
+
+def test_umap_runtime_installer_is_pinned_isolated_and_does_not_modify_the_venv():
+    source = INSTALL_PATH.read_text()
+    assert "umap-learn==0.5.5" in source
+    assert "pynndescent==0.5.10" in source
+    assert "--no-deps" in source
+    assert "--target" in source
+    assert "mktemp -d" in source
+    assert "UMAP_SITE_PACKAGES" in source
+    assert 'umap.__version__ == "0.5.5"' in source
+    assert 'pynndescent.__version__ == "0.5.10"' in source
+    assert '--target "${TEMP_DIR}"' in source
+    assert "--upgrade" not in source
 
 
 def test_explicit_head_and_vgg_weight_files_are_the_objects_actually_loaded(

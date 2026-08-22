@@ -198,6 +198,7 @@ class DitCheckpointResumeTests(unittest.TestCase):
                 checkpoint=checkpoint,
                 resume_seed=456,
                 source_updates=300_000,
+                source_microbatches=1_200_000,
                 audit_path=audit_path,
                 audit_context={"run_name": "d2p08-seed456"},
             )
@@ -216,10 +217,12 @@ class DitCheckpointResumeTests(unittest.TestCase):
             self.assertEqual(audit["run_name"], "d2p08-seed456")
             self.assertEqual(audit["resume_seed"], 456)
             self.assertEqual(audit["source_updates"], 300_000)
-            self.assertEqual(audit["first_resumed_step"], 300_001)
+            self.assertEqual(audit["source_microbatches"], 1_200_000)
+            self.assertEqual(audit["first_resumed_optimizer_step"], 300_001)
+            self.assertEqual(audit["first_resumed_microbatch_step"], 1_200_001)
             self.assertEqual(audit["first_resumed_loss"], 0.125)
             self.assertEqual(audit["checkpoint"], str(checkpoint.resolve()))
-            self.assertEqual(accelerator.logged[1], 300_032)
+            self.assertEqual(accelerator.logged[1], 1_200_032)
 
     def test_resumed_checkpoint_records_original_absolute_ema_burnin(self):
         module = load_wrapper_module()
@@ -250,6 +253,7 @@ class DitCheckpointResumeTests(unittest.TestCase):
                 checkpoint=checkpoint,
                 resume_seed=456,
                 source_updates=300_000,
+                source_microbatches=1_200_000,
                 audit_path=Path(tmpdir) / "audit.json",
                 audit_context={"original_ema_burn_in": 1_000},
             )
@@ -284,6 +288,7 @@ class DitCheckpointResumeTests(unittest.TestCase):
                 checkpoint=checkpoint,
                 resume_seed=None,
                 source_updates=340_000,
+                source_microbatches=1_360_000,
                 audit_path=audit_path,
                 audit_context={"continue_stage": 2},
             )
@@ -443,6 +448,7 @@ class DitCheckpointResumeTests(unittest.TestCase):
                 "zthin": 8,
             },
             "train": {
+                "gradient_accumulation_steps": 4,
                 "ema_sigma_rels": [0.02, 0.10],
                 "ema_update_every": 1,
                 "ema_burn_in": 1_000,
@@ -453,13 +459,17 @@ class DitCheckpointResumeTests(unittest.TestCase):
             config,
             checkpoint_epoch=9_374,
             optimizer_steps_per_epoch=32,
+            resume_ema_step=1_199_000,
             resume_seed=456,
             run_name="d2p08-seed456",
         )
 
         self.assertEqual(context["source_updates"], 300_000)
-        self.assertEqual(context["first_resumed_step"], 300_001)
-        self.assertEqual(context["expected_ema_step"], 299_000)
+        self.assertEqual(context["source_microbatches"], 1_200_000)
+        self.assertEqual(context["first_resumed_optimizer_step"], 300_001)
+        self.assertEqual(context["first_resumed_microbatch_step"], 1_200_001)
+        self.assertEqual(context["expected_ema_step"], 1_199_000)
+        self.assertEqual(context["microbatches_per_optimizer_step"], 4)
         self.assertEqual(context["original_ema_burn_in"], 1_000)
         self.assertEqual(context["resume_seed"], 456)
         self.assertEqual(
@@ -481,6 +491,19 @@ class DitCheckpointResumeTests(unittest.TestCase):
         self.assertEqual(context["training_subset"]["reshape"], "2d")
         self.assertEqual(context["training_subset"]["zthin"], 8)
         self.assertEqual(len(context["training_subset_sha256"]), 64)
+
+    def test_partial_stage_resume_advances_the_explicit_ema_clock_by_microbatches(self):
+        module = load_wrapper_module()
+        self.assertEqual(
+            module.ema_step_for_current_checkpoint(
+                stage_start_ema_step=1_199_000,
+                stage_start_epoch=9_374,
+                current_epoch=9_999,
+                optimizer_steps_per_epoch=32,
+                microbatches_per_optimizer_step=4,
+            ),
+            1_279_000,
+        )
 
     def test_checkpoint_state_patch_writes_complete_resume_state(self):
         module = load_state_patch_module()
@@ -834,11 +857,11 @@ class DitCheckpointResumeTests(unittest.TestCase):
             for profile in (0, 1):
                 torch.save(
                     {
-                        "step": torch.tensor(339_000),
+                        "step": torch.tensor(1_359_000),
                         "initted": torch.tensor(True),
                         "ema_model.weight": torch.ones(1),
                     },
-                    ema_dir / f"{profile}.339000.pt",
+                    ema_dir / f"{profile}.1359000.pt",
                 )
 
             torch.save(
@@ -868,12 +891,15 @@ class DitCheckpointResumeTests(unittest.TestCase):
                 report = module.validate_scientific_checkpoint(
                     target,
                     optimizer_steps_per_epoch=32,
+                    microbatches_per_optimizer_step=4,
+                    expected_ema_step=1_359_000,
                     expected_ema_sigma_rels=[0.02, 0.10],
                     expected_ema_burn_in=1_000,
                 )
                 loader.assert_called_once_with(str(target))
             self.assertEqual(report["absolute_updates"], 340_000)
-            self.assertEqual(report["ema_step"], 339_000)
+            self.assertEqual(report["absolute_microbatches"], 1_360_000)
+            self.assertEqual(report["ema_step"], 1_359_000)
             self.assertEqual(report["ema_sigma_rels"], [0.02, 0.10])
             self.assertEqual(report["training_state"]["scaler_state_keys"], 5)
 
@@ -881,6 +907,8 @@ class DitCheckpointResumeTests(unittest.TestCase):
                 module.validate_scientific_checkpoint(
                     target,
                     optimizer_steps_per_epoch=32,
+                    microbatches_per_optimizer_step=4,
+                    expected_ema_step=1_359_000,
                     expected_ema_sigma_rels=[0.03, 0.10],
                     expected_ema_burn_in=1_000,
                 )
@@ -890,6 +918,8 @@ class DitCheckpointResumeTests(unittest.TestCase):
                 module.validate_scientific_checkpoint(
                     target,
                     optimizer_steps_per_epoch=32,
+                    microbatches_per_optimizer_step=4,
+                    expected_ema_step=1_359_000,
                     expected_ema_sigma_rels=[0.02, 0.10],
                     expected_ema_burn_in=1_000,
                 )
