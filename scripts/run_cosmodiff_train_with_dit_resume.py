@@ -24,6 +24,39 @@ import yaml
 CHECKPOINT_RE = re.compile(r"checkpoint-epoch-(\d+)$")
 
 
+def normalize_posthoc_ema_checkpoint_state(
+    state: dict[str, object], *, expected_step: int
+) -> dict[str, object]:
+    """Restore an exact integer step after ema-pytorch's checkpoint dtype cast."""
+    import torch
+
+    if not isinstance(state, dict):
+        raise ValueError("EMA snapshot is not a state mapping")
+    stored_step = state.get("step")
+    if not isinstance(stored_step, torch.Tensor) or stored_step.numel() != 1:
+        raise ValueError("EMA snapshot step must be one tensor scalar")
+    expected_as_stored = torch.tensor(
+        float(expected_step),
+        dtype=stored_step.dtype,
+        device="cpu",
+    ).reshape(stored_step.shape)
+    actual_stored = stored_step.detach().cpu()
+    if not torch.equal(actual_stored, expected_as_stored):
+        raise ValueError(
+            "EMA snapshot step does not match the filename after checkpoint "
+            f"dtype conversion: stored={actual_stored.item()!r}, "
+            f"expected={expected_as_stored.item()!r}"
+        )
+    normalized = dict(state)
+    normalized["step"] = torch.full(
+        stored_step.shape,
+        int(expected_step),
+        dtype=torch.long,
+        device="cpu",
+    )
+    return normalized
+
+
 def restore_random_states(checkpoint_dir: Path) -> tuple[str, ...]:
     """Restore the saved Python, NumPy, torch CPU, and torch CUDA RNG states."""
     import numpy as np
@@ -122,6 +155,10 @@ def restore_posthoc_ema_state(
             state = torch.load(path, map_location="cpu", weights_only=True)
         except TypeError:
             state = torch.load(path, map_location="cpu")
+        state = normalize_posthoc_ema_checkpoint_state(
+            state,
+            expected_step=expected_step,
+        )
         profile.load_state_dict(state, strict=True)
         actual_step = int(profile.step.item())
         if actual_step != int(expected_step):
@@ -726,6 +763,10 @@ def validate_scientific_checkpoint(
             state = torch.load(snapshot, map_location="cpu", weights_only=True)
         except TypeError:
             state = torch.load(snapshot, map_location="cpu")
+        state = normalize_posthoc_ema_checkpoint_state(
+            state,
+            expected_step=ema_step,
+        )
         if int(state["step"].item()) != ema_step or not bool(state["initted"].item()):
             raise ValueError(f"Invalid EMA step/init state: {snapshot}")
         if not any(str(key).startswith("ema_model.") for key in state):

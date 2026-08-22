@@ -19,6 +19,9 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import prepare_nf_generalize_fig2_dit_l16_seed_restart500k_configs as prep
+from run_cosmodiff_train_with_dit_resume import (
+    normalize_posthoc_ema_checkpoint_state,
+)
 
 
 CHECKPOINT_RE = re.compile(r"checkpoint-epoch-(\d+)$")
@@ -176,6 +179,10 @@ def validate_seed_restart_row(
         state = _load_torch(path)
         if not isinstance(state, dict):
             raise ValueError(f"EMA snapshot is not a state mapping: {path}")
+        state = normalize_posthoc_ema_checkpoint_state(
+            state,
+            expected_step=expected_ema_step,
+        )
         actual_step = int(state["step"].item())
         if actual_step != expected_ema_step:
             raise ValueError(

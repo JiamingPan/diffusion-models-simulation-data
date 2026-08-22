@@ -24,7 +24,7 @@ PYTHON_BIN=${PYTHON_BIN:-/home/jiamingp/venvs/cosmodiff_nf_class/bin/python}
 TORCH_HOME=${TORCH_HOME:-/scratch/huterer_root/huterer0/jiamingp/torch_cache}
 INCOMPATIBLE_PYTHON_PATHS=${INCOMPATIBLE_PYTHON_PATHS:-/home/jiamingp/venvs/cosmodiff_nf/lib/python3.10/site-packages}
 UMAP_SITE_PACKAGES=${UMAP_SITE_PACKAGES:-/scratch/huterer_root/huterer0/jiamingp/probe_c4_umap_py_0p5p5_0p5p10}
-OUTPUT_DIR=${RESULTS_ROOT}/c4_frozen_vgg_umap_seed123_v1
+OUTPUT_DIR=${RESULTS_ROOT}/c4_frozen_vgg_umap_seed123_v2
 VGG_WEIGHTS=${TORCH_HOME}/hub/checkpoints/vgg16-397923af.pth
 
 actual=$(git -C "${CODE_ROOT}" rev-parse HEAD)
