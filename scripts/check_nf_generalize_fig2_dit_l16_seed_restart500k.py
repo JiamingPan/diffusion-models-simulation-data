@@ -94,6 +94,12 @@ def validate_seed_restart_row(
     train = config["train"]
     if int(train.get("ema_update_every", -1)) != 1:
         raise ValueError("seed restart requires ema_update_every=1")
+    accumulation = int(train.get("gradient_accumulation_steps", 1))
+    if accumulation != int(row["microbatches_per_optimizer_step"]):
+        raise ValueError(
+            "gradient accumulation mismatch: "
+            f"config={accumulation}, manifest={row['microbatches_per_optimizer_step']}"
+        )
     ema_burn_in = int(train["ema_burn_in"])
     profile_count = len(train["ema_sigma_rels"])
     if profile_count < 2:
@@ -146,7 +152,20 @@ def validate_seed_restart_row(
     epoch = _checkpoint_epoch(checkpoint)
     steps_per_epoch = int(row["optimizer_steps_per_epoch"])
     source_updates = (epoch + 1) * steps_per_epoch
-    expected_ema_step = source_updates - ema_burn_in
+    expected_updates = int(row["previous_actual_total_updates"])
+    if source_updates != expected_updates:
+        raise ValueError(
+            f"resume optimizer clock mismatch: checkpoint={source_updates}, "
+            f"manifest={expected_updates}"
+        )
+    source_microbatches = source_updates * accumulation
+    expected_microbatches = int(row["previous_total_microbatches"])
+    if source_microbatches != expected_microbatches:
+        raise ValueError(
+            f"resume microbatch clock mismatch: checkpoint={source_microbatches}, "
+            f"manifest={expected_microbatches}"
+        )
+    expected_ema_step = int(row["previous_expected_ema_step"])
     if expected_ema_step <= 0:
         raise ValueError("resume checkpoint precedes the EMA burn-in")
     ema_snapshots: list[str] = []
@@ -186,6 +205,8 @@ def validate_seed_restart_row(
         "continue_stage": int(row["continue_stage"]),
         "checkpoint": str(checkpoint),
         "source_updates": source_updates,
+        "source_microbatches": source_microbatches,
+        "microbatches_per_optimizer_step": accumulation,
         "expected_ema_step": expected_ema_step,
         "ema_snapshots": ema_snapshots,
         "state_files": state_files,

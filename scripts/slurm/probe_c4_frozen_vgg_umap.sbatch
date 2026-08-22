@@ -23,6 +23,7 @@ DATA_ROOT=${DATA_ROOT:-/gpfs/accounts/huterer_root/huterer0/CAMELS/CMD/3d_grids/
 PYTHON_BIN=${PYTHON_BIN:-/home/jiamingp/venvs/cosmodiff_nf_class/bin/python}
 TORCH_HOME=${TORCH_HOME:-/scratch/huterer_root/huterer0/jiamingp/torch_cache}
 INCOMPATIBLE_PYTHON_PATHS=${INCOMPATIBLE_PYTHON_PATHS:-/home/jiamingp/venvs/cosmodiff_nf/lib/python3.10/site-packages}
+UMAP_SITE_PACKAGES=${UMAP_SITE_PACKAGES:-/scratch/huterer_root/huterer0/jiamingp/probe_c4_umap_py_0p5p5_0p5p10}
 OUTPUT_DIR=${RESULTS_ROOT}/c4_frozen_vgg_umap_seed123_v1
 VGG_WEIGHTS=${TORCH_HOME}/hub/checkpoints/vgg16-397923af.pth
 
@@ -30,6 +31,7 @@ actual=$(git -C "${CODE_ROOT}" rev-parse HEAD)
 test "${actual}" = "${EXPECTED_COMMIT}"
 test -z "$(git -C "${CODE_ROOT}" status --porcelain)"
 test -x "${PYTHON_BIN}"
+test -d "${UMAP_SITE_PACKAGES}"
 test ! -e "${OUTPUT_DIR}"
 
 required_files=(
@@ -52,6 +54,8 @@ export PYTHONNOUSERSITE=1
 export TORCH_HOME
 source "${CODE_ROOT}/scripts/probe_controls_runtime.sh"
 probe_controls_prepare_runtime "${CODE_ROOT}" "${PYTHON_BIN}" "${INCOMPATIBLE_PYTHON_PATHS}"
+export UMAP_SITE_PACKAGES
+export PYTHONPATH="${UMAP_SITE_PACKAGES}:${PYTHONPATH}"
 export MPLCONFIGDIR="${PROJECT_DIR}/results/cache/matplotlib_c4_umap_${SLURM_JOB_ID}"
 export NUMBA_CACHE_DIR="${PROJECT_DIR}/results/cache/numba_c4_umap_${SLURM_JOB_ID}"
 mkdir -p "${MPLCONFIGDIR}" "${NUMBA_CACHE_DIR}" "${PROJECT_DIR}/logs/nf_conditional_bias_probe"
@@ -59,14 +63,23 @@ mkdir -p "${MPLCONFIGDIR}" "${NUMBA_CACHE_DIR}" "${PROJECT_DIR}/logs/nf_conditio
 cd "${CODE_ROOT}"
 "${PYTHON_BIN}" -c '
 import pandas
+import os
 import sklearn
 import torch
 import torchvision
 import umap
+import pynndescent
+from pathlib import Path
 from simdiff_eval import probe_c4_umap
+runtime = Path(os.environ["UMAP_SITE_PACKAGES"]).resolve()
+assert umap.__version__ == "0.5.5", umap.__version__
+assert pynndescent.__version__ == "0.5.10", pynndescent.__version__
+assert Path(umap.__file__).resolve().is_relative_to(runtime), umap.__file__
+assert Path(pynndescent.__file__).resolve().is_relative_to(runtime), pynndescent.__file__
 print("[c4-umap] imports passed")
 print("[c4-umap] torch", torch.__version__, "torchvision", torchvision.__version__)
 print("[c4-umap] sklearn", sklearn.__version__, "umap", umap.__version__)
+print("[c4-umap] pynndescent", pynndescent.__version__)
 print("[c4-umap] module", probe_c4_umap.__file__)
 '
 

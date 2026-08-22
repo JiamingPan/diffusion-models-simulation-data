@@ -68,6 +68,8 @@ TARGET_CHECKPOINT=$(field expected_checkpoint)
 FINAL_EPOCH=$(field expected_final_epoch)
 TARGET_UPDATES=$(field target_total_updates)
 STEPS_PER_EPOCH=$(field optimizer_steps_per_epoch)
+RESUME_EMA_STEP=$(field previous_expected_ema_step)
+TARGET_EMA_STEP=$(field expected_ema_step)
 RESUME_SEED=$(field resume_seed)
 APPLY_RESUME_SEED=$(field apply_resume_seed)
 AUDIT_PATH=${PROJECT_DIR}/results/${SWEEP}/resume_audits/stage${CONTINUE_STAGE}_${DATASET_TAG}_${SLURM_JOB_ID}.json
@@ -90,6 +92,7 @@ export COSMODIFF_DIR
 test -f "${COSMODIFF_DIR}/scripts/cosmodiff_train.py"
 echo "Seed restart ${RUN_NAME}: ${MINIMUM_CHECKPOINT} -> ${TARGET_CHECKPOINT}"
 echo "resume_seed=${RESUME_SEED} apply_resume_seed=${APPLY_RESUME_SEED} target_updates=${TARGET_UPDATES}"
+echo "resume_ema_step=${RESUME_EMA_STEP} target_ema_step=${TARGET_EMA_STEP}"
 START_SECONDS=${SECONDS}
 
 SEED_ARGS=()
@@ -105,6 +108,8 @@ fi
   --target-checkpoint "${TARGET_CHECKPOINT}" \
   "${SEED_ARGS[@]}" \
   --optimizer-steps-per-epoch "${STEPS_PER_EPOCH}" \
+  --resume-ema-step "${RESUME_EMA_STEP}" \
+  --target-ema-step "${TARGET_EMA_STEP}" \
   --resume-audit "${AUDIT_PATH}" \
   --run-name "${RUN_NAME}" \
   --code-revision "${EXPECTED_COMMIT}"

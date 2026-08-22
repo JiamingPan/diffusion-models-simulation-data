@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import shutil
 from copy import deepcopy
 from pathlib import Path
@@ -16,7 +17,7 @@ import yaml
 
 SOURCE_SWEEP_NAME = "nf_generalize_fig2_dit_l16_fresh300k_v2"
 SWEEP_NAME = "nf_generalize_fig2_dit_l16_seed_restart500k_v1"
-MANIFEST_VERSION = 1
+MANIFEST_VERSION = 2
 RESUME_SEED = 456
 SOURCE_TARGET_UPDATES = 300_000
 TARGET_UPDATES = (340_000, 380_000, 420_000, 460_000, 500_000)
@@ -31,6 +32,7 @@ ALLOWED_CONFIG_CHANGES = {
     "train.num_epochs",
     "train.checkpoint_every_n_epochs",
 }
+EMA_FILE_RE = re.compile(r"^(\d+)\.(\d+)\.pt$")
 
 
 def ceil_div(numerator: int, denominator: int) -> int:
@@ -97,6 +99,68 @@ def _run_name(tag: str) -> str:
     return f"nf_fig2_dit_l16_{tag}_noaug_seedrestart500k_v1_resume456"
 
 
+def aligned_ema_step(checkpoint: Path, profile_count: int) -> int:
+    """Return the one EMA step present for every configured profile."""
+    checkpoint = Path(checkpoint)
+    per_profile: list[set[int]] = []
+    for profile in range(int(profile_count)):
+        steps = set()
+        for path in (checkpoint / "ema").glob(f"{profile}.*.pt"):
+            match = EMA_FILE_RE.fullmatch(path.name)
+            if match is not None and int(match.group(1)) == profile:
+                steps.add(int(match.group(2)))
+        if not steps:
+            raise FileNotFoundError(
+                f"EMA profile {profile} has no snapshots under {checkpoint / 'ema'}"
+            )
+        per_profile.append(steps)
+    aligned = set.intersection(*per_profile)
+    if len(aligned) != 1:
+        raise ValueError(
+            f"Expected one aligned EMA step under {checkpoint}; found {sorted(aligned)}"
+        )
+    return aligned.pop()
+
+
+def source_clock_contract(
+    source_config: Path,
+    source_checkpoint: Path,
+    source_updates: int,
+) -> dict[str, int]:
+    """Cross-check the optimizer, microbatch, and post-hoc EMA clocks."""
+    config = yaml.safe_load(Path(source_config).read_text())
+    if not isinstance(config, dict):
+        raise ValueError(f"source config is not a mapping: {source_config}")
+    train = config.get("train") or {}
+    accumulation = int(train.get("gradient_accumulation_steps", 1))
+    ema_update_every = int(train.get("ema_update_every", 1))
+    ema_burn_in = int(train.get("ema_burn_in", 0))
+    profile_count = len(train.get("ema_sigma_rels") or [])
+    if accumulation <= 0:
+        raise ValueError("gradient_accumulation_steps must be positive")
+    if ema_update_every != 1:
+        raise ValueError("seed restart requires ema_update_every=1")
+    if profile_count < 2:
+        raise ValueError("seed restart requires at least two EMA profiles")
+
+    source_updates = int(source_updates)
+    source_microbatches = source_updates * accumulation
+    calculated_ema_step = source_microbatches - ema_burn_in
+    actual_ema_step = aligned_ema_step(source_checkpoint, profile_count)
+    if actual_ema_step != calculated_ema_step:
+        raise ValueError(
+            "Source EMA clock disagrees with its immutable checkpoint: "
+            f"snapshot={actual_ema_step}, optimizer_updates={source_updates}, "
+            f"gradient_accumulation_steps={accumulation}, burn_in={ema_burn_in}, "
+            f"calculated={calculated_ema_step}"
+        )
+    return {
+        "microbatches_per_optimizer_step": accumulation,
+        "source_total_microbatches": source_microbatches,
+        "source_ema_step": actual_ema_step,
+    }
+
+
 def build_seed_restart_rows(
     project_dir: Path,
     source_rows: list[dict[str, Any]],
@@ -119,6 +183,15 @@ def build_seed_restart_rows(
             source_checkpoint = _project_path(
                 project_dir, source["expected_checkpoint"]
             ).resolve()
+            source_updates = int(source["actual_total_updates"])
+            clock = source_clock_contract(
+                source_config,
+                source_checkpoint,
+                source_updates,
+            )
+            accumulation = clock["microbatches_per_optimizer_step"]
+            source_microbatches = clock["source_total_microbatches"]
+            source_ema_step = clock["source_ema_step"]
             source_epoch = int(source["expected_final_epoch"])
             seed_checkpoint = checkpoint_dir / f"checkpoint-epoch-{source_epoch:04d}"
             final_num_epochs = ceil_div(target, steps)
@@ -129,9 +202,20 @@ def build_seed_restart_rows(
             )
             if stage == 1:
                 previous_checkpoint = seed_checkpoint
+                previous_updates = source_updates
             else:
                 previous_epoch = ceil_div(TARGET_UPDATES[stage - 2], steps) - 1
                 previous_checkpoint = checkpoint_dir / f"checkpoint-epoch-{previous_epoch:04d}"
+                previous_updates = (previous_epoch + 1) * steps
+            previous_microbatches = previous_updates * accumulation
+            previous_ema_step = source_ema_step + (
+                previous_microbatches - source_microbatches
+            )
+            actual_updates = final_num_epochs * steps
+            actual_microbatches = actual_updates * accumulation
+            expected_ema_step = source_ema_step + (
+                actual_microbatches - source_microbatches
+            )
             config_path = (
                 project_dir
                 / "local"
@@ -149,7 +233,10 @@ def build_seed_restart_rows(
                     "source_config": _stored_path(project_dir, source_config),
                     "source_config_sha256": sha256_file(source_config),
                     "source_checkpoint": str(source_checkpoint),
-                    "source_actual_total_updates": int(source["actual_total_updates"]),
+                    "source_actual_total_updates": source_updates,
+                    "microbatches_per_optimizer_step": accumulation,
+                    "source_total_microbatches": source_microbatches,
+                    "source_ema_step": source_ema_step,
                     "seed_checkpoint": str(seed_checkpoint),
                     "run_name": run_name,
                     "continue_stage": stage,
@@ -164,13 +251,20 @@ def build_seed_restart_rows(
                     "steps_per_epoch": steps,
                     "final_num_epochs": final_num_epochs,
                     "expected_final_epoch": final_epoch,
-                    "actual_total_updates": final_num_epochs * steps,
+                    "actual_total_updates": actual_updates,
+                    "actual_total_microbatches": actual_microbatches,
                     "checkpoint_every_target_updates": CHECKPOINT_EVERY_TARGET_UPDATES,
                     "checkpoint_every_n_epochs": checkpoint_every_epochs,
                     "checkpoint_every_actual_updates": checkpoint_every_epochs * steps,
                     "checkpoint_dir": str(checkpoint_dir),
                     "previous_expected_checkpoint": str(previous_checkpoint),
+                    "previous_actual_total_updates": previous_updates,
+                    "previous_total_microbatches": previous_microbatches,
+                    "previous_expected_ema_step": previous_ema_step,
                     "expected_checkpoint": str(expected_checkpoint),
+                    "expected_ema_step": expected_ema_step,
+                    "first_resumed_optimizer_step": previous_updates + 1,
+                    "first_resumed_microbatch_step": previous_microbatches + 1,
                     "config": _stored_path(project_dir, config_path),
                     "audit_dir": _stored_path(
                         project_dir,
@@ -271,6 +365,45 @@ def _load_rows(path: Path) -> list[dict[str, Any]]:
     return value
 
 
+def assert_safe_manifest_upgrade(
+    existing: list[dict[str, Any]], proposed: list[dict[str, Any]]
+) -> None:
+    """Allow only the v1-to-v2 clock repair before any target was trained."""
+    if len(existing) != len(proposed):
+        raise ValueError("manifest row count changed")
+    proposed_by_key = {
+        (str(row["dataset_tag"]), int(row["continue_stage"])): row
+        for row in proposed
+    }
+    if len(proposed_by_key) != len(proposed):
+        raise ValueError("proposed manifest has duplicate rows")
+    new_fields = {
+        "microbatches_per_optimizer_step",
+        "source_total_microbatches",
+        "source_ema_step",
+        "previous_actual_total_updates",
+        "previous_total_microbatches",
+        "previous_expected_ema_step",
+        "actual_total_microbatches",
+        "expected_ema_step",
+        "first_resumed_optimizer_step",
+        "first_resumed_microbatch_step",
+    }
+    for old in existing:
+        key = (str(old.get("dataset_tag")), int(old.get("continue_stage", -1)))
+        if key not in proposed_by_key:
+            raise ValueError(f"manifest identity changed: {key}")
+        new = proposed_by_key[key]
+        for field, value in old.items():
+            if field == "manifest_version" or field in new_fields:
+                continue
+            if new.get(field) != value:
+                raise ValueError(f"manifest field changed for {key}: {field}")
+        target = Path(new["expected_checkpoint"])
+        if target.exists():
+            raise ValueError(f"training target already exists: {target}")
+
+
 def selected_rows(
     rows: Iterable[dict[str, Any]],
     *,
@@ -294,6 +427,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset-tag", action="append")
     parser.add_argument("--stage", type=int, action="append")
     parser.add_argument("--use-existing-manifest", action="store_true")
+    parser.add_argument("--upgrade-existing-manifest", action="store_true")
     parser.add_argument("--seed-checkpoints", action="store_true")
     parser.add_argument("--check-only", action="store_true")
     parser.add_argument("--print-table", action="store_true")
@@ -314,10 +448,19 @@ def main() -> None:
         checkpoint_root=args.checkpoint_root,
     )
     manifest_path = _manifest_path(project_dir)
+    if args.upgrade_existing_manifest and not args.use_existing_manifest:
+        raise ValueError("--upgrade-existing-manifest requires --use-existing-manifest")
     if args.use_existing_manifest:
         rows = _load_rows(manifest_path)
         if rows != proposed:
-            raise ValueError("existing seed-restart manifest differs from proposed content")
+            if not args.upgrade_existing_manifest:
+                raise ValueError("existing seed-restart manifest differs from proposed content")
+            assert_safe_manifest_upgrade(rows, proposed)
+            rows = proposed
+            temporary = manifest_path.with_suffix(".json.tmp")
+            temporary.write_text(json.dumps(rows, indent=2) + "\n")
+            temporary.replace(manifest_path)
+            print(f"Safely upgraded {manifest_path} to version {MANIFEST_VERSION}")
     else:
         rows = proposed
         for row in rows:

@@ -51,6 +51,7 @@ def source_rows(project_dir: Path):
             "train": {
                 "num_epochs": epoch + 1,
                 "checkpoint_every_n_epochs": 10,
+                "gradient_accumulation_steps": 4,
                 "ema_sigma_rels": [0.02, 0.10],
                 "ema_update_every": 1,
                 "ema_burn_in": 1_000,
@@ -90,7 +91,7 @@ def source_rows(project_dir: Path):
         )
         ema_dir = checkpoint / "ema"
         ema_dir.mkdir()
-        ema_step = actual - 1_000
+        ema_step = actual * 4 - 1_000
         for profile_index in (0, 1):
             torch.save(
                 {
@@ -145,6 +146,15 @@ def test_seed_restart_rows_cover_only_two_runs_and_reach_500k(tmp_path):
     assert final["d2p08"]["actual_total_updates"] == 500_000
     assert final["d2p10"]["expected_final_epoch"] == 3_906
     assert final["d2p10"]["actual_total_updates"] == 500_096
+    assert {row["microbatches_per_optimizer_step"] for row in rows} == {4}
+    first = {row["dataset_tag"]: row for row in rows if row["continue_stage"] == 1}
+    assert first["d2p08"]["source_ema_step"] == 1_199_000
+    assert first["d2p08"]["previous_expected_ema_step"] == 1_199_000
+    assert first["d2p08"]["expected_ema_step"] == 1_359_000
+    assert first["d2p08"]["first_resumed_optimizer_step"] == 300_001
+    assert first["d2p08"]["first_resumed_microbatch_step"] == 1_200_001
+    assert first["d2p10"]["source_ema_step"] == 1_199_128
+    assert first["d2p10"]["expected_ema_step"] == 1_359_384
     assert "resume456" in final["d2p08"]["run_name"]
     assert "resume456" in final["d2p10"]["run_name"]
 
@@ -220,7 +230,8 @@ def test_seed_restart_preflight_requires_complete_state_and_exact_ema_step(tmp_p
     report = check.validate_seed_restart_row(rows[0], tmp_path)
     assert report["dataset_tag"] == "d2p08"
     assert report["source_updates"] == 300_000
-    assert report["expected_ema_step"] == 299_000
+    assert report["source_microbatches"] == 1_200_000
+    assert report["expected_ema_step"] == 1_199_000
     assert len(report["ema_snapshots"]) == 2
     assert report["seed_checkpoint_byte_identical"] is True
 
@@ -257,3 +268,38 @@ def test_slurm_jobs_pin_the_exact_external_cosmodiff_revision():
     assert "patch_cosmodiff_constant_label.py" not in train
     assert "patch_cosmodiff_dit_class_labels.py" not in train
     assert "verify_cosmodiff_seed_restart_runtime.py" in PRECHECK_SCRIPT.read_text()
+    assert "--resume-ema-step" in train
+    assert "--target-ema-step" in train
+    assert "--upgrade-existing-manifest" in submit
+
+
+def test_manifest_upgrade_reuses_only_untouched_seed_directories(tmp_path):
+    module = load_module()
+    proposed = module.build_seed_restart_rows(
+        tmp_path,
+        source_rows(tmp_path),
+        checkpoint_root=tmp_path / "new_checkpoints",
+    )
+    old = []
+    new_fields = {
+        "microbatches_per_optimizer_step",
+        "source_total_microbatches",
+        "source_ema_step",
+        "previous_actual_total_updates",
+        "previous_total_microbatches",
+        "previous_expected_ema_step",
+        "actual_total_microbatches",
+        "expected_ema_step",
+        "first_resumed_optimizer_step",
+        "first_resumed_microbatch_step",
+    }
+    for row in proposed:
+        legacy = {key: value for key, value in row.items() if key not in new_fields}
+        legacy["manifest_version"] = 1
+        old.append(legacy)
+
+    module.assert_safe_manifest_upgrade(old, proposed)
+
+    Path(proposed[0]["expected_checkpoint"]).mkdir(parents=True)
+    with pytest.raises(ValueError, match="training target already exists"):
+        module.assert_safe_manifest_upgrade(old, proposed)

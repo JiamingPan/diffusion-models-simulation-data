@@ -258,6 +258,7 @@ def install_seed_restart_accelerator_hooks(
     checkpoint: Path,
     resume_seed: int | None,
     source_updates: int,
+    source_microbatches: int,
     audit_path: Path,
     audit_context: dict[str, object],
 ) -> None:
@@ -274,7 +275,9 @@ def install_seed_restart_accelerator_hooks(
         "resume_seed": None if resume_seed is None else int(resume_seed),
         "rng_mode": "checkpoint_state" if resume_seed is None else "new_seed",
         "source_updates": int(source_updates),
-        "first_resumed_step": int(source_updates) + 1,
+        "source_microbatches": int(source_microbatches),
+        "first_resumed_optimizer_step": int(source_updates) + 1,
+        "first_resumed_microbatch_step": int(source_microbatches) + 1,
     }
     state = {"loaded": False, "first_loss_written": False}
 
@@ -302,7 +305,7 @@ def install_seed_restart_accelerator_hooks(
 
     def log_with_absolute_step(self, values, *args, **kwargs):
         if state["loaded"] and kwargs.get("step") is not None:
-            kwargs["step"] = int(source_updates) + int(kwargs["step"])
+            kwargs["step"] = int(source_microbatches) + int(kwargs["step"])
         return original_log(self, values, *args, **kwargs)
 
     accelerator_cls.load_state = load_state_then_reseed
@@ -362,11 +365,31 @@ def install_seed_restart_ema_factory(
     ema_module.PostHocEMA = restored_posthoc_ema
 
 
+def ema_step_for_current_checkpoint(
+    *,
+    stage_start_ema_step: int,
+    stage_start_epoch: int,
+    current_epoch: int,
+    optimizer_steps_per_epoch: int,
+    microbatches_per_optimizer_step: int,
+) -> int:
+    """Advance a stage-start EMA step when recovering a partial stage."""
+    elapsed_epochs = int(current_epoch) - int(stage_start_epoch)
+    if elapsed_epochs < 0:
+        raise ValueError("current checkpoint precedes the required stage start")
+    return int(stage_start_ema_step) + (
+        elapsed_epochs
+        * int(optimizer_steps_per_epoch)
+        * int(microbatches_per_optimizer_step)
+    )
+
+
 def build_seed_restart_context(
     config: dict,
     *,
     checkpoint_epoch: int,
     optimizer_steps_per_epoch: int,
+    resume_ema_step: int,
     resume_seed: int | None,
     run_name: str,
 ) -> dict[str, object]:
@@ -387,9 +410,21 @@ def build_seed_restart_context(
             f"found {ema_update_every}"
         )
     ema_burn_in = int(train.get("ema_burn_in", 0))
-    if source_updates < ema_burn_in:
+    accumulation = int(train.get("gradient_accumulation_steps", 1))
+    if accumulation <= 0:
+        raise ValueError("gradient_accumulation_steps must be positive")
+    source_microbatches = source_updates * accumulation
+    calculated_ema_step = source_microbatches - ema_burn_in
+    if source_microbatches < ema_burn_in:
         raise ValueError(
-            f"Checkpoint has {source_updates} updates, before EMA burn-in {ema_burn_in}"
+            f"Checkpoint has {source_microbatches} microbatches, "
+            f"before EMA burn-in {ema_burn_in}"
+        )
+    if int(resume_ema_step) != calculated_ema_step:
+        raise ValueError(
+            "Resume EMA step disagrees with optimizer/microbatch clocks: "
+            f"explicit={resume_ema_step}, calculated={calculated_ema_step}, "
+            f"optimizer_updates={source_updates}, accumulation={accumulation}"
         )
 
     data = config.get("data", {})
@@ -442,11 +477,14 @@ def build_seed_restart_context(
         "checkpoint_epoch": int(checkpoint_epoch),
         "optimizer_steps_per_epoch": steps_per_epoch,
         "source_updates": source_updates,
-        "first_resumed_step": source_updates + 1,
+        "microbatches_per_optimizer_step": accumulation,
+        "source_microbatches": source_microbatches,
+        "first_resumed_optimizer_step": source_updates + 1,
+        "first_resumed_microbatch_step": source_microbatches + 1,
         "original_ema_burn_in": ema_burn_in,
         "ema_update_every": ema_update_every,
         "ema_sigma_rels": [float(value) for value in ema_sigma_rels],
-        "expected_ema_step": source_updates - ema_burn_in,
+        "expected_ema_step": int(resume_ema_step),
         "training_subset": subset,
         "training_subset_sha256": hashlib.sha256(subset_bytes).hexdigest(),
     }
@@ -645,6 +683,8 @@ def validate_scientific_checkpoint(
     path: Path,
     *,
     optimizer_steps_per_epoch: int,
+    microbatches_per_optimizer_step: int,
+    expected_ema_step: int,
     expected_ema_sigma_rels: list[float] | tuple[float, ...],
     expected_ema_burn_in: int,
 ) -> dict[str, object]:
@@ -666,7 +706,17 @@ def validate_scientific_checkpoint(
     sigma_rels = ema_metadata["ema_sigma_rels"]
     burn_in = int(ema_metadata["ema_burn_in"])
     updates = (epoch + 1) * int(optimizer_steps_per_epoch)
-    ema_step = updates - burn_in
+    accumulation = int(microbatches_per_optimizer_step)
+    if accumulation <= 0:
+        raise ValueError("microbatches_per_optimizer_step must be positive")
+    microbatches = updates * accumulation
+    ema_step = int(expected_ema_step)
+    calculated_ema_step = microbatches - burn_in
+    if ema_step != calculated_ema_step:
+        raise ValueError(
+            "Explicit EMA step disagrees with optimizer/microbatch clocks: "
+            f"explicit={ema_step}, calculated={calculated_ema_step}"
+        )
     snapshots = []
     for profile in range(len(sigma_rels)):
         snapshot = path / "ema" / f"{profile}.{ema_step}.pt"
@@ -685,6 +735,8 @@ def validate_scientific_checkpoint(
     return {
         "checkpoint": str(path.resolve()),
         "absolute_updates": updates,
+        "absolute_microbatches": microbatches,
+        "microbatches_per_optimizer_step": accumulation,
         "ema_sigma_rels": sigma_rels,
         "ema_burn_in": burn_in,
         "ema_step": ema_step,
@@ -1026,6 +1078,8 @@ def main() -> None:
     parser.add_argument("--target-checkpoint", required=True, type=Path)
     parser.add_argument("--resume-rng-seed", type=int)
     parser.add_argument("--optimizer-steps-per-epoch", type=int)
+    parser.add_argument("--resume-ema-step", type=int)
+    parser.add_argument("--target-ema-step", type=int)
     parser.add_argument("--resume-audit", type=Path)
     parser.add_argument("--run-name")
     parser.add_argument("--code-revision")
@@ -1049,6 +1103,24 @@ def main() -> None:
         target_checkpoint,
         minimum_checkpoint=args.minimum_checkpoint,
     )
+    resume_contract_values = (
+        args.optimizer_steps_per_epoch,
+        args.resume_ema_step,
+        args.target_ema_step,
+        args.resume_audit,
+        args.run_name,
+        args.code_revision,
+    )
+    seed_restart = any(value is not None for value in resume_contract_values)
+    if seed_restart and not all(value is not None for value in resume_contract_values):
+        raise ValueError(
+            "Audited exact resume requires --optimizer-steps-per-epoch, "
+            "--resume-ema-step, --target-ema-step, "
+            "--resume-audit, --run-name, "
+            "and --code-revision together"
+        )
+    if seed_restart and args.minimum_checkpoint is None:
+        raise ValueError("Audited exact resume requires --minimum-checkpoint")
     if current_epoch == target_epoch:
         if args.resume_audit is not None and args.optimizer_steps_per_epoch is None:
             raise ValueError("Audited completed target requires optimizer step count")
@@ -1056,6 +1128,10 @@ def main() -> None:
             validate_scientific_checkpoint(
                 current,
                 optimizer_steps_per_epoch=args.optimizer_steps_per_epoch,
+                microbatches_per_optimizer_step=int(
+                    train_config.get("gradient_accumulation_steps", 1)
+                ),
+                expected_ema_step=args.target_ema_step,
                 expected_ema_sigma_rels=expected_ema_sigma_rels,
                 expected_ema_burn_in=expected_ema_burn_in,
             )
@@ -1076,19 +1152,6 @@ def main() -> None:
             f"checkpoint directory {checkpoint_dir}"
         )
 
-    resume_contract_values = (
-        args.optimizer_steps_per_epoch,
-        args.resume_audit,
-        args.run_name,
-        args.code_revision,
-    )
-    seed_restart = any(value is not None for value in resume_contract_values)
-    if seed_restart and not all(value is not None for value in resume_contract_values):
-        raise ValueError(
-            "Audited exact resume requires --optimizer-steps-per-epoch, "
-            "--resume-audit, --run-name, "
-            "and --code-revision together"
-        )
     if args.resume_rng_seed is not None and not seed_restart:
         raise ValueError(
             "--resume-rng-seed is valid only with the complete audited-resume contract"
@@ -1119,10 +1182,26 @@ def main() -> None:
             raise FileExistsError(
                 f"Refusing to overwrite an existing seed-restart audit: {audit_path}"
             )
+        minimum_epoch = checkpoint_epoch(args.minimum_checkpoint.expanduser())
+        if minimum_epoch is None:
+            raise ValueError(
+                f"Invalid required stage-start checkpoint: {args.minimum_checkpoint}"
+            )
         context = build_seed_restart_context(
             config,
             checkpoint_epoch=current_epoch,
             optimizer_steps_per_epoch=args.optimizer_steps_per_epoch,
+            resume_ema_step=(
+                ema_step_for_current_checkpoint(
+                    stage_start_ema_step=int(args.resume_ema_step),
+                    stage_start_epoch=minimum_epoch,
+                    current_epoch=current_epoch,
+                    optimizer_steps_per_epoch=int(args.optimizer_steps_per_epoch),
+                    microbatches_per_optimizer_step=int(
+                        train_config.get("gradient_accumulation_steps", 1)
+                    ),
+                )
+            ),
             resume_seed=effective_resume_seed,
             run_name=args.run_name,
         )
@@ -1147,6 +1226,7 @@ def main() -> None:
             checkpoint=current,
             resume_seed=effective_resume_seed,
             source_updates=int(context["source_updates"]),
+            source_microbatches=int(context["source_microbatches"]),
             audit_path=audit_path,
             audit_context=context,
         )
@@ -1175,6 +1255,10 @@ def main() -> None:
         target_state = validate_scientific_checkpoint(
             target_checkpoint,
             optimizer_steps_per_epoch=args.optimizer_steps_per_epoch,
+            microbatches_per_optimizer_step=int(
+                context["microbatches_per_optimizer_step"]
+            ),
+            expected_ema_step=args.target_ema_step,
             expected_ema_sigma_rels=expected_ema_sigma_rels,
             expected_ema_burn_in=expected_ema_burn_in,
         )
