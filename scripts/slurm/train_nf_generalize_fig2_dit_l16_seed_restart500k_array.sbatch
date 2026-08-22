@@ -81,10 +81,12 @@ test -d "${MINIMUM_CHECKPOINT}"
 test ! -e "${AUDIT_PATH}"
 test ! -e "${COMPLETION}"
 
-STUB_ROOT=${PROJECT_DIR}/results/cache/python_stubs
+STUB_ROOT=${PROJECT_DIR}/results/cache/python_stubs/seed_restart_train_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}
 mkdir -p "${STUB_ROOT}"
 "${PYTHON_BIN}" "${CODE_ROOT}/scripts/write_diffusers_runtime_sitecustomize.py" \
   "${STUB_ROOT}/sitecustomize.py"
+"${PYTHON_BIN}" "${CODE_ROOT}/scripts/write_source_checkout_metadata.py" \
+  "${STUB_ROOT}" "cosmodiff" "0+source.${EXPECTED_COSMODIFF_COMMIT:0:7}"
 export TORCHDYNAMO_DISABLE=1
 export PYTHONPATH="${STUB_ROOT}:${COSMODIFF_DIR}:${CODE_ROOT}:${PYTHONPATH:-}"
 export COSMODIFF_DIR
