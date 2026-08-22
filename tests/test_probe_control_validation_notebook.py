@@ -57,6 +57,18 @@ def test_notebook_cells_have_unique_nonempty_ids():
     assert len(ids) == len(set(ids))
 
 
+def test_notebook_forces_inline_backend_before_importing_pyplot():
+    notebook = json.loads(NOTEBOOK.read_text())
+    setup = next(
+        cell for cell in notebook["cells"]
+        if cell["cell_type"] == "code" and "PROJECT_DIR =" in "".join(cell["source"])
+    )
+    source = "".join(setup["source"])
+    backend_call = "get_ipython().run_line_magic('matplotlib', 'inline')"
+    assert backend_call in source
+    assert source.index(backend_call) < source.index("import matplotlib.pyplot as plt")
+
+
 def test_probe_validation_notebook_has_reader_facing_sections_and_compilable_code():
     notebook = json.loads(NOTEBOOK.read_text())
     assert notebook["nbformat"] == 4
