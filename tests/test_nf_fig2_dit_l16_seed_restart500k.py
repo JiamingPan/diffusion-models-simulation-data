@@ -1,6 +1,9 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 import torch
@@ -13,6 +16,7 @@ CHECK_SCRIPT = REPO_ROOT / "scripts/check_nf_generalize_fig2_dit_l16_seed_restar
 SUBMIT_SCRIPT = REPO_ROOT / "scripts/slurm/submit_nf_generalize_fig2_dit_l16_seed_restart500k.sh"
 PRECHECK_SCRIPT = REPO_ROOT / "scripts/slurm/precheck_nf_generalize_fig2_dit_l16_seed_restart500k.sbatch"
 TRAIN_SCRIPT = REPO_ROOT / "scripts/slurm/train_nf_generalize_fig2_dit_l16_seed_restart500k_array.sbatch"
+SOURCE_METADATA_SCRIPT = REPO_ROOT / "scripts/write_source_checkout_metadata.py"
 
 
 def load_module():
@@ -25,6 +29,16 @@ def load_module():
 
 def load_check_module():
     spec = importlib.util.spec_from_file_location("seed_restart_check", CHECK_SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_source_metadata_module():
+    spec = importlib.util.spec_from_file_location(
+        "source_checkout_metadata", SOURCE_METADATA_SCRIPT
+    )
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
@@ -271,6 +285,65 @@ def test_slurm_jobs_pin_the_exact_external_cosmodiff_revision():
     assert "--resume-ema-step" in train
     assert "--target-ema-step" in train
     assert "--upgrade-existing-manifest" in submit
+
+
+def test_seed_restart_jobs_supply_cosmodiff_metadata_without_editing_source(tmp_path):
+    module = load_source_metadata_module()
+    metadata_root = tmp_path / "python_stubs"
+    dist_info = module.write_distribution_metadata(
+        metadata_root,
+        distribution="cosmodiff",
+        version="0+source.58c77eb",
+    )
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(metadata_root)
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-S",
+            "-c",
+            (
+                "from importlib.metadata import version; "
+                "print(version('cosmodiff'))"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.stdout.strip() == "0+source.58c77eb"
+    assert dist_info == metadata_root / "cosmodiff-0+source.58c77eb.dist-info"
+    source_root = tmp_path / "source_checkout"
+    package = source_root / "cosmodiff"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text(
+        "from importlib.metadata import version\n"
+        "__version__ = version('cosmodiff')\n"
+    )
+    env["PYTHONPATH"] = os.pathsep.join((str(metadata_root), str(source_root)))
+    imported = subprocess.run(
+        [
+            sys.executable,
+            "-S",
+            "-c",
+            "import cosmodiff; print(cosmodiff.__version__)",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert imported.stdout.strip() == "0+source.58c77eb"
+
+    for script in (PRECHECK_SCRIPT, TRAIN_SCRIPT):
+        source = script.read_text()
+        assert "write_source_checkout_metadata.py" in source
+        assert '"cosmodiff" "0+source.${EXPECTED_COSMODIFF_COMMIT:0:7}"' in source
+        assert "patch_cosmodiff_package_metadata.py" not in source
+        assert "results/cache/python_stubs/seed_restart_" in source
 
 
 def test_manifest_upgrade_reuses_only_untouched_seed_directories(tmp_path):

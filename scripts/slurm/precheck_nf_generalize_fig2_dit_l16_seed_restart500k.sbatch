@@ -44,10 +44,12 @@ mkdir -p "${PROJECT_DIR}/logs/${SWEEP}" "$(dirname "${REPORT_PATH}")"
 source "${CODE_ROOT}/scripts/nf_class_conditional_pythonpath.sh"
 set_nf_class_conditional_pythonpath "${PYTHON_BIN}" "${BASE_VENV_PATH}"
 
-STUB_ROOT=${PROJECT_DIR}/results/cache/python_stubs
+STUB_ROOT=${PROJECT_DIR}/results/cache/python_stubs/seed_restart_precheck_${SLURM_JOB_ID}
 mkdir -p "${STUB_ROOT}"
 "${PYTHON_BIN}" "${CODE_ROOT}/scripts/write_diffusers_runtime_sitecustomize.py" \
   "${STUB_ROOT}/sitecustomize.py"
+"${PYTHON_BIN}" "${CODE_ROOT}/scripts/write_source_checkout_metadata.py" \
+  "${STUB_ROOT}" "cosmodiff" "0+source.${EXPECTED_COSMODIFF_COMMIT:0:7}"
 export TORCHDYNAMO_DISABLE=1
 export PYTHONPATH="${STUB_ROOT}:${COSMODIFF_DIR}:${CODE_ROOT}:${PYTHONPATH:-}"
 
