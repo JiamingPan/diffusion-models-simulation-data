@@ -20,7 +20,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import prepare_nf_generalize_fig2_dit_l16_seed_restart500k_configs as prep
-from simdiff_eval.terminal_reports import start_report
+from simdiff_eval.terminal_reports import start_report, update_incomplete_report
 from run_cosmodiff_train_with_dit_resume import (
     normalize_posthoc_ema_checkpoint_state,
 )
@@ -264,13 +264,19 @@ def main() -> None:
         report_path = args.report
         if not report_path.is_absolute():
             report_path = project_dir / report_path
+        producer_job_id = os.environ.get("SLURM_JOB_ID")
         if report_path.exists():
-            raise FileExistsError(f"refusing to overwrite preflight report: {report_path}")
-        report = start_report(
-            report_path,
-            payload=report,
-            producer_job_id=os.environ.get("SLURM_JOB_ID"),
-        )
+            report = update_incomplete_report(
+                report_path,
+                payload=report,
+                producer_job_id=producer_job_id,
+            )
+        else:
+            report = start_report(
+                report_path,
+                payload=report,
+                producer_job_id=producer_job_id,
+            )
         print(f"Wrote {report_path}")
     print(json.dumps(report, indent=2))
 
