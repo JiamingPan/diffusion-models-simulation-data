@@ -24,8 +24,34 @@ PYTHON_BIN=${PYTHON_BIN:-/home/jiamingp/venvs/cosmodiff_nf_class/bin/python}
 TORCH_HOME=${TORCH_HOME:-/scratch/huterer_root/huterer0/jiamingp/torch_cache}
 INCOMPATIBLE_PYTHON_PATHS=${INCOMPATIBLE_PYTHON_PATHS:-/home/jiamingp/venvs/cosmodiff_nf/lib/python3.10/site-packages}
 UMAP_SITE_PACKAGES=${UMAP_SITE_PACKAGES:-/scratch/huterer_root/huterer0/jiamingp/probe_c4_umap_py_0p5p5_0p5p10}
-OUTPUT_DIR=${RESULTS_ROOT}/c4_frozen_vgg_umap_seed123_v2
+OUTPUT_DIR=${RESULTS_ROOT}/c4_frozen_vgg_umap_seed123_v3
+STAGING_DIR=${OUTPUT_DIR}.tmp-${SLURM_JOB_ID}
 VGG_WEIGHTS=${TORCH_HOME}/hub/checkpoints/vgg16-397923af.pth
+FINALIZER=${CODE_ROOT}/scripts/finalize_terminal_report.py
+REPORT_FINALIZED=0
+
+finalize_on_exit() {
+  rc=$?
+  trap - EXIT
+  report=
+  if [[ -s "${OUTPUT_DIR}/manifest.json" ]]; then
+    report=${OUTPUT_DIR}/manifest.json
+  elif [[ -s "${STAGING_DIR}/manifest.json" ]]; then
+    report=${STAGING_DIR}/manifest.json
+  fi
+  if [[ "${REPORT_FINALIZED}" == "0" && -n "${report}" ]]; then
+    set +e
+    if (( rc == 0 )); then
+      rc=1
+    fi
+    "${PYTHON_BIN}" "${FINALIZER}" finalize "${report}" \
+      --status FAILED \
+      --job-id "${SLURM_JOB_ID}" \
+      --exit-code "${rc}"
+  fi
+  exit "${rc}"
+}
+trap finalize_on_exit EXIT
 
 actual=$(git -C "${CODE_ROOT}" rev-parse HEAD)
 test "${actual}" = "${EXPECTED_COMMIT}"
@@ -33,10 +59,13 @@ test -z "$(git -C "${CODE_ROOT}" status --porcelain)"
 test -x "${PYTHON_BIN}"
 test -d "${UMAP_SITE_PACKAGES}"
 test ! -e "${OUTPUT_DIR}"
+test ! -e "${STAGING_DIR}"
 
 required_files=(
   "${CODE_ROOT}/scripts/evaluate_probe_c4_umap.py"
+  "${CODE_ROOT}/scripts/finalize_terminal_report.py"
   "${CODE_ROOT}/simdiff_eval/probe_c4_umap.py"
+  "${CODE_ROOT}/simdiff_eval/terminal_reports.py"
   "${PROJECT_DIR}/local/nf_conditional_bias_probe/manifest.json"
   "${RESULTS_ROOT}/encoder/vgg_mlp_encoder.npz"
   "${RESULTS_ROOT}/encoder/vgg_mlp_encoder.pkl"
@@ -110,7 +139,28 @@ print("[c4-umap] module", probe_c4_umap.__file__)
   --knn-k 15 \
   --bootstrap 2000
 
-test -s "${OUTPUT_DIR}/manifest.json"
-test -s "${OUTPUT_DIR}/c4_umap_metrics.csv"
-test -s "${OUTPUT_DIR}/pooled_umap_reducer.joblib"
-echo "PASS: frozen-probe C4 UMAP outputs are in ${OUTPUT_DIR}"
+for artifact in \
+  manifest.json \
+  analysis_config.json \
+  frozen_vgg_features_and_umap.npz \
+  sample_provenance.csv \
+  c4_feature_metrics_complete.csv \
+  c4_feature_metrics_complete.json \
+  c4_feature_metrics_headline.csv \
+  c4_feature_metrics_headline.json \
+  c4_transform_identity_report.csv \
+  c4_transform_identity_report.json \
+  umap_layout_separation_visual_only.csv \
+  umap_layout_separation_visual_only.json \
+  c4_knn_mixing_baselines.png \
+  pooled_umap_reducer.joblib
+do
+  test -s "${OUTPUT_DIR}/${artifact}"
+done
+
+"${PYTHON_BIN}" "${FINALIZER}" finalize "${OUTPUT_DIR}/manifest.json" \
+  --status PASS \
+  --job-id "${SLURM_JOB_ID}" \
+  --exit-code 0
+REPORT_FINALIZED=1
+echo "PASS: frozen-probe C4 v3 outputs are in ${OUTPUT_DIR}"

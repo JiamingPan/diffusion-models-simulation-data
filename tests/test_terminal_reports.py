@@ -141,3 +141,26 @@ def test_start_report_refuses_overwrite_by_default(tmp_path):
         terminal_reports.start_report(path, payload={}, producer_job_id=None)
 
     assert path.read_text() == "do not replace"
+
+
+def test_incomplete_report_payload_can_be_enriched_before_finalization(tmp_path):
+    path = tmp_path / "report.json"
+    terminal_reports.start_report(
+        path,
+        payload={"analysis": "c4-v3"},
+        producer_job_id="98",
+    )
+
+    enriched = terminal_reports.update_incomplete_report(
+        path,
+        payload={"analysis": "c4-v3", "row_count": 14336},
+        producer_job_id="98",
+    )
+
+    assert enriched["status"] == "INCOMPLETE"
+    assert enriched["row_count"] == 14336
+    assert enriched["started_at_utc"]
+    with pytest.raises(ValueError, match="producer job ID"):
+        terminal_reports.update_incomplete_report(
+            path, payload={}, producer_job_id="wrong"
+        )
