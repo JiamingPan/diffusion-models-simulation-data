@@ -8,6 +8,7 @@ import types
 from pathlib import Path
 
 import numpy as np
+import pytest
 import torch
 
 
@@ -139,6 +140,110 @@ def test_knn_mixing_keeps_the_actual_nearest_nonself_neighbour():
         seed=123,
     )
     assert result["knn_cross_source_fraction"] == 1.0
+
+
+def test_measured_power_deficit_depth_uses_saved_finite_ratio_minimum():
+    module = load_module()
+
+    assert module.measured_power_deficit_depth([1.02, 0.65, np.nan]) == pytest.approx(0.35)
+    assert module.measured_power_deficit_depth([1.02, 1.01]) == 0.0
+    with pytest.raises(ValueError, match="finite"):
+        module.measured_power_deficit_depth([np.nan, np.inf])
+
+
+def test_identity_requires_array_equality_and_both_zero_width_intervals():
+    module = load_module()
+    original = np.arange(8, dtype=np.float32).reshape(2, 2, 2)
+    same = original + np.float32(5e-8)
+    metric = {
+        "centroid_distance_ci_low": 0.0,
+        "centroid_distance_ci_high": 0.0,
+        "knn_cross_source_fraction_ci_low": 0.5,
+        "knn_cross_source_fraction_ci_high": 0.5,
+    }
+
+    identity = module.classify_transform_identity(original, same, metric)
+    assert identity == {
+        "transform_arrays_allclose": True,
+        "centroid_ci_zero_width": True,
+        "knn_ci_zero_width": True,
+        "transform_is_identity": True,
+        "identity_reason": "transform had no effect at this N",
+    }
+
+    shifted = module.classify_transform_identity(original, original + 0.1, metric)
+    assert shifted["transform_arrays_allclose"] is False
+    assert shifted["transform_is_identity"] is False
+    assert "arrays differ" in shifted["identity_reason"]
+
+    uncertain = module.classify_transform_identity(
+        original,
+        same,
+        {**metric, "knn_cross_source_fraction_ci_high": 0.51},
+    )
+    assert uncertain["knn_ci_zero_width"] is False
+    assert uncertain["transform_is_identity"] is False
+
+    assert module.generated_identity_diagnostics() == {
+        "transform_arrays_allclose": False,
+        "centroid_ci_zero_width": False,
+        "knn_ci_zero_width": False,
+        "transform_is_identity": False,
+        "identity_reason": "not applicable: generated samples are not a transform arm",
+    }
+
+
+def test_perfect_mixing_expectation_is_exact_for_finite_populations():
+    module = load_module()
+
+    assert module.perfect_mixing_expectation(4, 4) == pytest.approx(4 / 7)
+    assert module.perfect_mixing_expectation(3, 5) == pytest.approx(30 / 56)
+    with pytest.raises(ValueError, match="positive"):
+        module.perfect_mixing_expectation(0, 4)
+
+
+def test_real_split_baseline_is_balanced_deterministic_and_bootstrapped():
+    module = load_module()
+    simulations = np.repeat(np.arange(900, 904), 4)
+    features = np.column_stack(
+        [simulations.astype(float), np.tile(np.arange(4, dtype=float), 4)]
+    )
+
+    left, right, membership = module.deterministic_balanced_real_split(
+        simulations, seed=123
+    )
+    left_again, right_again, membership_again = module.deterministic_balanced_real_split(
+        simulations, seed=123
+    )
+    np.testing.assert_array_equal(left, left_again)
+    np.testing.assert_array_equal(right, right_again)
+    assert membership == membership_again
+    assert membership["seed"] == 123
+    assert membership["rule"] == "seeded within-simulation balanced half split"
+    for sim in np.unique(simulations):
+        assert np.sum(simulations[left] == sim) == 2
+        assert np.sum(simulations[right] == sim) == 2
+
+    baseline = module.real_split_mixing_baseline(
+        features,
+        simulations,
+        k=3,
+        n_boot=100,
+        seed=123,
+    )
+    assert 0.0 <= baseline["real_split_mixing_baseline"] <= 1.0
+    assert baseline["real_split_mixing_baseline_ci_low"] <= baseline[
+        "real_split_mixing_baseline"
+    ]
+    assert baseline["real_split_mixing_baseline"] <= baseline[
+        "real_split_mixing_baseline_ci_high"
+    ]
+    assert baseline["split_membership"] == membership
+
+    with pytest.raises(ValueError, match="even"):
+        module.deterministic_balanced_real_split(
+            np.array([900, 900, 900, 901, 901, 901]), seed=123
+        )
 
 
 def test_feature_rows_preserve_required_sample_provenance():
