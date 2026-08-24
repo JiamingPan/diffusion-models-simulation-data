@@ -28,6 +28,7 @@ PREPARE=${CODE_ROOT}/scripts/prepare_nf_generalize_fig2_dit_l16_seed_restart500k
 CHECK=${CODE_ROOT}/scripts/check_nf_generalize_fig2_dit_l16_seed_restart500k.py
 REPORT_PATH=${PROJECT_DIR}/local/${SWEEP}/preflight_reports/stage${CONTINUE_STAGE}_${SLURM_JOB_ID}.json
 FINALIZER=${CODE_ROOT}/scripts/finalize_terminal_report.py
+STUB_ROOT=${PROJECT_DIR}/results/cache/python_stubs/seed_restart_precheck_${SLURM_JOB_ID}
 REPORT_FINALIZED=0
 
 finalize_on_exit() {
@@ -63,7 +64,13 @@ mkdir -p "${PROJECT_DIR}/logs/${SWEEP}" "$(dirname "${REPORT_PATH}")"
 source "${CODE_ROOT}/scripts/nf_class_conditional_pythonpath.sh"
 set_nf_class_conditional_pythonpath "${PYTHON_BIN}" "${BASE_VENV_PATH}"
 export TORCHDYNAMO_DISABLE=1
-export PYTHONPATH="${COSMODIFF_PIN_ROOT}:${CODE_ROOT}:${PYTHONPATH:-}"
+mkdir -p "${STUB_ROOT}/sklearn/metrics"
+printf 'from . import metrics\n' > "${STUB_ROOT}/sklearn/__init__.py"
+printf "def roc_curve(*args, **kwargs):\n    raise RuntimeError('sklearn.metrics.roc_curve is stubbed for DiT seed restart')\n" \
+  > "${STUB_ROOT}/sklearn/metrics/__init__.py"
+"${PYTHON_BIN}" "${CODE_ROOT}/scripts/write_diffusers_runtime_sitecustomize.py" \
+  "${STUB_ROOT}/sitecustomize.py"
+export PYTHONPATH="${STUB_ROOT}:${COSMODIFF_PIN_ROOT}:${CODE_ROOT}:${PYTHONPATH:-}"
 
 "${PYTHON_BIN}" "${CODE_ROOT}/scripts/verify_cosmodiff_seed_restart_runtime.py" \
   "${COSMODIFF_PIN_ROOT}" \

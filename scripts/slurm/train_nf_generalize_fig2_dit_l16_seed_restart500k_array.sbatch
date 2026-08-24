@@ -29,6 +29,7 @@ PYTHON_BIN=${PYTHON_BIN:-${VENV_PATH}/bin/python}
 SWEEP=nf_generalize_fig2_dit_l16_seed_restart500k_v1
 PREPARE=${CODE_ROOT}/scripts/prepare_nf_generalize_fig2_dit_l16_seed_restart500k_configs.py
 DATASET_TAGS=(d2p08 d2p10)
+STUB_ROOT=${PROJECT_DIR}/results/cache/python_stubs/seed_restart_train_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}
 
 if (( CONTINUE_STAGE < 1 || CONTINUE_STAGE > 5 )); then
   echo "CONTINUE_STAGE must be between 1 and 5" >&2
@@ -84,7 +85,13 @@ test ! -e "${AUDIT_PATH}"
 test ! -e "${COMPLETION}"
 
 export TORCHDYNAMO_DISABLE=1
-export PYTHONPATH="${COSMODIFF_PIN_ROOT}:${CODE_ROOT}:${PYTHONPATH:-}"
+mkdir -p "${STUB_ROOT}/sklearn/metrics"
+printf 'from . import metrics\n' > "${STUB_ROOT}/sklearn/__init__.py"
+printf "def roc_curve(*args, **kwargs):\n    raise RuntimeError('sklearn.metrics.roc_curve is stubbed for DiT seed restart')\n" \
+  > "${STUB_ROOT}/sklearn/metrics/__init__.py"
+"${PYTHON_BIN}" "${CODE_ROOT}/scripts/write_diffusers_runtime_sitecustomize.py" \
+  "${STUB_ROOT}/sitecustomize.py"
+export PYTHONPATH="${STUB_ROOT}:${COSMODIFF_PIN_ROOT}:${CODE_ROOT}:${PYTHONPATH:-}"
 export COSMODIFF_DIR="${COSMODIFF_PIN_ROOT}"
 
 "${PYTHON_BIN}" "${CODE_ROOT}/scripts/verify_cosmodiff_seed_restart_runtime.py" \
