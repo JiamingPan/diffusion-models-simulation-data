@@ -581,6 +581,25 @@ def test_seed_restart_wrappers_consume_verified_pin_and_exact_precheck_job():
     assert "COSMODIFF_DIR_OVERRIDE" not in submit
 
 
+def test_seed_restart_gpu_jobs_stub_optional_sklearn_before_diffusers_imports():
+    """Great Lakes' system sklearn must not enter the DiT resume import path."""
+    for path in (PRECHECK_SCRIPT, TRAIN_SCRIPT):
+        source = path.read_text()
+        assert "STUB_ROOT=" in source
+        assert 'mkdir -p "${STUB_ROOT}/sklearn/metrics"' in source
+        assert 'write_diffusers_runtime_sitecustomize.py' in source
+        assert "sklearn.metrics.roc_curve is stubbed for DiT seed restart" in source
+        assert 'export PYTHONPATH="${STUB_ROOT}:${COSMODIFF_PIN_ROOT}:${CODE_ROOT}' in source
+
+        stub_index = source.index('mkdir -p "${STUB_ROOT}/sklearn/metrics"')
+        load_index = (
+            source.index("check_nf_generalize_fig2_dit_resume.py")
+            if path == PRECHECK_SCRIPT
+            else source.index("run_cosmodiff_train_with_dit_resume.py")
+        )
+        assert stub_index < load_index
+
+
 def test_slurm_jobs_pin_the_exact_audited_cosmodiff_runtime():
     submit = SUBMIT_SCRIPT.read_text()
     for path in (PRECHECK_SCRIPT, TRAIN_SCRIPT):
@@ -657,7 +676,7 @@ def test_source_metadata_writer_remains_available_but_jobs_use_the_audited_pin(t
         source = script.read_text()
         assert "write_source_checkout_metadata.py" not in source
         assert "build_cosmodiff_seed_restart_pin.py" not in source
-        assert "results/cache/python_stubs/seed_restart_" not in source
+        assert "cosmodiff-0+source" not in source
         assert "COSMODIFF_PIN_ROOT" in source
 
 
