@@ -420,25 +420,98 @@ def test_seed_restart_preflight_requires_complete_state_and_exact_ema_step(tmp_p
         check.validate_seed_restart_row(rows[0], tmp_path)
 
 
-def test_slurm_jobs_pin_the_exact_external_cosmodiff_revision():
+def test_seed_restart_checker_creates_only_an_incomplete_terminal_report(tmp_path):
+    prep = load_module()
+    rows = prep.build_seed_restart_rows(
+        tmp_path,
+        source_rows(tmp_path),
+        checkpoint_root=tmp_path / "new_checkpoints",
+    )
+    for row in rows:
+        config_path = prep._project_path(tmp_path, row["config"])
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(
+            yaml.safe_dump(
+                prep.build_seed_restart_config(
+                    prep._project_path(tmp_path, row["source_config"]), row
+                ),
+                sort_keys=False,
+            )
+        )
+    prep.seed_restart_directories(rows)
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps(rows, indent=2) + "\n")
+    report = tmp_path / "precheck.json"
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(REPO_ROOT)
+    env["SLURM_JOB_ID"] = "777"
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(CHECK_SCRIPT),
+            "--project-dir",
+            str(tmp_path),
+            "--manifest",
+            str(manifest),
+            "--stage",
+            "1",
+            "--report",
+            str(report),
+        ],
+        check=True,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(report.read_text())
+    assert payload["status"] == "INCOMPLETE"
+    assert payload["producer_job_id"] == "777"
+    assert payload["producer_exit_code"] is None
+    assert payload["finalized_at_utc"] is None
+    assert payload["report_schema_version"] == 1
+
+
+def test_seed_restart_wrappers_consume_verified_pin_and_exact_precheck_job():
+    precheck = PRECHECK_SCRIPT.read_text()
+    train = TRAIN_SCRIPT.read_text()
+    submit = SUBMIT_SCRIPT.read_text()
+
+    for source in (precheck, train, submit):
+        assert "COSMODIFF_PIN_ROOT" in source
+        assert "COSMODIFF_PIN_MANIFEST" in source
+    assert "finalize_terminal_report.py" in precheck
+    assert "--status FAILED" in precheck
+    assert "--status PASS" in precheck
+    assert "EXPECTED_PRECHECK_JOB_ID" in train
+    assert "require-pass" in train
+    assert "--expected-job-id" in train
+    assert "COSMODIFF_DIR_OVERRIDE" not in submit
+
+
+def test_slurm_jobs_pin_the_exact_audited_cosmodiff_runtime():
     submit = SUBMIT_SCRIPT.read_text()
     for path in (PRECHECK_SCRIPT, TRAIN_SCRIPT):
         source = path.read_text()
-        assert "EXPECTED_COSMODIFF_COMMIT" in source
-        assert 'git -C "${COSMODIFF_DIR}" rev-parse HEAD' in source
-    assert "EXPECTED_COSMODIFF_COMMIT" in submit
-    assert "EXPECTED_COSMODIFF_COMMIT=${EXPECTED_COSMODIFF_COMMIT}" in submit
+        assert "EXPECTED_COSMODIFF_BASE_REVISION" in source
+        assert "COSMODIFF_PIN_ROOT" in source
+        assert "COSMODIFF_PIN_MANIFEST" in source
+        assert "verify_cosmodiff_seed_restart_runtime.py" in source
+        assert 'git -C "${COSMODIFF_DIR}" rev-parse HEAD' not in source
+    assert "EXPECTED_COSMODIFF_BASE_REVISION" in submit
+    assert "COSMODIFF_PIN_ROOT" in submit
+    assert "COSMODIFF_PIN_MANIFEST" in submit
     train = TRAIN_SCRIPT.read_text()
     assert "rev-parse --abbrev-ref" not in train
-    assert "patch_cosmodiff_constant_label.py" not in train
-    assert "patch_cosmodiff_dit_class_labels.py" not in train
+    assert "build_cosmodiff_seed_restart_pin.py" not in train
     assert "verify_cosmodiff_seed_restart_runtime.py" in PRECHECK_SCRIPT.read_text()
     assert "--resume-ema-step" in train
     assert "--target-ema-step" in train
     assert "--upgrade-existing-manifest" in submit
 
 
-def test_seed_restart_jobs_supply_cosmodiff_metadata_without_editing_source(tmp_path):
+def test_source_metadata_writer_remains_available_but_jobs_use_the_audited_pin(tmp_path):
     module = load_source_metadata_module()
     metadata_root = tmp_path / "python_stubs"
     dist_info = module.write_distribution_metadata(
@@ -491,10 +564,10 @@ def test_seed_restart_jobs_supply_cosmodiff_metadata_without_editing_source(tmp_
 
     for script in (PRECHECK_SCRIPT, TRAIN_SCRIPT):
         source = script.read_text()
-        assert "write_source_checkout_metadata.py" in source
-        assert '"cosmodiff" "0+source.${EXPECTED_COSMODIFF_COMMIT:0:7}"' in source
-        assert "patch_cosmodiff_package_metadata.py" not in source
-        assert "results/cache/python_stubs/seed_restart_" in source
+        assert "write_source_checkout_metadata.py" not in source
+        assert "build_cosmodiff_seed_restart_pin.py" not in source
+        assert "results/cache/python_stubs/seed_restart_" not in source
+        assert "COSMODIFF_PIN_ROOT" in source
 
 
 def test_manifest_upgrade_reuses_only_untouched_seed_directories(tmp_path):

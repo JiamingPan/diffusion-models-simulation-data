@@ -6,7 +6,9 @@ set -euo pipefail
 PROJECT_DIR=${PROJECT_DIR:-/home/jiamingp/diffusion_models_repo}
 CODE_ROOT=${CODE_ROOT:?Set CODE_ROOT to the frozen seed-restart code worktree}
 EXPECTED_COMMIT=${EXPECTED_COMMIT:?Set EXPECTED_COMMIT to the frozen code revision}
-EXPECTED_COSMODIFF_COMMIT=${EXPECTED_COSMODIFF_COMMIT:?Set the exact external cosmodiff revision}
+EXPECTED_COSMODIFF_BASE_REVISION=${EXPECTED_COSMODIFF_BASE_REVISION:?Set the exact cosmodiff base revision}
+COSMODIFF_PIN_ROOT=${COSMODIFF_PIN_ROOT:?Set the immutable cosmodiff pin root}
+COSMODIFF_PIN_MANIFEST=${COSMODIFF_PIN_MANIFEST:?Set the immutable cosmodiff pin manifest}
 ACCOUNT=${ACCOUNT:-huterer2}
 PYTHON_BIN=${PYTHON_BIN:-/home/jiamingp/venvs/cosmodiff_nf_class/bin/python}
 START_STAGE=${START_STAGE:-1}
@@ -24,6 +26,19 @@ if (( START_STAGE > 1 )) && [[ "${REUSE_EXISTING_MANIFEST}" != "1" ]]; then
 fi
 test "$(git -C "${CODE_ROOT}" rev-parse HEAD)" = "${EXPECTED_COMMIT}"
 test -z "$(git -C "${CODE_ROOT}" status --porcelain)"
+test -d "${COSMODIFF_PIN_ROOT}"
+test -s "${COSMODIFF_PIN_MANIFEST}"
+
+PYTHONPATH="${COSMODIFF_PIN_ROOT}:${CODE_ROOT}:${PYTHONPATH:-}" \
+"${PYTHON_BIN}" "${CODE_ROOT}/scripts/verify_cosmodiff_seed_restart_runtime.py" \
+  "${COSMODIFF_PIN_ROOT}" \
+  --manifest "${COSMODIFF_PIN_MANIFEST}" \
+  --expected-base-revision "${EXPECTED_COSMODIFF_BASE_REVISION}" \
+  --python-bin "${PYTHON_BIN}" \
+  --patch-script "${CODE_ROOT}/scripts/patch_cosmodiff_package_metadata.py" \
+  --patch-script "${CODE_ROOT}/scripts/patch_cosmodiff_constant_label.py" \
+  --patch-script "${CODE_ROOT}/scripts/patch_cosmodiff_dit_class_labels.py" \
+  --patch-script "${CODE_ROOT}/scripts/patch_cosmodiff_checkpoint_state.py"
 
 cd "${PROJECT_DIR}"
 mkdir -p "${PROJECT_DIR}/logs/${SWEEP}" \
@@ -50,7 +65,7 @@ for STAGE in $(seq "${START_STAGE}" 5); do
   PRECHECK_ARGS=(
     -A "${ACCOUNT}"
     --parsable
-    --export="ALL,PROJECT_DIR=${PROJECT_DIR},CODE_ROOT=${CODE_ROOT},EXPECTED_COMMIT=${EXPECTED_COMMIT},EXPECTED_COSMODIFF_COMMIT=${EXPECTED_COSMODIFF_COMMIT},CONTINUE_STAGE=${STAGE}"
+    --export="ALL,PROJECT_DIR=${PROJECT_DIR},CODE_ROOT=${CODE_ROOT},EXPECTED_COMMIT=${EXPECTED_COMMIT},EXPECTED_COSMODIFF_BASE_REVISION=${EXPECTED_COSMODIFF_BASE_REVISION},COSMODIFF_PIN_ROOT=${COSMODIFF_PIN_ROOT},COSMODIFF_PIN_MANIFEST=${COSMODIFF_PIN_MANIFEST},CONTINUE_STAGE=${STAGE}"
   )
   if [[ -n "${PREVIOUS_JOB}" ]]; then
     PRECHECK_ARGS+=(--dependency="afterok:${PREVIOUS_JOB}")
@@ -64,7 +79,7 @@ for STAGE in $(seq "${START_STAGE}" 5); do
     --parsable \
     --array=0-1%2 \
     --dependency="afterok:${PRECHECK_JOB}" \
-    --export="ALL,PROJECT_DIR=${PROJECT_DIR},CODE_ROOT=${CODE_ROOT},EXPECTED_COMMIT=${EXPECTED_COMMIT},EXPECTED_COSMODIFF_COMMIT=${EXPECTED_COSMODIFF_COMMIT},CONTINUE_STAGE=${STAGE},PRECHECK_REPORT=${PRECHECK_REPORT}" \
+    --export="ALL,PROJECT_DIR=${PROJECT_DIR},CODE_ROOT=${CODE_ROOT},EXPECTED_COMMIT=${EXPECTED_COMMIT},EXPECTED_COSMODIFF_BASE_REVISION=${EXPECTED_COSMODIFF_BASE_REVISION},COSMODIFF_PIN_ROOT=${COSMODIFF_PIN_ROOT},COSMODIFF_PIN_MANIFEST=${COSMODIFF_PIN_MANIFEST},CONTINUE_STAGE=${STAGE},PRECHECK_REPORT=${PRECHECK_REPORT},EXPECTED_PRECHECK_JOB_ID=${PRECHECK_JOB}" \
     "${CODE_ROOT}/scripts/slurm/train_nf_generalize_fig2_dit_l16_seed_restart500k_array.sbatch")
   TRAIN_JOB=${TRAIN_JOB%%;*}
   echo "stage ${STAGE}: precheck=${PRECHECK_JOB} train=${TRAIN_JOB} report=${PRECHECK_REPORT}"
