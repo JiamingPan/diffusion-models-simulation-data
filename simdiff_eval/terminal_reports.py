@@ -106,6 +106,45 @@ def start_report(
     return report
 
 
+def update_incomplete_report(
+    path: Path,
+    *,
+    payload: Mapping[str, Any],
+    producer_job_id: str | int | None,
+) -> dict[str, Any]:
+    """Replace producer payload while preserving an INCOMPLETE lifecycle."""
+    path = Path(path)
+    collision = LIFECYCLE_FIELDS.intersection(payload)
+    if collision:
+        raise ValueError(
+            "payload may not set lifecycle fields: " + ", ".join(sorted(collision))
+        )
+    current = _read_json(path)
+    if current.get("report_schema_version") != REPORT_SCHEMA_VERSION:
+        raise ValueError("terminal report has an unsupported or missing schema")
+    if current.get("status") != "INCOMPLETE":
+        raise ValueError(f"terminal report is already finalized as {current.get('status')}")
+    expected_job_id = _normalized_job_id(producer_job_id)
+    if current.get("producer_job_id") != expected_job_id:
+        raise ValueError(
+            "producer job ID mismatch: "
+            f"report={current.get('producer_job_id')!r}, caller={expected_job_id!r}"
+        )
+    updated = {
+        **dict(payload),
+        "status": "INCOMPLETE",
+        "producer_job_id": expected_job_id,
+        "producer_exit_code": None,
+        "started_at_utc": current.get("started_at_utc"),
+        "finalized_at_utc": None,
+        "report_schema_version": REPORT_SCHEMA_VERSION,
+    }
+    if not updated["started_at_utc"]:
+        raise ValueError("terminal report lacks its start timestamp")
+    atomic_write_json(path, updated)
+    return updated
+
+
 def finalize_report(
     path: Path,
     *,

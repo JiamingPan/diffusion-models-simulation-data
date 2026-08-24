@@ -11,6 +11,7 @@ import os
 import pickle
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -27,11 +28,21 @@ import pandas as pd
 
 from simdiff_eval.probe_c4_umap import (  # noqa: E402
     balanced_real_slice_pairs,
+    classify_transform_identity,
     compare_source_to_reference,
+    deterministic_balanced_real_split,
     frozen_mlp_inputs,
+    generated_identity_diagnostics,
+    measured_power_deficit_depth,
+    perfect_mixing_expectation,
+    real_split_mixing_baseline,
     source_metadata,
 )
 from simdiff_eval.probe_controls import json_safe, subset_generated_cosmologies  # noqa: E402
+from simdiff_eval.terminal_reports import (  # noqa: E402
+    start_report,
+    update_incomplete_report,
+)
 from simdiff_eval.probe_transforms import (  # noqa: E402
     gaussian_smoothing_transform,
     transfer_transform,
@@ -249,7 +260,7 @@ def validate_c4_sample_path(saved: dict[str, Any], actual_path: Path) -> None:
 
 def _analysis_config(args: argparse.Namespace, rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {
-        "analysis": "c4_frozen_vgg_umap_seed123_v2",
+        "analysis": "c4_frozen_vgg_umap_seed123_v3",
         "heldout_indices": EXPECTED_HELDOUT.astype(int).tolist(),
         "run_names": [row["run_name"] for row in rows],
         "sources": list(SOURCES),
@@ -293,8 +304,225 @@ def _analysis_config(args: argparse.Namespace, rows: list[dict[str, Any]]) -> di
             "bootstrap": "simulation-block percentile bootstrap",
             "bootstrap_replicates": int(args.bootstrap),
             "bootstrap_seed": int(args.seed),
+            "headline_feature_space": "frozen_standardized_vgg_mlp_input_1024d",
+            "umap_policy": "visualization only; no 2-D headline metric",
+            "perfect_mixing_formula": "2*n_a*n_b/((n_a+n_b)*(n_a+n_b-1))",
+            "real_split_baseline": {
+                "seed": int(args.seed),
+                "rule": "seeded within-simulation balanced half split",
+            },
+            "identity": {
+                "array_dtype": "float32",
+                "rtol": 1e-6,
+                "atol": 1e-7,
+                "criterion": "arrays allclose and both bootstrap intervals have zero width",
+            },
         },
     }
+
+
+def build_c4_metric_tables(
+    *,
+    metadata: pd.DataFrame,
+    standardized: np.ndarray,
+    original_images: np.ndarray,
+    transformed_images: dict[tuple[str, str], np.ndarray],
+    run_parameters: dict[str, dict[str, Any]],
+    k: int,
+    n_boot: int,
+    seed: int,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    """Build auditable 1024-D complete/headline tables and identity report."""
+    values = np.asarray(standardized)
+    if len(values) != len(metadata):
+        raise ValueError("standardized features and metadata are misaligned")
+    reference_mask = metadata["source"].eq("real_original").to_numpy()
+    reference_values = values[reference_mask]
+    reference_sim = metadata.loc[reference_mask, "sim_index"].to_numpy()
+    baseline = real_split_mixing_baseline(
+        reference_values,
+        reference_sim,
+        k=int(k),
+        n_boot=int(n_boot),
+        seed=int(seed),
+    )
+
+    complete_rows: list[dict[str, Any]] = []
+    identity_rows: list[dict[str, Any]] = []
+    for run_name, parameters in run_parameters.items():
+        for source in SOURCES[1:]:
+            source_mask = (
+                metadata["run_name"].eq(run_name)
+                & metadata["source"].eq(source)
+            ).to_numpy()
+            source_values = values[source_mask]
+            source_sim = metadata.loc[source_mask, "sim_index"].to_numpy()
+            metric = compare_source_to_reference(
+                source_values,
+                reference_values,
+                source_sim=source_sim,
+                reference_sim=reference_sim,
+                k=int(k),
+                n_boot=int(n_boot),
+                seed=int(seed),
+            )
+            if source == "generated":
+                identity = generated_identity_diagnostics()
+            else:
+                identity = classify_transform_identity(
+                    original_images,
+                    transformed_images[(run_name, source)],
+                    metric,
+                )
+            transforms = metadata.loc[source_mask, "transform"].unique().tolist()
+            if len(transforms) != 1:
+                raise RuntimeError(
+                    f"expected one transform for {run_name}/{source}; found {transforms}"
+                )
+            source_count = int(len(source_values))
+            reference_count = int(len(reference_values))
+            row = {
+                "run_name": run_name,
+                "dataset_size": int(parameters["dataset_size"]),
+                "source": source,
+                "reference": "real_original",
+                "transform": transforms[0],
+                "feature_space": "frozen_standardized_vgg_mlp_input_1024d",
+                "gaussian_sigma_pixels": float(parameters["gaussian_sigma_pixels"]),
+                "measured_power_deficit_depth": float(
+                    parameters["measured_power_deficit_depth"]
+                ),
+                "source_count": source_count,
+                "reference_count": reference_count,
+                "perfect_mixing_expectation": perfect_mixing_expectation(
+                    source_count, reference_count
+                ),
+                "real_split_mixing_baseline": baseline[
+                    "real_split_mixing_baseline"
+                ],
+                "real_split_mixing_baseline_ci_low": baseline[
+                    "real_split_mixing_baseline_ci_low"
+                ],
+                "real_split_mixing_baseline_ci_high": baseline[
+                    "real_split_mixing_baseline_ci_high"
+                ],
+                **metric,
+                **identity,
+            }
+            complete_rows.append(row)
+            if source != "generated":
+                identity_rows.append(
+                    {
+                        "run_name": run_name,
+                        "dataset_size": int(parameters["dataset_size"]),
+                        "source": source,
+                        "transform": transforms[0],
+                        "gaussian_sigma_pixels": float(
+                            parameters["gaussian_sigma_pixels"]
+                        ),
+                        "measured_power_deficit_depth": float(
+                            parameters["measured_power_deficit_depth"]
+                        ),
+                        "message": identity["identity_reason"],
+                        **identity,
+                    }
+                )
+    complete = pd.DataFrame(complete_rows)
+    headline = complete.loc[~complete["transform_is_identity"].astype(bool)].copy()
+    return complete, headline, pd.DataFrame(identity_rows), baseline
+
+
+def build_umap_visual_only_table(
+    metadata: pd.DataFrame, embedding: np.ndarray
+) -> pd.DataFrame:
+    """Return a clearly named 2-D layout diagnostic, never a scientific metric."""
+    values = np.asarray(embedding, dtype=np.float64)
+    if values.shape != (len(metadata), 2):
+        raise ValueError("UMAP embedding and metadata are misaligned")
+    reference = values[metadata["source"].eq("real_original").to_numpy()]
+    reference_center = reference.mean(axis=0)
+    rows = []
+    for run_name in sorted(
+        set(metadata.loc[~metadata["source"].eq("real_original"), "run_name"])
+    ):
+        for source in SOURCES[1:]:
+            mask = (
+                metadata["run_name"].eq(run_name)
+                & metadata["source"].eq(source)
+            ).to_numpy()
+            source_values = values[mask]
+            rows.append(
+                {
+                    "run_name": run_name,
+                    "source": source,
+                    "reference": "real_original",
+                    "umap_layout_separation_visual_only": float(
+                        np.linalg.norm(source_values.mean(axis=0) - reference_center)
+                    ),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def fit_umap_with_connectivity_report(
+    reducer: Any, standardized: np.ndarray
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Capture only UMAP's disconnected-graph warning and re-emit the rest."""
+    disconnected = []
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        embedding = np.asarray(
+            reducer.fit_transform(standardized), dtype=np.float32
+        )
+    for warning in caught:
+        message = str(warning.message)
+        if "Graph is not fully connected" in message:
+            disconnected.append(
+                {
+                    "category": warning.category.__name__,
+                    "message": message,
+                }
+            )
+        else:
+            warnings.warn_explicit(
+                warning.message,
+                warning.category,
+                warning.filename,
+                warning.lineno,
+            )
+    return embedding, {
+        "umap_graph_not_fully_connected": bool(disconnected),
+        "warnings": disconnected,
+    }
+
+
+def configure_known_warning_filters() -> None:
+    """Suppress only the known PyTorch TypedStorage deprecation noise."""
+    warnings.filterwarnings(
+        "ignore",
+        message=r"^TypedStorage is deprecated.*",
+        category=UserWarning,
+    )
+
+
+def threadpool_compatibility_report(info_callable: Any | None = None) -> dict[str, Any]:
+    """Record only the known threadpoolctl callback failure; re-raise all else."""
+    if info_callable is None:
+        from threadpoolctl import threadpool_info
+
+        info_callable = threadpool_info
+    try:
+        pools = info_callable()
+    except (AttributeError, TypeError) as exc:
+        message = str(exc)
+        if "NoneType" in message and "split" in message:
+            return {
+                "status": "known_callback_failure",
+                "exception_type": type(exc).__name__,
+                "message": message,
+            }
+        raise
+    return {"status": "ok", "threadpools": pools}
 
 
 def _write_json(path: Path, payload: Any) -> None:
@@ -375,6 +603,54 @@ def _plot_run(table: pd.DataFrame, run_name: str, output: Path) -> None:
     plt.close(fig)
 
 
+def plot_mixing_baselines(table: pd.DataFrame, output: Path) -> None:
+    """Plot observed frozen-space mixing against exact and empirical references."""
+    ordered = table.reset_index(drop=True)
+    x = np.arange(len(ordered), dtype=float)
+    observed = ordered["knn_cross_source_fraction"].to_numpy(dtype=float)
+    lower = observed - ordered[
+        "knn_cross_source_fraction_ci_low"
+    ].to_numpy(dtype=float)
+    upper = ordered[
+        "knn_cross_source_fraction_ci_high"
+    ].to_numpy(dtype=float) - observed
+    fig, ax = plt.subplots(figsize=(max(8.5, 1.25 * len(ordered)), 5.8))
+    for index, row in ordered.iterrows():
+        identity = bool(row["transform_is_identity"])
+        ax.errorbar(
+            x[index],
+            observed[index],
+            yerr=np.array([[lower[index]], [upper[index]]]),
+            fmt="*" if identity else "o",
+            markersize=11 if identity else 7,
+            color=SOURCE_COLORS.get(str(row["source"]), "0.25"),
+            markerfacecolor="none" if identity else None,
+            capsize=4,
+        )
+    perfect = float(ordered["perfect_mixing_expectation"].iloc[0])
+    empirical = float(ordered["real_split_mixing_baseline"].iloc[0])
+    ax.axhline(perfect, color="0.25", linestyle="--", label="exact perfect mixing")
+    ax.axhline(
+        empirical,
+        color="#2a9d8f",
+        linestyle=":",
+        linewidth=2,
+        label="real-vs-real split baseline",
+    )
+    labels = [
+        f"N={int(row.dataset_size)}\n{str(row.source).replace('_', ' ')}"
+        for row in ordered.itertuples()
+    ]
+    ax.set_xticks(x, labels, rotation=28, ha="right")
+    ax.set_ylabel("kNN cross-source mixing fraction")
+    ax.set_title("C4 mixing in the frozen standardized 1024-D probe space")
+    ax.grid(axis="y", alpha=0.2)
+    ax.legend(frameon=False)
+    fig.tight_layout()
+    fig.savefig(output, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-dir", default=".")
@@ -402,6 +678,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    configure_known_warning_filters()
     args = parse_args()
     project_dir = Path(args.project_dir).resolve()
     code_root = args.code_root.resolve()
@@ -419,6 +696,15 @@ def main() -> None:
     code_state = git_state(code_root)
     if code_state != {"revision": args.expected_code_revision, "dirty": False}:
         raise RuntimeError(f"code provenance mismatch: {code_state}")
+    staging.mkdir(parents=True)
+    start_report(
+        staging / "manifest.json",
+        payload={
+            "analysis": "c4_frozen_vgg_umap_seed123_v3",
+            "code_git": code_state,
+        },
+        producer_job_id=os.environ.get("SLURM_JOB_ID"),
+    )
 
     from evaluate_nf_conditional_bias_probe import VGGEncoder, load_manifest, selected_rows
     from prepare_nf_conditional_u128_config import (
@@ -504,6 +790,10 @@ def main() -> None:
     omega_index = list(PARAM_NAMES).index("Omega_m")
 
     config = _analysis_config(args, rows)
+    _, _, split_membership = deterministic_balanced_real_split(
+        real_sim, seed=args.seed
+    )
+    config["metrics"]["real_split_baseline"]["membership"] = split_membership
     config_bytes = (
         json.dumps(config, sort_keys=True, separators=(",", ":")) + "\n"
     ).encode()
@@ -513,6 +803,8 @@ def main() -> None:
     raw_blocks: list[np.ndarray] = []
     metadata_blocks: list[pd.DataFrame] = []
     source_artifacts: list[dict[str, Any]] = []
+    transformed_images: dict[tuple[str, str], np.ndarray] = {}
+    run_parameters: dict[str, dict[str, Any]] = {}
 
     def add_block(
         images: np.ndarray,
@@ -577,6 +869,15 @@ def main() -> None:
         sigma = float(saved["gaussian_sigma_pixels"])
         measured_images, _ = transfer_transform(k_bins, measured_transfer)(real_images)
         gaussian_images, _ = gaussian_smoothing_transform(sigma)(real_images)
+        transformed_images[(run_name, "real_measured_transfer")] = measured_images
+        transformed_images[(run_name, "real_gaussian")] = gaussian_images
+        run_parameters[run_name] = {
+            "dataset_size": dataset_size,
+            "gaussian_sigma_pixels": sigma,
+            "measured_power_deficit_depth": measured_power_deficit_depth(
+                saved["power_ratio"]
+            ),
+        }
 
         sample_path = generated_sample_path(
             results_root,
@@ -655,46 +956,30 @@ def main() -> None:
         n_jobs=1,
         low_memory=True,
     )
-    embedding = np.asarray(reducer.fit_transform(standardized), dtype=np.float32)
+    embedding, umap_connectivity = fit_umap_with_connectivity_report(
+        reducer, standardized
+    )
     if embedding.shape != (len(metadata), 2) or not np.isfinite(embedding).all():
         raise RuntimeError(f"UMAP returned invalid embedding: {embedding.shape}")
     metadata["umap_1"] = embedding[:, 0]
     metadata["umap_2"] = embedding[:, 1]
 
-    metric_rows: list[dict[str, Any]] = []
-    reference_mask = metadata["source"].eq("real_original").to_numpy()
-    for row in rows:
-        run_name = str(row["run_name"])
-        for source in SOURCES[1:]:
-            source_mask = (
-                metadata["run_name"].eq(run_name) & metadata["source"].eq(source)
-            ).to_numpy()
-            for space, values in (
-                ("frozen_standardized_vgg_mlp_input_1024d", standardized),
-                ("pooled_umap_2d", embedding),
-            ):
-                metric = compare_source_to_reference(
-                    values[source_mask],
-                    values[reference_mask],
-                    source_sim=metadata.loc[source_mask, "sim_index"].to_numpy(),
-                    reference_sim=metadata.loc[reference_mask, "sim_index"].to_numpy(),
-                    k=args.knn_k,
-                    n_boot=args.bootstrap,
-                    seed=args.seed,
-                )
-                metric_rows.append(
-                    {
-                        "run_name": run_name,
-                        "dataset_size": int(row["dataset_size"]),
-                        "source": source,
-                        "reference": "real_original",
-                        "feature_space": space,
-                        **metric,
-                    }
-                )
-    metrics = pd.DataFrame(metric_rows)
+    complete_metrics, headline_metrics, identity_report, mixing_baseline = (
+        build_c4_metric_tables(
+            metadata=metadata,
+            standardized=standardized,
+            original_images=real_images,
+            transformed_images=transformed_images,
+            run_parameters=run_parameters,
+            k=args.knn_k,
+            n_boot=args.bootstrap,
+            seed=args.seed,
+        )
+    )
+    if mixing_baseline["split_membership"] != split_membership:
+        raise RuntimeError("real-split baseline membership changed after config hashing")
+    visual_only = build_umap_visual_only_table(metadata, embedding)
 
-    staging.mkdir(parents=True)
     try:
         _write_json(staging / "analysis_config.json", config)
         np.savez_compressed(
@@ -704,8 +989,31 @@ def main() -> None:
             umap_embedding=embedding,
         )
         metadata.to_csv(staging / "sample_provenance.csv", index=False)
-        metrics.to_csv(staging / "c4_umap_metrics.csv", index=False)
-        _write_json(staging / "c4_umap_metrics.json", {"metrics": metrics.to_dict("records")})
+        complete_metrics.to_csv(staging / "c4_feature_metrics_complete.csv", index=False)
+        _write_json(
+            staging / "c4_feature_metrics_complete.json",
+            {"metrics": complete_metrics.to_dict("records")},
+        )
+        headline_metrics.to_csv(staging / "c4_feature_metrics_headline.csv", index=False)
+        _write_json(
+            staging / "c4_feature_metrics_headline.json",
+            {"metrics": headline_metrics.to_dict("records")},
+        )
+        identity_report.to_csv(staging / "c4_transform_identity_report.csv", index=False)
+        _write_json(
+            staging / "c4_transform_identity_report.json",
+            {"transforms": identity_report.to_dict("records")},
+        )
+        visual_only.to_csv(
+            staging / "umap_layout_separation_visual_only.csv", index=False
+        )
+        _write_json(
+            staging / "umap_layout_separation_visual_only.json",
+            {
+                "warning": "UMAP coordinates are visualization-only, not a metric space",
+                "rows": visual_only.to_dict("records"),
+            },
+        )
         joblib.dump(reducer, staging / "pooled_umap_reducer.joblib")
         for row in rows:
             _plot_run(
@@ -713,10 +1021,11 @@ def main() -> None:
                 str(row["run_name"]),
                 staging / f"{row['run_name']}_c4_frozen_probe_umap.png",
             )
+        plot_mixing_baselines(
+            complete_metrics, staging / "c4_knn_mixing_baselines.png"
+        )
 
-        full_metrics = metrics[
-            metrics["feature_space"].eq("frozen_standardized_vgg_mlp_input_1024d")
-        ]
+        full_metrics = complete_metrics
         findings = []
         for row in rows:
             run_metrics = full_metrics[full_metrics["run_name"].eq(row["run_name"])].set_index("source")
@@ -742,12 +1051,16 @@ def main() -> None:
         _write_json(staging / "measured_transfer_sanity_check.json", {"runs": findings})
 
         manifest = {
-            "status": "PASS",
             "code_git": code_state,
             "expected_results_revision": args.expected_results_revision,
             "analysis_config_sha256": config_sha256,
             "analysis_config": config,
             "feature_contract": scaler_report,
+            "threadpool_compatibility": threadpool_compatibility_report(),
+            "umap_connectivity": umap_connectivity,
+            "identity_tolerances": {"dtype": "float32", "rtol": 1e-6, "atol": 1e-7},
+            "run_parameters": run_parameters,
+            "mixing_baseline": mixing_baseline,
             "explicit_frozen_artifact_loading": explicit_load_report,
             "encoder_metadata": encoder_meta,
             "environment": {
@@ -773,19 +1086,23 @@ def main() -> None:
             },
             "row_count": int(len(metadata)),
             "output_files": sorted(
-                [path.name for path in staging.iterdir()] + ["manifest.json"]
+                {path.name for path in staging.iterdir()} | {"manifest.json"}
             ),
         }
-        _write_json(staging / "manifest.json", manifest)
+        update_incomplete_report(
+            staging / "manifest.json",
+            payload=manifest,
+            producer_job_id=os.environ.get("SLURM_JOB_ID"),
+        )
         output_dir.parent.mkdir(parents=True, exist_ok=True)
         os.replace(staging, output_dir)
     except Exception:
         print(f"Partial staging output retained for diagnosis: {staging}", file=sys.stderr)
         raise
 
-    print(f"PASS: wrote frozen-probe C4 UMAP analysis to {output_dir}")
+    print(f"Wrote frozen-probe C4 v3 analysis to {output_dir}; awaiting job finalization")
     print(f"features={raw_features.shape} embedding={embedding.shape}")
-    print(metrics.to_string(index=False))
+    print(complete_metrics.to_string(index=False))
 
 
 if __name__ == "__main__":
