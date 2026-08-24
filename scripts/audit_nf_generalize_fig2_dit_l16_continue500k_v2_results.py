@@ -24,6 +24,7 @@ for import_root in (SCRIPT_DIR, PROJECT_IMPORT_ROOT):
 import check_nf_generalize_fig2_dit_l16_continue500k_v2 as precheck
 import prepare_nf_generalize_fig2_dit_l16_continue500k_v2_configs as prep
 from validate_nf_generalize_fig2_dit_sample import validate_sample_file
+from simdiff_eval.terminal_reports import start_report, update_incomplete_report
 
 
 SWEEP = prep.CONTINUE_SWEEP_NAME
@@ -57,13 +58,6 @@ def _load_json_rows(path: Path) -> list[dict[str, Any]]:
 def _read_csv(path: Path) -> list[dict[str, str]]:
     with path.open(newline="") as handle:
         return list(csv.DictReader(handle))
-
-
-def _atomic_json(path: Path, value: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
-    os.replace(temporary, path)
 
 
 def _sample_digest(path: Path) -> tuple[str, str]:
@@ -240,13 +234,18 @@ def audit_results(project_dir: Path, manifest_path: Path) -> dict[str, Any]:
     report_path = project_dir / "local" / SWEEP / "final_audit.json"
     report: dict[str, Any] = {
         "sweep_name": SWEEP,
-        "status": "FAIL",
+        "audit_status": "FAIL",
         "counts": {},
         "missing_paths": [],
         "provenance_mismatches": [],
         "duplicate_hashes": [],
         "issues": [],
     }
+    start_report(
+        report_path,
+        payload=report,
+        producer_job_id=os.environ.get("SLURM_JOB_ID"),
+    )
 
     try:
         continuation_rows = _load_json_rows(manifest_path)
@@ -256,8 +255,11 @@ def audit_results(project_dir: Path, manifest_path: Path) -> dict[str, Any]:
         analysis = _analysis_rows_by_pair(analysis_rows)
     except Exception as exc:
         report["issues"].append(str(exc))
-        _atomic_json(report_path, report)
-        return report
+        return update_incomplete_report(
+            report_path,
+            payload=report,
+            producer_job_id=os.environ.get("SLURM_JOB_ID"),
+        )
 
     checkpoint_issues: list[str] = []
     valid_checkpoints = 0
@@ -389,9 +391,12 @@ def audit_results(project_dir: Path, manifest_path: Path) -> dict[str, Any]:
         or report["provenance_mismatches"]
         or report["duplicate_hashes"]
     ):
-        report["status"] = "PASS"
-    _atomic_json(report_path, report)
-    return report
+        report["audit_status"] = "PASS"
+    return update_incomplete_report(
+        report_path,
+        payload=report,
+        producer_job_id=os.environ.get("SLURM_JOB_ID"),
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -407,7 +412,7 @@ def main() -> None:
     args = parse_args()
     report = audit_results(Path(args.project_dir), Path(args.manifest))
     print(json.dumps(report, indent=2, sort_keys=True))
-    if report["status"] != "PASS":
+    if report["audit_status"] != "PASS":
         raise SystemExit(1)
 
 

@@ -899,14 +899,17 @@ def test_final_audit_passes_only_complete_attributable_sweep(tmp_path, monkeypat
 
     report = final_audit.audit_results(tmp_path, paths["manifest"])
 
-    assert report["status"] == "PASS"
+    assert report["status"] == "INCOMPLETE"
+    assert report["audit_status"] == "PASS"
     assert report["counts"]["valid_checkpoints"] == 50
     assert report["counts"]["valid_sample_files"] == 64
     assert report["counts"]["valid_metric_tables"] == 12
     saved = json.loads(
         (tmp_path / "local" / prep.CONTINUE_SWEEP_NAME / "final_audit.json").read_text()
     )
-    assert saved["status"] == "PASS"
+    assert saved["status"] == "INCOMPLETE"
+    assert saved["audit_status"] == "PASS"
+    assert saved["producer_exit_code"] is None
 
 
 @pytest.mark.parametrize("missing_kind", ["checkpoint", "sample", "pca", "sscd", "physics"])
@@ -925,5 +928,6 @@ def test_final_audit_fails_closed_for_missing_artifact(
 
     report = final_audit.audit_results(tmp_path, paths["manifest"])
 
-    assert report["status"] == "FAIL"
+    assert report["status"] == "INCOMPLETE"
+    assert report["audit_status"] == "FAIL"
     assert report["issues"] or report["missing_paths"]
