@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import warnings
 
 import pytest
 import torch
@@ -17,6 +18,8 @@ SUBMIT_SCRIPT = REPO_ROOT / "scripts/slurm/submit_nf_generalize_fig2_dit_l16_see
 PRECHECK_SCRIPT = REPO_ROOT / "scripts/slurm/precheck_nf_generalize_fig2_dit_l16_seed_restart500k.sbatch"
 TRAIN_SCRIPT = REPO_ROOT / "scripts/slurm/train_nf_generalize_fig2_dit_l16_seed_restart500k_array.sbatch"
 SOURCE_METADATA_SCRIPT = REPO_ROOT / "scripts/write_source_checkout_metadata.py"
+PIN_BUILDER_SCRIPT = REPO_ROOT / "scripts/build_cosmodiff_seed_restart_pin.py"
+PIN_VERIFY_SCRIPT = REPO_ROOT / "scripts/verify_cosmodiff_seed_restart_runtime.py"
 
 
 def load_module():
@@ -43,6 +46,154 @@ def load_source_metadata_module():
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+def load_path_module(path: Path, name: str):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def make_pin_source_repo(tmp_path: Path) -> tuple[Path, str]:
+    source = tmp_path / "cosmodiff_source"
+    package = source / "cosmodiff"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text('__version__ = "0+fixture"\n')
+    for name in ("optim", "utils", "augment", "transform"):
+        (package / f"{name}.py").write_text(f'VALUE = "{name}"\n')
+    (source / "scripts").mkdir()
+    (source / "scripts/cosmodiff_train.py").write_text("print('fixture')\n")
+    subprocess.run(["git", "init", "-q"], cwd=source, check=True)
+    subprocess.run(["git", "config", "user.email", "fixture@example.invalid"], cwd=source, check=True)
+    subprocess.run(["git", "config", "user.name", "Fixture"], cwd=source, check=True)
+    subprocess.run(["git", "add", "."], cwd=source, check=True)
+    subprocess.run(["git", "commit", "-qm", "fixture"], cwd=source, check=True)
+    revision = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=source,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    return source, revision
+
+
+def make_pin_patch_scripts(tmp_path: Path) -> list[Path]:
+    patch_root = tmp_path / "patches"
+    patch_root.mkdir()
+    targets = {
+        "patch_cosmodiff_package_metadata.py": "cosmodiff/__init__.py",
+        "patch_cosmodiff_constant_label.py": "cosmodiff/utils.py",
+        "patch_cosmodiff_dit_class_labels.py": "cosmodiff/optim.py",
+        "patch_cosmodiff_checkpoint_state.py": "cosmodiff/optim.py",
+    }
+    paths = []
+    for index, (name, target) in enumerate(targets.items(), start=1):
+        path = patch_root / name
+        path.write_text(
+            "from pathlib import Path\n"
+            "import sys\n"
+            f"path = Path(sys.argv[1]) / {target!r}\n"
+            f"path.write_text(path.read_text() + '# patch {index}\\n')\n"
+        )
+        paths.append(path)
+    return paths
+
+
+def test_immutable_pin_builder_records_ordered_patches_imports_and_inventory(tmp_path):
+    builder = load_path_module(PIN_BUILDER_SCRIPT, "pin_builder")
+    verifier = load_path_module(PIN_VERIFY_SCRIPT, "pin_verifier")
+    source, revision = make_pin_source_repo(tmp_path)
+    patches = make_pin_patch_scripts(tmp_path)
+    destination = tmp_path / "published_pin"
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        manifest = builder.build_pin(
+            source_repo=source,
+            base_revision=revision,
+            destination=destination,
+            python_bin=Path(sys.executable),
+            patch_scripts=patches,
+        )
+    assert not caught
+
+    assert destination.is_dir()
+    assert manifest["base_revision"] == revision
+    assert [row["name"] for row in manifest["patches"]] == [
+        "patch_cosmodiff_package_metadata.py",
+        "patch_cosmodiff_constant_label.py",
+        "patch_cosmodiff_dit_class_labels.py",
+        "patch_cosmodiff_checkpoint_state.py",
+    ]
+    assert [row["status"] for row in manifest["patches"]] == [
+        "applied",
+        "applied",
+        "applied",
+        "applied",
+    ]
+    assert all(row["script_sha256"] for row in manifest["patches"])
+    assert all(row["targets"] for row in manifest["patches"])
+    assert set(manifest["imports"]) == {
+        "cosmodiff",
+        "cosmodiff.optim",
+        "cosmodiff.utils",
+        "cosmodiff.augment",
+        "cosmodiff.transform",
+    }
+    assert manifest["cosmodiff_version"] == "0+fixture"
+    assert not list(destination.rglob("*.bak"))
+    assert verifier.verify_pin(
+        destination,
+        destination / builder.PIN_MANIFEST_NAME,
+        expected_base_revision=revision,
+        python_bin=Path(sys.executable),
+        expected_patch_scripts=patches,
+        check_source_contract=False,
+    )["base_revision"] == revision
+
+
+def test_immutable_pin_verifier_rejects_modified_or_extra_files(tmp_path):
+    builder = load_path_module(PIN_BUILDER_SCRIPT, "pin_builder_tamper")
+    verifier = load_path_module(PIN_VERIFY_SCRIPT, "pin_verifier_tamper")
+    source, revision = make_pin_source_repo(tmp_path)
+    patches = make_pin_patch_scripts(tmp_path)
+    destination = tmp_path / "published_pin"
+    builder.build_pin(
+        source_repo=source,
+        base_revision=revision,
+        destination=destination,
+        python_bin=Path(sys.executable),
+        patch_scripts=patches,
+    )
+    manifest_path = destination / builder.PIN_MANIFEST_NAME
+
+    (destination / "cosmodiff/optim.py").write_text("tampered\n")
+    with pytest.raises(RuntimeError, match="inventory"):
+        verifier.verify_pin(
+            destination,
+            manifest_path,
+            expected_base_revision=revision,
+            python_bin=Path(sys.executable),
+            expected_patch_scripts=patches,
+            check_source_contract=False,
+        )
+
+    (destination / "cosmodiff/optim.py").write_text(
+        'VALUE = "optim"\n# patch 3\n# patch 4\n'
+    )
+    (destination / "unexpected.txt").write_text("not declared\n")
+    with pytest.raises(RuntimeError, match="inventory"):
+        verifier.verify_pin(
+            destination,
+            manifest_path,
+            expected_base_revision=revision,
+            python_bin=Path(sys.executable),
+            expected_patch_scripts=patches,
+            check_source_contract=False,
+        )
 
 
 def source_rows(project_dir: Path):
