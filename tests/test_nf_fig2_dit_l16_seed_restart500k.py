@@ -10,6 +10,8 @@ import pytest
 import torch
 import yaml
 
+from simdiff_eval.terminal_reports import start_report
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts/prepare_nf_generalize_fig2_dit_l16_seed_restart500k_configs.py"
@@ -471,6 +473,67 @@ def test_seed_restart_checker_creates_only_an_incomplete_terminal_report(tmp_pat
     assert payload["producer_exit_code"] is None
     assert payload["finalized_at_utc"] is None
     assert payload["report_schema_version"] == 1
+
+
+def test_seed_restart_checker_enriches_the_prestarted_job_report(tmp_path):
+    prep = load_module()
+    rows = prep.build_seed_restart_rows(
+        tmp_path,
+        source_rows(tmp_path),
+        checkpoint_root=tmp_path / "new_checkpoints",
+    )
+    for row in rows:
+        config_path = prep._project_path(tmp_path, row["config"])
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(
+            yaml.safe_dump(
+                prep.build_seed_restart_config(
+                    prep._project_path(tmp_path, row["source_config"]), row
+                ),
+                sort_keys=False,
+            )
+        )
+    prep.seed_restart_directories(rows)
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps(rows, indent=2) + "\n")
+    report = tmp_path / "precheck.json"
+    initial = start_report(report, payload={"stage": 1}, producer_job_id="778")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(REPO_ROOT)
+    env["SLURM_JOB_ID"] = "778"
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(CHECK_SCRIPT),
+            "--project-dir",
+            str(tmp_path),
+            "--manifest",
+            str(manifest),
+            "--stage",
+            "1",
+            "--report",
+            str(report),
+        ],
+        check=True,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    enriched = json.loads(report.read_text())
+    assert enriched["started_at_utc"] == initial["started_at_utc"]
+    assert enriched["status"] == "INCOMPLETE"
+    assert len(enriched["rows"]) == 2
+
+
+def test_seed_restart_precheck_starts_report_immediately_after_pin_verification():
+    source = PRECHECK_SCRIPT.read_text()
+    verify_index = source.index("verify_cosmodiff_seed_restart_runtime.py")
+    start_index = source.index('"${FINALIZER}" start')
+    prepare_index = source.index('"${PYTHON_BIN}" "${PREPARE}"')
+    check_index = source.index('"${PYTHON_BIN}" "${CHECK}"')
+    assert verify_index < start_index < prepare_index < check_index
 
 
 def test_seed_restart_wrappers_consume_verified_pin_and_exact_precheck_job():

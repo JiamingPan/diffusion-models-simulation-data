@@ -75,6 +75,9 @@ export PYTHONPATH="${COSMODIFF_PIN_ROOT}:${CODE_ROOT}:${PYTHONPATH:-}"
   --patch-script "${CODE_ROOT}/scripts/patch_cosmodiff_dit_class_labels.py" \
   --patch-script "${CODE_ROOT}/scripts/patch_cosmodiff_checkpoint_state.py"
 
+"${PYTHON_BIN}" "${FINALIZER}" start "${REPORT_PATH}" \
+  --job-id "${SLURM_JOB_ID}" >/dev/null
+
 "${PYTHON_BIN}" "${PREPARE}" \
   --project-dir "${PROJECT_DIR}" \
   --use-existing-manifest \

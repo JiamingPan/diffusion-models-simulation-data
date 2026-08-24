@@ -11,12 +11,17 @@ from simdiff_eval.terminal_reports import (
     finalize_report,
     mark_stale,
     require_passed_report,
+    start_report,
 )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    start = subparsers.add_parser("start")
+    start.add_argument("path", type=Path)
+    start.add_argument("--job-id", required=True)
 
     finalize = subparsers.add_parser("finalize")
     finalize.add_argument("path", type=Path)
@@ -36,7 +41,13 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    if args.command == "finalize":
+    if args.command == "start":
+        report = start_report(
+            args.path,
+            payload={},
+            producer_job_id=args.job_id,
+        )
+    elif args.command == "finalize":
         report = finalize_report(
             args.path,
             status=args.status,
