@@ -17,10 +17,12 @@ set -euo pipefail
 PROJECT_DIR=${PROJECT_DIR:-/home/jiamingp/diffusion_models_repo}
 CODE_ROOT=${CODE_ROOT:?Set CODE_ROOT to the frozen seed-restart code worktree}
 EXPECTED_COMMIT=${EXPECTED_COMMIT:?Set EXPECTED_COMMIT to the frozen code revision}
-EXPECTED_COSMODIFF_COMMIT=${EXPECTED_COSMODIFF_COMMIT:?Set the exact external cosmodiff revision}
+EXPECTED_COSMODIFF_BASE_REVISION=${EXPECTED_COSMODIFF_BASE_REVISION:?Set the exact cosmodiff base revision}
 CONTINUE_STAGE=${CONTINUE_STAGE:?Set CONTINUE_STAGE to 1, 2, 3, 4, or 5}
 PRECHECK_REPORT=${PRECHECK_REPORT:?Set PRECHECK_REPORT to the completed stage report}
-COSMODIFF_DIR=${COSMODIFF_DIR_OVERRIDE:-/home/jiamingp/Diffusion_model/cosmo_diffusion_main}
+EXPECTED_PRECHECK_JOB_ID=${EXPECTED_PRECHECK_JOB_ID:?Set the exact producer precheck job ID}
+COSMODIFF_PIN_ROOT=${COSMODIFF_PIN_ROOT:?Set the immutable cosmodiff pin root}
+COSMODIFF_PIN_MANIFEST=${COSMODIFF_PIN_MANIFEST:?Set the immutable cosmodiff pin manifest}
 VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf_class}
 BASE_VENV_PATH=${BASE_VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
 PYTHON_BIN=${PYTHON_BIN:-${VENV_PATH}/bin/python}
@@ -38,9 +40,9 @@ if (( SLURM_ARRAY_TASK_ID < 0 || SLURM_ARRAY_TASK_ID >= 2 )); then
 fi
 test "$(git -C "${CODE_ROOT}" rev-parse HEAD)" = "${EXPECTED_COMMIT}"
 test -z "$(git -C "${CODE_ROOT}" status --porcelain)"
-test "$(git -C "${COSMODIFF_DIR}" rev-parse HEAD)" = "${EXPECTED_COSMODIFF_COMMIT}"
-test -z "$(git -C "${COSMODIFF_DIR}" status --porcelain)"
 test -s "${PRECHECK_REPORT}"
+test -d "${COSMODIFF_PIN_ROOT}"
+test -s "${COSMODIFF_PIN_MANIFEST}"
 
 cd "${PROJECT_DIR}"
 mkdir -p "${PROJECT_DIR}/logs/${SWEEP}" \
@@ -81,17 +83,25 @@ test -d "${MINIMUM_CHECKPOINT}"
 test ! -e "${AUDIT_PATH}"
 test ! -e "${COMPLETION}"
 
-STUB_ROOT=${PROJECT_DIR}/results/cache/python_stubs/seed_restart_train_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}
-mkdir -p "${STUB_ROOT}"
-"${PYTHON_BIN}" "${CODE_ROOT}/scripts/write_diffusers_runtime_sitecustomize.py" \
-  "${STUB_ROOT}/sitecustomize.py"
-"${PYTHON_BIN}" "${CODE_ROOT}/scripts/write_source_checkout_metadata.py" \
-  "${STUB_ROOT}" "cosmodiff" "0+source.${EXPECTED_COSMODIFF_COMMIT:0:7}"
 export TORCHDYNAMO_DISABLE=1
-export PYTHONPATH="${STUB_ROOT}:${COSMODIFF_DIR}:${CODE_ROOT}:${PYTHONPATH:-}"
-export COSMODIFF_DIR
+export PYTHONPATH="${COSMODIFF_PIN_ROOT}:${CODE_ROOT}:${PYTHONPATH:-}"
+export COSMODIFF_DIR="${COSMODIFF_PIN_ROOT}"
 
-test -f "${COSMODIFF_DIR}/scripts/cosmodiff_train.py"
+"${PYTHON_BIN}" "${CODE_ROOT}/scripts/verify_cosmodiff_seed_restart_runtime.py" \
+  "${COSMODIFF_PIN_ROOT}" \
+  --manifest "${COSMODIFF_PIN_MANIFEST}" \
+  --expected-base-revision "${EXPECTED_COSMODIFF_BASE_REVISION}" \
+  --python-bin "${PYTHON_BIN}" \
+  --patch-script "${CODE_ROOT}/scripts/patch_cosmodiff_package_metadata.py" \
+  --patch-script "${CODE_ROOT}/scripts/patch_cosmodiff_constant_label.py" \
+  --patch-script "${CODE_ROOT}/scripts/patch_cosmodiff_dit_class_labels.py" \
+  --patch-script "${CODE_ROOT}/scripts/patch_cosmodiff_checkpoint_state.py"
+
+"${PYTHON_BIN}" "${CODE_ROOT}/scripts/finalize_terminal_report.py" require-pass \
+  "${PRECHECK_REPORT}" \
+  --expected-job-id "${EXPECTED_PRECHECK_JOB_ID}" >/dev/null
+
+test -f "${COSMODIFF_PIN_ROOT}/scripts/cosmodiff_train.py"
 echo "Seed restart ${RUN_NAME}: ${MINIMUM_CHECKPOINT} -> ${TARGET_CHECKPOINT}"
 echo "resume_seed=${RESUME_SEED} apply_resume_seed=${APPLY_RESUME_SEED} target_updates=${TARGET_UPDATES}"
 echo "resume_ema_step=${RESUME_EMA_STEP} target_ema_step=${TARGET_EMA_STEP}"
@@ -104,7 +114,7 @@ fi
 
 "${PYTHON_BIN}" "${CODE_ROOT}/scripts/run_cosmodiff_train_with_dit_resume.py" \
   --config "${CONFIG_PATH}" \
-  --cosmodiff-train "${COSMODIFF_DIR}/scripts/cosmodiff_train.py" \
+  --cosmodiff-train "${COSMODIFF_PIN_ROOT}/scripts/cosmodiff_train.py" \
   --checkpoint-dir "${CHECKPOINT_DIR}" \
   --minimum-checkpoint "${MINIMUM_CHECKPOINT}" \
   --target-checkpoint "${TARGET_CHECKPOINT}" \

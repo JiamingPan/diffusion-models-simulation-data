@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -19,6 +20,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import prepare_nf_generalize_fig2_dit_l16_seed_restart500k_configs as prep
+from simdiff_eval.terminal_reports import start_report
 from run_cosmodiff_train_with_dit_resume import (
     normalize_posthoc_ema_checkpoint_state,
 )
@@ -257,7 +259,6 @@ def main() -> None:
         "resume_seed": prep.RESUME_SEED,
         "stage": int(args.stage),
         "rows": [validate_seed_restart_row(row, project_dir) for row in selected],
-        "status": "PASS",
     }
     if args.report:
         report_path = args.report
@@ -265,8 +266,11 @@ def main() -> None:
             report_path = project_dir / report_path
         if report_path.exists():
             raise FileExistsError(f"refusing to overwrite preflight report: {report_path}")
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(json.dumps(report, indent=2) + "\n")
+        report = start_report(
+            report_path,
+            payload=report,
+            producer_job_id=os.environ.get("SLURM_JOB_ID"),
+        )
         print(f"Wrote {report_path}")
     print(json.dumps(report, indent=2))
 
