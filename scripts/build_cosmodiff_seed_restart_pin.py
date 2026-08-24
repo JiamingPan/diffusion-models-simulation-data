@@ -133,14 +133,19 @@ def imported_modules(python_bin: Path, root: Path) -> dict[str, Any]:
     env = dict(os.environ)
     env["PYTHONNOUSERSITE"] = "1"
     env["PYTHONPATH"] = str(root)
-    completed = subprocess.run(
-        [str(python_bin), "-c", program],
-        cwd=root,
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        completed = subprocess.run(
+            [str(python_bin), "-c", program],
+            cwd=root,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            "cosmodiff pin import validation failed:\n" + (exc.stderr or exc.stdout)
+        ) from exc
     result = json.loads(completed.stdout.strip().splitlines()[-1])
     root = root.resolve()
     relative_paths: dict[str, str] = {}

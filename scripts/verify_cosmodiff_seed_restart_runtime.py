@@ -73,14 +73,19 @@ def _runtime_imports(python_bin: Path, pin_root: Path) -> dict[str, Any]:
     env = dict(os.environ)
     env["PYTHONNOUSERSITE"] = "1"
     env["PYTHONPATH"] = str(pin_root)
-    completed = subprocess.run(
-        [str(python_bin), "-c", program],
-        cwd=pin_root,
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        completed = subprocess.run(
+            [str(python_bin), "-c", program],
+            cwd=pin_root,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            "cosmodiff pin import verification failed:\n" + (exc.stderr or exc.stdout)
+        ) from exc
     result = json.loads(completed.stdout.strip().splitlines()[-1])
     relative = {}
     for name, raw_path in result["paths"].items():

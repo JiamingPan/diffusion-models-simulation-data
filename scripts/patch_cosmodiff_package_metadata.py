@@ -26,10 +26,15 @@ def source_for_patch(path: Path) -> str:
 
 
 def patch_init(path: Path) -> bool:
-    source = source_for_patch(path)
-    if MARKER in source:
+    source = path.read_text()
+    if MARKER in source or re.search(
+        r"^from\s+\.version\s+import\s+__version__\s*$",
+        source,
+        flags=re.MULTILINE,
+    ):
         print("cosmo_diffusion package-metadata patch: ok")
         return False
+    source = source_for_patch(path)
 
     updated = source
     updated = updated.replace(
