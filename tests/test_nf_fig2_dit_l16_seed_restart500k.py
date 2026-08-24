@@ -22,6 +22,7 @@ TRAIN_SCRIPT = REPO_ROOT / "scripts/slurm/train_nf_generalize_fig2_dit_l16_seed_
 SOURCE_METADATA_SCRIPT = REPO_ROOT / "scripts/write_source_checkout_metadata.py"
 PIN_BUILDER_SCRIPT = REPO_ROOT / "scripts/build_cosmodiff_seed_restart_pin.py"
 PIN_VERIFY_SCRIPT = REPO_ROOT / "scripts/verify_cosmodiff_seed_restart_runtime.py"
+PACKAGE_METADATA_PATCH = REPO_ROOT / "scripts/patch_cosmodiff_package_metadata.py"
 
 
 def load_module():
@@ -196,6 +197,33 @@ def test_immutable_pin_verifier_rejects_modified_or_extra_files(tmp_path):
             expected_patch_scripts=patches,
             check_source_contract=False,
         )
+
+
+def test_package_metadata_patch_accepts_source_version_module_layout(tmp_path):
+    module = load_path_module(PACKAGE_METADATA_PATCH, "package_metadata_modern")
+    init_path = tmp_path / "__init__.py"
+    original = (
+        "from . import utils\n"
+        "from . import augment\n"
+        "from . import optim\n"
+        "from .version import __version__\n"
+    )
+    init_path.write_text(original)
+
+    changed = module.patch_init(init_path)
+
+    assert changed is False
+    assert init_path.read_text() == original
+
+
+def test_pin_import_failure_reports_the_missing_runtime_dependency(tmp_path):
+    builder = load_path_module(PIN_BUILDER_SCRIPT, "pin_builder_import_error")
+    package = tmp_path / "cosmodiff"
+    package.mkdir()
+    (package / "__init__.py").write_text("import missing_pin_dependency\n")
+
+    with pytest.raises(RuntimeError, match="missing_pin_dependency"):
+        builder.imported_modules(Path(sys.executable), tmp_path)
 
 
 def source_rows(project_dir: Path):
