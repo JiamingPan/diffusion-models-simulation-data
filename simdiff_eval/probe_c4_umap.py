@@ -8,6 +8,9 @@ import numpy as np
 import pandas as pd
 
 
+IDENTITY_RTOL = 1e-6
+IDENTITY_ATOL = 1e-7
+
 PROVENANCE_COLUMNS = [
     "run_name",
     "dataset_size",
@@ -20,6 +23,167 @@ PROVENANCE_COLUMNS = [
     "code_revision",
     "config_sha256",
 ]
+
+
+def measured_power_deficit_depth(power_ratio: Any) -> float:
+    """Return max(0, 1 - min ratio) over the already-saved finite bins."""
+    values = np.asarray(power_ratio, dtype=np.float64).reshape(-1)
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        raise ValueError("saved power ratio contains no finite bins")
+    return float(max(0.0, 1.0 - float(finite.min())))
+
+
+def interval_has_zero_width(low: float, high: float) -> bool:
+    """Treat only machine-scale numerical width as zero."""
+    low = float(low)
+    high = float(high)
+    if not np.isfinite([low, high]).all():
+        return False
+    tolerance = 8.0 * np.finfo(np.float64).eps * max(1.0, abs(low), abs(high))
+    return bool(abs(high - low) <= tolerance)
+
+
+def classify_transform_identity(
+    original: np.ndarray,
+    transformed: np.ndarray,
+    metric: dict[str, Any],
+    *,
+    rtol: float = IDENTITY_RTOL,
+    atol: float = IDENTITY_ATOL,
+) -> dict[str, bool | str]:
+    """Classify a transformed-real arm without changing any scientific metric."""
+    left = np.asarray(original, dtype=np.float32)
+    right = np.asarray(transformed, dtype=np.float32)
+    arrays_allclose = bool(
+        left.shape == right.shape
+        and np.allclose(left, right, rtol=float(rtol), atol=float(atol))
+    )
+    centroid_zero = interval_has_zero_width(
+        metric["centroid_distance_ci_low"], metric["centroid_distance_ci_high"]
+    )
+    knn_zero = interval_has_zero_width(
+        metric["knn_cross_source_fraction_ci_low"],
+        metric["knn_cross_source_fraction_ci_high"],
+    )
+    is_identity = arrays_allclose and centroid_zero and knn_zero
+    if is_identity:
+        reason = "transform had no effect at this N"
+    else:
+        failures = []
+        if not arrays_allclose:
+            failures.append("transformed arrays differ from original")
+        if not centroid_zero:
+            failures.append("centroid bootstrap interval has nonzero width")
+        if not knn_zero:
+            failures.append("kNN bootstrap interval has nonzero width")
+        reason = "; ".join(failures)
+    return {
+        "transform_arrays_allclose": arrays_allclose,
+        "centroid_ci_zero_width": centroid_zero,
+        "knn_ci_zero_width": knn_zero,
+        "transform_is_identity": is_identity,
+        "identity_reason": reason,
+    }
+
+
+def generated_identity_diagnostics() -> dict[str, bool | str]:
+    """Return explicit not-applicable identity fields for generated samples."""
+    return {
+        "transform_arrays_allclose": False,
+        "centroid_ci_zero_width": False,
+        "knn_ci_zero_width": False,
+        "transform_is_identity": False,
+        "identity_reason": "not applicable: generated samples are not a transform arm",
+    }
+
+
+def perfect_mixing_expectation(source_count: int, reference_count: int) -> float:
+    """Exact cross-label-neighbour probability with self excluded."""
+    source_count = int(source_count)
+    reference_count = int(reference_count)
+    if source_count <= 0 or reference_count <= 0:
+        raise ValueError("source and reference counts must both be positive")
+    total = source_count + reference_count
+    return float(
+        2.0
+        * source_count
+        * reference_count
+        / (total * (total - 1))
+    )
+
+
+def deterministic_balanced_real_split(
+    sim_index: np.ndarray, *, seed: int
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    """Split original-real rows equally inside each simulation block."""
+    simulations = np.asarray(sim_index, dtype=np.int64).reshape(-1)
+    if simulations.size == 0:
+        raise ValueError("simulation labels are empty")
+    rng = np.random.default_rng(int(seed))
+    left_blocks = []
+    right_blocks = []
+    membership: dict[str, dict[str, list[int]]] = {}
+    for sim in np.unique(simulations):
+        indices = np.flatnonzero(simulations == sim)
+        if len(indices) < 2 or len(indices) % 2:
+            raise ValueError(
+                "every simulation block must contain an even number of at least two rows"
+            )
+        shuffled = rng.permutation(indices)
+        half = len(indices) // 2
+        left = np.sort(shuffled[:half])
+        right = np.sort(shuffled[half:])
+        left_blocks.append(left)
+        right_blocks.append(right)
+        membership[str(int(sim))] = {
+            "left_indices": left.astype(int).tolist(),
+            "right_indices": right.astype(int).tolist(),
+        }
+    left_indices = np.concatenate(left_blocks)
+    right_indices = np.concatenate(right_blocks)
+    return left_indices, right_indices, {
+        "seed": int(seed),
+        "rule": "seeded within-simulation balanced half split",
+        "by_simulation": membership,
+    }
+
+
+def real_split_mixing_baseline(
+    features: np.ndarray,
+    sim_index: np.ndarray,
+    *,
+    k: int,
+    n_boot: int,
+    seed: int,
+) -> dict[str, Any]:
+    """Apply the production mixing statistic to two deterministic real halves."""
+    values = np.asarray(features)
+    simulations = np.asarray(sim_index, dtype=np.int64).reshape(-1)
+    if len(values) != len(simulations):
+        raise ValueError("features and simulation labels are misaligned")
+    left, right, membership = deterministic_balanced_real_split(
+        simulations, seed=int(seed)
+    )
+    metric = compare_source_to_reference(
+        values[left],
+        values[right],
+        source_sim=simulations[left],
+        reference_sim=simulations[right],
+        k=int(k),
+        n_boot=int(n_boot),
+        seed=int(seed),
+    )
+    return {
+        "real_split_mixing_baseline": metric["knn_cross_source_fraction"],
+        "real_split_mixing_baseline_ci_low": metric[
+            "knn_cross_source_fraction_ci_low"
+        ],
+        "real_split_mixing_baseline_ci_high": metric[
+            "knn_cross_source_fraction_ci_high"
+        ],
+        "split_membership": membership,
+    }
 
 
 def frozen_mlp_inputs(head: Any, raw_features: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
