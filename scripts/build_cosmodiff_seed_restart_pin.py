@@ -181,7 +181,9 @@ def build_pin(
     """Build a verified pin in staging and publish it with one rename."""
     source_repo = Path(source_repo).resolve()
     destination = Path(destination).resolve()
-    python_bin = Path(python_bin).resolve()
+    # Keep the venv entry-point path intact.  Resolving this symlink launches
+    # Great Lakes' bare base interpreter and silently drops venv packages.
+    python_bin = Path(os.path.abspath(os.path.expanduser(str(python_bin))))
     patches = _validate_patch_scripts(patch_scripts)
     if destination.exists():
         raise FileExistsError(f"refusing to overwrite existing pin: {destination}")

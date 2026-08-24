@@ -129,7 +129,10 @@ def verify_pin(
     actual_inventory = file_inventory(pin_root)
     if actual_inventory != manifest.get("inventory"):
         raise RuntimeError("cosmodiff pin inventory differs from its manifest")
-    runtime = _runtime_imports(Path(python_bin).resolve(), pin_root)
+    # Preserve the venv entry-point path; resolving its symlink would launch
+    # the bare base interpreter without the venv's installed packages.
+    runtime_python = Path(os.path.abspath(os.path.expanduser(str(python_bin))))
+    runtime = _runtime_imports(runtime_python, pin_root)
     if runtime["paths"] != manifest.get("imports"):
         raise RuntimeError("cosmodiff pin import paths differ from its manifest")
     if runtime["version"] != manifest.get("cosmodiff_version"):

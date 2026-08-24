@@ -59,11 +59,18 @@ def load_path_module(path: Path, name: str):
     return module
 
 
-def make_pin_source_repo(tmp_path: Path) -> tuple[Path, str]:
+def make_pin_source_repo(
+    tmp_path: Path, *, required_runtime_module: str | None = None
+) -> tuple[Path, str]:
     source = tmp_path / "cosmodiff_source"
     package = source / "cosmodiff"
     package.mkdir(parents=True)
-    (package / "__init__.py").write_text('__version__ = "0+fixture"\n')
+    runtime_import = (
+        f"import {required_runtime_module}\n" if required_runtime_module else ""
+    )
+    (package / "__init__.py").write_text(
+        runtime_import + '__version__ = "0+fixture"\n'
+    )
     for name in ("optim", "utils", "augment", "transform"):
         (package / f"{name}.py").write_text(f'VALUE = "{name}"\n')
     (source / "scripts").mkdir()
@@ -153,6 +160,51 @@ def test_immutable_pin_builder_records_ordered_patches_imports_and_inventory(tmp
         destination / builder.PIN_MANIFEST_NAME,
         expected_base_revision=revision,
         python_bin=Path(sys.executable),
+        expected_patch_scripts=patches,
+        check_source_contract=False,
+    )["base_revision"] == revision
+
+
+def test_pin_builder_and_verifier_preserve_virtualenv_python_symlink(tmp_path):
+    builder = load_path_module(PIN_BUILDER_SCRIPT, "pin_builder_venv")
+    verifier = load_path_module(PIN_VERIFY_SCRIPT, "pin_verifier_venv")
+    venv = tmp_path / "fixture_venv"
+    subprocess.run(
+        [sys.executable, "-m", "venv", "--system-site-packages", str(venv)],
+        check=True,
+    )
+    python_bin = venv / "bin/python"
+    site_packages = subprocess.run(
+        [
+            str(python_bin),
+            "-c",
+            "import site; print(site.getsitepackages()[0])",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    Path(site_packages, "pin_runtime_marker.py").write_text("VALUE = 1\n")
+
+    source, revision = make_pin_source_repo(
+        tmp_path, required_runtime_module="pin_runtime_marker"
+    )
+    patches = make_pin_patch_scripts(tmp_path)
+    destination = tmp_path / "published_pin"
+    manifest = builder.build_pin(
+        source_repo=source,
+        base_revision=revision,
+        destination=destination,
+        python_bin=python_bin,
+        patch_scripts=patches,
+    )
+
+    assert manifest["python_executable"] == str(python_bin.absolute())
+    assert verifier.verify_pin(
+        destination,
+        destination / builder.PIN_MANIFEST_NAME,
+        expected_base_revision=revision,
+        python_bin=python_bin,
         expected_patch_scripts=patches,
         check_source_contract=False,
     )["base_revision"] == revision
