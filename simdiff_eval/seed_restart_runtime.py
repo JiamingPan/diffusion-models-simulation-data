@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -262,3 +263,35 @@ def run_runtime_audit(
             + completed.stdout
         )
     return json.loads(payload_lines[0])
+
+
+def normalize_runtime_audit(
+    report: Mapping[str, Any],
+    *,
+    pin_root: Path,
+    code_root: Path,
+) -> dict[str, Any]:
+    """Replace relocatable pin/code prefixes with stable manifest tokens."""
+
+    pin_root = Path(pin_root).resolve()
+    code_root = Path(code_root).resolve()
+
+    def normalize(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: normalize(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [normalize(item) for item in value]
+        if not isinstance(value, str) or not value.startswith(os.sep):
+            return value
+        path = Path(value).resolve()
+        if path == pin_root:
+            return "<PIN_ROOT>"
+        if path.is_relative_to(pin_root):
+            return f"<PIN_ROOT>/{path.relative_to(pin_root).as_posix()}"
+        if path == code_root:
+            return "<CODE_ROOT>"
+        if path.is_relative_to(code_root):
+            return f"<CODE_ROOT>/{path.relative_to(code_root).as_posix()}"
+        return value
+
+    return normalize(copy.deepcopy(dict(report)))

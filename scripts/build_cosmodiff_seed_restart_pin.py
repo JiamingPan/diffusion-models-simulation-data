@@ -13,7 +13,20 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
-from typing import Any
+from typing import Any, Sequence
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in os.sys.path:
+    os.sys.path.insert(0, str(REPO_ROOT))
+
+from simdiff_eval.seed_restart_runtime import (
+    RUNTIME_DIR_NAME,
+    normalize_runtime_audit,
+    run_runtime_audit,
+    runtime_file_inventory,
+    write_runtime_assets,
+)
 
 
 PIN_MANIFEST_NAME = "seed_restart_pin_manifest.json"
@@ -118,43 +131,45 @@ def _target_hashes(root: Path, targets: tuple[str, ...]) -> dict[str, str]:
     return hashes
 
 
-def imported_modules(python_bin: Path, root: Path) -> dict[str, Any]:
-    program = (
-        "import importlib,json,pathlib\n"
-        f"names={list(REQUIRED_IMPORTS)!r}\n"
-        "result={}\n"
-        "for name in names:\n"
-        "    module=importlib.import_module(name)\n"
-        "    path=pathlib.Path(module.__file__).resolve()\n"
-        "    result[name]=str(path)\n"
-        "import cosmodiff\n"
-        "print(json.dumps({'paths':result,'version':cosmodiff.__version__},sort_keys=True))\n"
+def imported_modules(
+    python_bin: Path,
+    root: Path,
+    *,
+    runtime_root: Path,
+    code_root: Path,
+    expected_torch_prefix: Path,
+    incompatible_paths: Sequence[Path] = (),
+    approved_residual_paths: Sequence[Path] = (),
+) -> dict[str, Any]:
+    """Run the one supported child-import auditor and normalize its paths."""
+
+    root = Path(root).resolve()
+    code_root = Path(code_root).resolve()
+    report = run_runtime_audit(
+        python_bin,
+        pin_root=root,
+        runtime_root=runtime_root,
+        code_root=code_root,
+        expected_torch_prefix=expected_torch_prefix,
+        incompatible_paths=incompatible_paths,
+        approved_residual_paths=approved_residual_paths,
     )
-    env = dict(os.environ)
-    env["PYTHONNOUSERSITE"] = "1"
-    env["PYTHONPATH"] = str(root)
-    try:
-        completed = subprocess.run(
-            [str(python_bin), "-c", program],
-            cwd=root,
-            env=env,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(
-            "cosmodiff pin import validation failed:\n" + (exc.stderr or exc.stdout)
-        ) from exc
-    result = json.loads(completed.stdout.strip().splitlines()[-1])
-    root = root.resolve()
-    relative_paths: dict[str, str] = {}
-    for name, raw_path in result["paths"].items():
-        path = Path(raw_path).resolve()
-        if root not in path.parents:
-            raise RuntimeError(f"{name} imported outside pin staging tree: {path}")
-        relative_paths[name] = path.relative_to(root).as_posix()
-    return {"paths": relative_paths, "version": str(result["version"])}
+    normalized = normalize_runtime_audit(
+        report,
+        pin_root=root,
+        code_root=code_root,
+    )
+    paths = {
+        name: value.removeprefix("<PIN_ROOT>/")
+        for name, value in normalized["cosmodiff"]["modules"].items()
+    }
+    if set(paths) != set(REQUIRED_IMPORTS):
+        raise RuntimeError(f"cosmodiff runtime audit imports differ: {sorted(paths)}")
+    return {
+        "paths": paths,
+        "version": str(normalized["cosmodiff"]["version"]),
+        "runtime_audit": normalized,
+    }
 
 
 def _validate_patch_scripts(patch_scripts: list[Path]) -> list[Path]:
@@ -177,6 +192,10 @@ def build_pin(
     destination: Path,
     python_bin: Path,
     patch_scripts: list[Path],
+    code_root: Path,
+    expected_torch_prefix: Path,
+    incompatible_paths: Sequence[Path] = (),
+    approved_residual_paths: Sequence[Path] = (),
 ) -> dict[str, Any]:
     """Build a verified pin in staging and publish it with one rename."""
     source_repo = Path(source_repo).resolve()
@@ -184,6 +203,8 @@ def build_pin(
     # Keep the venv entry-point path intact.  Resolving this symlink launches
     # Great Lakes' bare base interpreter and silently drops venv packages.
     python_bin = Path(os.path.abspath(os.path.expanduser(str(python_bin))))
+    code_root = Path(code_root).resolve()
+    expected_torch_prefix = Path(expected_torch_prefix).resolve()
     patches = _validate_patch_scripts(patch_scripts)
     if destination.exists():
         raise FileExistsError(f"refusing to overwrite existing pin: {destination}")
@@ -220,14 +241,69 @@ def build_pin(
                 }
             )
 
-        imports = imported_modules(python_bin, staging)
+        runtime_root = staging / RUNTIME_DIR_NAME
+        runtime_assets = write_runtime_assets(
+            runtime_root,
+            code_root=code_root,
+            entry_point="cosmodiff_seed_restart_pin.sitecustomize",
+        )
+        imports = imported_modules(
+            python_bin,
+            staging,
+            runtime_root=runtime_root,
+            code_root=code_root,
+            expected_torch_prefix=expected_torch_prefix,
+            incompatible_paths=incompatible_paths,
+            approved_residual_paths=approved_residual_paths,
+        )
+        canonical_shim = code_root / "simdiff_eval/torch_compat.py"
+        sitecustomize = runtime_root / "sitecustomize.py"
+        sklearn_files = {
+            name: row
+            for name, row in runtime_file_inventory(runtime_root).items()
+            if name.startswith("sklearn/")
+        }
         manifest = {
-            "pin_schema_version": 1,
+            "pin_schema_version": 2,
             "base_revision": revision,
             "python_executable": str(python_bin),
             "patches": patch_records,
             "imports": imports["paths"],
             "cosmodiff_version": imports["version"],
+            "runtime_compatibility": {
+                "schema_version": runtime_assets["schema_version"],
+                "runtime_root": RUNTIME_DIR_NAME,
+                "canonical_shim": {
+                    "path": "simdiff_eval/torch_compat.py",
+                    "sha256": sha256_file(canonical_shim),
+                },
+                "sitecustomize": {
+                    "path": f"{RUNTIME_DIR_NAME}/sitecustomize.py",
+                    "sha256": sha256_file(sitecustomize),
+                },
+                "sklearn_stub": {"files": sklearn_files},
+                "python_executable": str(python_bin),
+                "python_executable_resolved": str(python_bin.resolve()),
+                "expected_torch_prefix": str(expected_torch_prefix),
+                "incompatible_paths": [
+                    str(Path(path).resolve()) for path in incompatible_paths
+                ],
+                "approved_residual_paths": [
+                    str(Path(path).resolve()) for path in approved_residual_paths
+                ],
+                "pythonpath_roles": [
+                    "runtime_root",
+                    "code_root",
+                    "pin_root",
+                    "approved_residual_paths",
+                ],
+                "runtime_audit": imports["runtime_audit"],
+                "numpy_compatibility": {
+                    "status": "not_required_after_import_audit",
+                    "version": imports["runtime_audit"]["numpy"]["version"],
+                    "file": imports["runtime_audit"]["numpy"]["file"],
+                },
+            },
             "inventory": file_inventory(staging),
         }
         (staging / PIN_MANIFEST_NAME).write_text(
@@ -250,6 +326,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--destination", type=Path, required=True)
     parser.add_argument("--python-bin", type=Path, required=True)
     parser.add_argument("--patch-script", type=Path, action="append", required=True)
+    parser.add_argument("--code-root", type=Path, required=True)
+    parser.add_argument("--expected-torch-prefix", type=Path, required=True)
+    parser.add_argument(
+        "--incompatible-python-path",
+        type=Path,
+        action="append",
+        default=[],
+    )
     return parser.parse_args()
 
 
@@ -261,6 +345,9 @@ def main() -> None:
         destination=args.destination,
         python_bin=args.python_bin,
         patch_scripts=args.patch_script,
+        code_root=args.code_root,
+        expected_torch_prefix=args.expected_torch_prefix,
+        incompatible_paths=args.incompatible_python_path,
     )
     print(json.dumps(manifest, indent=2, sort_keys=True))
 

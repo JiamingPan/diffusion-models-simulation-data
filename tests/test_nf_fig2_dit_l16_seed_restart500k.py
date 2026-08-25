@@ -2,6 +2,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import warnings
@@ -112,11 +113,43 @@ def make_pin_patch_scripts(tmp_path: Path) -> list[Path]:
     return paths
 
 
+def make_pin_third_party_runtime(tmp_path: Path) -> Path:
+    root = tmp_path / "pin_third_party"
+    diffusers = root / "diffusers"
+    hub = root / "huggingface_hub"
+    diffusers.mkdir(parents=True)
+    hub.mkdir()
+    (diffusers / "__init__.py").write_text(
+        "__version__ = '0.35.0.fixture'\n"
+        "class DDPMScheduler: pass\n"
+        "class DiTTransformer2DModel: pass\n"
+    )
+    (hub / "__init__.py").write_text(
+        "__version__ = '0.25.0.fixture'\n"
+        "def hf_hub_download(*args, **kwargs): return None\n"
+        "def snapshot_download(*args, **kwargs): return None\n"
+    )
+    return root
+
+
+def make_pin_code_root(tmp_path: Path) -> Path:
+    code_root = tmp_path / "frozen_code"
+    shutil.copytree(REPO_ROOT / "simdiff_eval", code_root / "simdiff_eval")
+    scripts = code_root / "scripts"
+    scripts.mkdir()
+    shutil.copy2(
+        REPO_ROOT / "scripts/check_cosmodiff_seed_restart_imports.py",
+        scripts / "check_cosmodiff_seed_restart_imports.py",
+    )
+    return code_root
+
+
 def test_immutable_pin_builder_records_ordered_patches_imports_and_inventory(tmp_path):
     builder = load_path_module(PIN_BUILDER_SCRIPT, "pin_builder")
     verifier = load_path_module(PIN_VERIFY_SCRIPT, "pin_verifier")
     source, revision = make_pin_source_repo(tmp_path)
     patches = make_pin_patch_scripts(tmp_path)
+    third_party = make_pin_third_party_runtime(tmp_path)
     destination = tmp_path / "published_pin"
 
     with warnings.catch_warnings(record=True) as caught:
@@ -127,6 +160,9 @@ def test_immutable_pin_builder_records_ordered_patches_imports_and_inventory(tmp
             destination=destination,
             python_bin=Path(sys.executable),
             patch_scripts=patches,
+            code_root=REPO_ROOT,
+            expected_torch_prefix=Path(sys.prefix),
+            approved_residual_paths=(third_party,),
         )
     assert not caught
 
@@ -154,6 +190,28 @@ def test_immutable_pin_builder_records_ordered_patches_imports_and_inventory(tmp
         "cosmodiff.transform",
     }
     assert manifest["cosmodiff_version"] == "0+fixture"
+    assert manifest["pin_schema_version"] == 2
+    runtime = manifest["runtime_compatibility"]
+    assert runtime["schema_version"] == 1
+    assert runtime["runtime_root"] == "seed_restart_runtime"
+    assert runtime["canonical_shim"]["path"] == "simdiff_eval/torch_compat.py"
+    assert len(runtime["canonical_shim"]["sha256"]) == 64
+    assert runtime["sitecustomize"]["path"] == (
+        "seed_restart_runtime/sitecustomize.py"
+    )
+    assert len(runtime["sitecustomize"]["sha256"]) == 64
+    assert runtime["sklearn_stub"]["files"]
+    assert runtime["python_executable"] == str(Path(sys.executable).absolute())
+    assert runtime["runtime_audit"]["sklearn"]["runtime_kind"] == (
+        "simdiff-seed-restart-stub"
+    )
+    assert runtime["runtime_audit"]["numpy"]["file"]
+    assert runtime["runtime_audit"]["diffusers"]["version"] == (
+        "0.35.0.fixture"
+    )
+    assert runtime["numpy_compatibility"]["status"] == (
+        "not_required_after_import_audit"
+    )
     assert not list(destination.rglob("*.bak"))
     assert verifier.verify_pin(
         destination,
@@ -161,6 +219,9 @@ def test_immutable_pin_builder_records_ordered_patches_imports_and_inventory(tmp
         expected_base_revision=revision,
         python_bin=Path(sys.executable),
         expected_patch_scripts=patches,
+        code_root=REPO_ROOT,
+        expected_torch_prefix=Path(sys.prefix),
+        approved_residual_paths=(third_party,),
         check_source_contract=False,
     )["base_revision"] == revision
 
@@ -190,6 +251,7 @@ def test_pin_builder_and_verifier_preserve_virtualenv_python_symlink(tmp_path):
         tmp_path, required_runtime_module="pin_runtime_marker"
     )
     patches = make_pin_patch_scripts(tmp_path)
+    third_party = make_pin_third_party_runtime(tmp_path)
     destination = tmp_path / "published_pin"
     manifest = builder.build_pin(
         source_repo=source,
@@ -197,6 +259,9 @@ def test_pin_builder_and_verifier_preserve_virtualenv_python_symlink(tmp_path):
         destination=destination,
         python_bin=python_bin,
         patch_scripts=patches,
+        code_root=REPO_ROOT,
+        expected_torch_prefix=Path(sys.prefix),
+        approved_residual_paths=(third_party,),
     )
 
     assert manifest["python_executable"] == str(python_bin.absolute())
@@ -206,6 +271,9 @@ def test_pin_builder_and_verifier_preserve_virtualenv_python_symlink(tmp_path):
         expected_base_revision=revision,
         python_bin=python_bin,
         expected_patch_scripts=patches,
+        code_root=REPO_ROOT,
+        expected_torch_prefix=Path(sys.prefix),
+        approved_residual_paths=(third_party,),
         check_source_contract=False,
     )["base_revision"] == revision
 
@@ -215,6 +283,7 @@ def test_immutable_pin_verifier_rejects_modified_or_extra_files(tmp_path):
     verifier = load_path_module(PIN_VERIFY_SCRIPT, "pin_verifier_tamper")
     source, revision = make_pin_source_repo(tmp_path)
     patches = make_pin_patch_scripts(tmp_path)
+    third_party = make_pin_third_party_runtime(tmp_path)
     destination = tmp_path / "published_pin"
     builder.build_pin(
         source_repo=source,
@@ -222,6 +291,9 @@ def test_immutable_pin_verifier_rejects_modified_or_extra_files(tmp_path):
         destination=destination,
         python_bin=Path(sys.executable),
         patch_scripts=patches,
+        code_root=REPO_ROOT,
+        expected_torch_prefix=Path(sys.prefix),
+        approved_residual_paths=(third_party,),
     )
     manifest_path = destination / builder.PIN_MANIFEST_NAME
 
@@ -233,6 +305,9 @@ def test_immutable_pin_verifier_rejects_modified_or_extra_files(tmp_path):
             expected_base_revision=revision,
             python_bin=Path(sys.executable),
             expected_patch_scripts=patches,
+            code_root=REPO_ROOT,
+            expected_torch_prefix=Path(sys.prefix),
+            approved_residual_paths=(third_party,),
             check_source_contract=False,
         )
 
@@ -247,9 +322,46 @@ def test_immutable_pin_verifier_rejects_modified_or_extra_files(tmp_path):
             expected_base_revision=revision,
             python_bin=Path(sys.executable),
             expected_patch_scripts=patches,
+            code_root=REPO_ROOT,
+            expected_torch_prefix=Path(sys.prefix),
+            approved_residual_paths=(third_party,),
             check_source_contract=False,
         )
 
+
+def test_immutable_pin_verifier_rejects_changed_canonical_shim(tmp_path):
+    builder = load_path_module(PIN_BUILDER_SCRIPT, "pin_builder_shim_tamper")
+    verifier = load_path_module(PIN_VERIFY_SCRIPT, "pin_verifier_shim_tamper")
+    source, revision = make_pin_source_repo(tmp_path)
+    patches = make_pin_patch_scripts(tmp_path)
+    third_party = make_pin_third_party_runtime(tmp_path)
+    code_root = make_pin_code_root(tmp_path)
+    destination = tmp_path / "published_pin"
+    builder.build_pin(
+        source_repo=source,
+        base_revision=revision,
+        destination=destination,
+        python_bin=Path(sys.executable),
+        patch_scripts=patches,
+        code_root=code_root,
+        expected_torch_prefix=Path(sys.prefix),
+        approved_residual_paths=(third_party,),
+    )
+    canonical = code_root / "simdiff_eval/torch_compat.py"
+    canonical.write_text(canonical.read_text() + "\n# tampered after publication\n")
+
+    with pytest.raises(RuntimeError, match="canonical Torch compatibility hash"):
+        verifier.verify_pin(
+            destination,
+            destination / builder.PIN_MANIFEST_NAME,
+            expected_base_revision=revision,
+            python_bin=Path(sys.executable),
+            expected_patch_scripts=patches,
+            code_root=code_root,
+            expected_torch_prefix=Path(sys.prefix),
+            approved_residual_paths=(third_party,),
+            check_source_contract=False,
+        )
 
 def test_package_metadata_patch_accepts_source_version_module_layout(tmp_path):
     module = load_path_module(PACKAGE_METADATA_PATCH, "package_metadata_modern")
@@ -273,9 +385,25 @@ def test_pin_import_failure_reports_the_missing_runtime_dependency(tmp_path):
     package = tmp_path / "cosmodiff"
     package.mkdir()
     (package / "__init__.py").write_text("import missing_pin_dependency\n")
+    runtime_root = tmp_path / "seed_restart_runtime"
+    third_party = make_pin_third_party_runtime(tmp_path)
+    from simdiff_eval.seed_restart_runtime import write_runtime_assets
+
+    write_runtime_assets(
+        runtime_root,
+        code_root=REPO_ROOT,
+        entry_point="tests.pin_import_failure",
+    )
 
     with pytest.raises(RuntimeError, match="missing_pin_dependency"):
-        builder.imported_modules(Path(sys.executable), tmp_path)
+        builder.imported_modules(
+            Path(sys.executable),
+            tmp_path,
+            runtime_root=runtime_root,
+            code_root=REPO_ROOT,
+            expected_torch_prefix=Path(sys.prefix),
+            approved_residual_paths=(third_party,),
+        )
 
 
 def source_rows(project_dir: Path):
