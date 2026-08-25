@@ -31,9 +31,10 @@ def _cells() -> list[dict]:
 
 This cell exports the conditional-recovery result and its two comparison figures at the exact paper width.
 It reads the completed ten-size calibration tables without refitting or changing any data selection. The
-three representative panels use $N_{2D}=2^6,2^{11},2^{15}$ with shared limits; the companion panel reports
-all ten saved slopes and their 16th--84th percentile bootstrap intervals. It also saves the frozen VGG16+MLP
-heldout-real slope/$R^2$ summary used to establish which conditional directions the probe can verify.
+conditional figure contrasts the saved $N_{2D}=2^7$ memorization and $N_{2D}=2^{14}$ generalization runs,
+then shows all ten response slopes against the data-derived U-Net-128 novelty boundary. It also saves the
+frozen VGG16+MLP heldout-real slope/$R^2$ summary used to establish which conditional directions the probe
+can verify.
 """,
         ),
         _cell(
@@ -98,9 +99,11 @@ paper_outputs = {
 
 paper_points = pd.read_csv(paper_inputs['points'])
 paper_slopes = pd.read_csv(paper_inputs['slopes'])
+paper_generalization = pd.read_csv(paper_inputs['generalization'])
 conditional_figure, conditional_slope_report = build_conditional_recovery_figure(
     paper_points,
     paper_slopes,
+    paper_generalization,
 )
 paper_dimensions = {
     'conditional': save_figure(conditional_figure, paper_outputs['conditional'])
@@ -109,7 +112,7 @@ display(Markdown('### Conditional recovery transition'))
 display(conditional_figure)
 plt.close(conditional_figure)
 
-generalization_figure = build_generalization_figure(pd.read_csv(paper_inputs['generalization']))
+generalization_figure = build_generalization_figure(paper_generalization)
 paper_dimensions['generalization'] = save_figure(
     generalization_figure,
     paper_outputs['generalization'],
