@@ -1,0 +1,166 @@
+#!/bin/bash
+#SBATCH --job-name=nf_c4_umap
+#SBATCH --partition=spgpu
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=8
+#SBATCH --gres=gpu:1
+#SBATCH --mem=80gb
+#SBATCH --time=02:00:00
+#SBATCH -A huterer2
+#SBATCH -o /home/jiamingp/diffusion_models_repo/logs/nf_conditional_bias_probe/c4_umap_%j.out
+#SBATCH -e /home/jiamingp/diffusion_models_repo/logs/nf_conditional_bias_probe/c4_umap_%j.err
+
+set -euo pipefail
+trap 'rc=$?; echo "[c4-umap] failed at line ${LINENO}: ${BASH_COMMAND} (exit ${rc})" >&2' ERR
+
+PROJECT_DIR=${PROJECT_DIR:-/home/jiamingp/diffusion_models_repo}
+CODE_ROOT=${CODE_ROOT:?Set CODE_ROOT to the frozen C4 UMAP code worktree}
+EXPECTED_COMMIT=${EXPECTED_COMMIT:?Set EXPECTED_COMMIT to the frozen code revision}
+EXPECTED_RESULTS_COMMIT=${EXPECTED_RESULTS_COMMIT:-dced4f8928efe248d819a72560ef61a099d0c4a3}
+RESULTS_ROOT=${RESULTS_ROOT:-/nfs/turbo/lsa-huterer/jiamingp/diffusion_models_repo/results/nf_conditional_bias_probe}
+DATA_ROOT=${DATA_ROOT:-/gpfs/accounts/huterer_root/huterer0/CAMELS/CMD/3d_grids/IllustrisTNG}
+PYTHON_BIN=${PYTHON_BIN:-/home/jiamingp/venvs/cosmodiff_nf_class/bin/python}
+TORCH_HOME=${TORCH_HOME:-/scratch/huterer_root/huterer0/jiamingp/torch_cache}
+INCOMPATIBLE_PYTHON_PATHS=${INCOMPATIBLE_PYTHON_PATHS:-/home/jiamingp/venvs/cosmodiff_nf/lib/python3.10/site-packages}
+UMAP_SITE_PACKAGES=${UMAP_SITE_PACKAGES:-/scratch/huterer_root/huterer0/jiamingp/probe_c4_umap_py_0p5p5_0p5p10}
+OUTPUT_DIR=${RESULTS_ROOT}/c4_frozen_vgg_umap_seed123_v3
+STAGING_DIR=${OUTPUT_DIR}.tmp-${SLURM_JOB_ID}
+VGG_WEIGHTS=${TORCH_HOME}/hub/checkpoints/vgg16-397923af.pth
+FINALIZER=${CODE_ROOT}/scripts/finalize_terminal_report.py
+REPORT_FINALIZED=0
+
+finalize_on_exit() {
+  rc=$?
+  trap - EXIT
+  report=
+  if [[ -s "${OUTPUT_DIR}/manifest.json" ]]; then
+    report=${OUTPUT_DIR}/manifest.json
+  elif [[ -s "${STAGING_DIR}/manifest.json" ]]; then
+    report=${STAGING_DIR}/manifest.json
+  fi
+  if [[ "${REPORT_FINALIZED}" == "0" && -n "${report}" ]]; then
+    set +e
+    if (( rc == 0 )); then
+      rc=1
+    fi
+    "${PYTHON_BIN}" "${FINALIZER}" finalize "${report}" \
+      --status FAILED \
+      --job-id "${SLURM_JOB_ID}" \
+      --exit-code "${rc}"
+  fi
+  exit "${rc}"
+}
+trap finalize_on_exit EXIT
+
+actual=$(git -C "${CODE_ROOT}" rev-parse HEAD)
+test "${actual}" = "${EXPECTED_COMMIT}"
+test -z "$(git -C "${CODE_ROOT}" status --porcelain)"
+test -x "${PYTHON_BIN}"
+test -d "${UMAP_SITE_PACKAGES}"
+test ! -e "${OUTPUT_DIR}"
+test ! -e "${STAGING_DIR}"
+
+required_files=(
+  "${CODE_ROOT}/scripts/evaluate_probe_c4_umap.py"
+  "${CODE_ROOT}/scripts/finalize_terminal_report.py"
+  "${CODE_ROOT}/simdiff_eval/probe_c4_umap.py"
+  "${CODE_ROOT}/simdiff_eval/terminal_reports.py"
+  "${PROJECT_DIR}/local/nf_conditional_bias_probe/manifest.json"
+  "${RESULTS_ROOT}/encoder/vgg_mlp_encoder.npz"
+  "${RESULTS_ROOT}/encoder/vgg_mlp_encoder.pkl"
+  "${RESULTS_ROOT}/degradation_controls/manifest.json"
+  "${RESULTS_ROOT}/degradation_controls/power_transfer_curves.json"
+  "${RESULTS_ROOT}/samples/nf_cond_bias_hi_u128_d2p07_n128_200k_seed123_dpm50_heldout_k64.npz"
+  "${RESULTS_ROOT}/samples/nf_cond_bias_hi_u128_d2p14_n16384_200k_seed123_dpm50_heldout_k64.npz"
+  "${VGG_WEIGHTS}"
+)
+for path in "${required_files[@]}"; do
+  test -f "${path}"
+done
+
+export PYTHONNOUSERSITE=1
+export TORCH_HOME
+source "${CODE_ROOT}/scripts/probe_controls_runtime.sh"
+probe_controls_prepare_runtime "${CODE_ROOT}" "${PYTHON_BIN}" "${INCOMPATIBLE_PYTHON_PATHS}"
+export UMAP_SITE_PACKAGES
+export PYTHONPATH="${UMAP_SITE_PACKAGES}:${PYTHONPATH}"
+export MPLCONFIGDIR="${PROJECT_DIR}/results/cache/matplotlib_c4_umap_${SLURM_JOB_ID}"
+export NUMBA_CACHE_DIR="${PROJECT_DIR}/results/cache/numba_c4_umap_${SLURM_JOB_ID}"
+mkdir -p "${MPLCONFIGDIR}" "${NUMBA_CACHE_DIR}" "${PROJECT_DIR}/logs/nf_conditional_bias_probe"
+
+cd "${CODE_ROOT}"
+"${PYTHON_BIN}" -c '
+import pandas
+import os
+import llvmlite
+import numba
+import numpy
+import sklearn
+import torch
+import torchvision
+import umap
+import pynndescent
+from pathlib import Path
+from simdiff_eval import probe_c4_umap
+runtime = Path(os.environ["UMAP_SITE_PACKAGES"]).resolve()
+assert numpy.__version__ == "1.26.4", numpy.__version__
+assert umap.__version__ == "0.5.5", umap.__version__
+assert pynndescent.__version__ == "0.5.10", pynndescent.__version__
+assert numba.__version__ == "0.59.1", numba.__version__
+assert llvmlite.__version__ == "0.42.0", llvmlite.__version__
+assert Path(umap.__file__).resolve().is_relative_to(runtime), umap.__file__
+assert Path(pynndescent.__file__).resolve().is_relative_to(runtime), pynndescent.__file__
+assert Path(numba.__file__).resolve().is_relative_to(runtime), numba.__file__
+assert Path(llvmlite.__file__).resolve().is_relative_to(runtime), llvmlite.__file__
+print("[c4-umap] imports passed")
+print("[c4-umap] torch", torch.__version__, "torchvision", torchvision.__version__)
+print("[c4-umap] sklearn", sklearn.__version__, "umap", umap.__version__)
+print("[c4-umap] pynndescent", pynndescent.__version__)
+print("[c4-umap] numba", numba.__version__, "llvmlite", llvmlite.__version__)
+print("[c4-umap] module", probe_c4_umap.__file__)
+'
+
+"${PYTHON_BIN}" "${CODE_ROOT}/scripts/evaluate_probe_c4_umap.py" \
+  --project-dir "${PROJECT_DIR}" \
+  --code-root "${CODE_ROOT}" \
+  --expected-code-revision "${EXPECTED_COMMIT}" \
+  --expected-results-revision "${EXPECTED_RESULTS_COMMIT}" \
+  --data-root "${DATA_ROOT}" \
+  --results-root "${RESULTS_ROOT}" \
+  --head "${RESULTS_ROOT}/encoder/vgg_mlp_encoder.pkl" \
+  --vgg-weights-path "${VGG_WEIGHTS}" \
+  --output-dir "${OUTPUT_DIR}" \
+  --device cuda \
+  --embedding-batch-size 32 \
+  --seed 123 \
+  --umap-neighbors 30 \
+  --umap-min-dist 0.1 \
+  --knn-k 15 \
+  --bootstrap 2000
+
+for artifact in \
+  manifest.json \
+  analysis_config.json \
+  frozen_vgg_features_and_umap.npz \
+  sample_provenance.csv \
+  c4_feature_metrics_complete.csv \
+  c4_feature_metrics_complete.json \
+  c4_feature_metrics_headline.csv \
+  c4_feature_metrics_headline.json \
+  c4_transform_identity_report.csv \
+  c4_transform_identity_report.json \
+  umap_layout_separation_visual_only.csv \
+  umap_layout_separation_visual_only.json \
+  c4_knn_mixing_baselines.png \
+  pooled_umap_reducer.joblib
+do
+  test -s "${OUTPUT_DIR}/${artifact}"
+done
+
+"${PYTHON_BIN}" "${FINALIZER}" finalize "${OUTPUT_DIR}/manifest.json" \
+  --status PASS \
+  --job-id "${SLURM_JOB_ID}" \
+  --exit-code 0
+REPORT_FINALIZED=1
+echo "PASS: frozen-probe C4 v3 outputs are in ${OUTPUT_DIR}"

@@ -7,6 +7,8 @@ from typing import Any, Iterator
 
 import numpy as np
 
+from simdiff_eval.torch_compat import install_torch_backend_compat
+
 
 def load_npy(path: str | Path) -> np.ndarray:
     """Load an ``.npy`` array without modifying values."""
@@ -64,6 +66,7 @@ def load_real_from_config(config_path: str | Path, max_raw_samples: int | None =
     if isinstance(config.get("data", {}).get("img_path"), (list, tuple)):
         return _load_real_tanh_from_config(config, utils_module=None)
 
+    install_torch_backend_compat(entry_point=__name__)
     try:
         from cosmodiff import utils
     except Exception as exc:

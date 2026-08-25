@@ -83,6 +83,8 @@ fi
 import inspect
 import os
 from pathlib import Path
+from simdiff_eval.torch_compat import install_torch_backend_compat
+install_torch_backend_compat(entry_point="train_nf_sweep_small_ema_array")
 from cosmodiff import optim
 from cosmodiff.transform import Transform
 

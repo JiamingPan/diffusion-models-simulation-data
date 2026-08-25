@@ -6,6 +6,8 @@ VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
 REPO_URL=${REPO_URL:-https://github.com/nkern/cosmo_diffusion.git}
 BRANCH=${BRANCH:-main}
 INSTALL_MISSING_DEPS=${INSTALL_MISSING_DEPS:-1}
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+PROJECT_DIR=$(cd "${SCRIPT_DIR}/.." && pwd)
 
 mkdir -p "$(dirname "${TARGET_DIR}")"
 
@@ -37,12 +39,14 @@ then
 fi
 
 export COSMODIFF_DIR="${TARGET_DIR}"
-export PYTHONPATH="${COSMODIFF_DIR}:${PYTHONPATH:-}"
+export PYTHONPATH="${PROJECT_DIR}:${COSMODIFF_DIR}:${PYTHONPATH:-}"
 
 python - <<'PY'
 import inspect
 import os
 from pathlib import Path
+from simdiff_eval.torch_compat import install_torch_backend_compat
+install_torch_backend_compat(entry_point="setup_cosmodiff_main")
 from diffusers import DDPMScheduler
 from cosmodiff import optim
 from cosmodiff.transform import Normalization, Transform
