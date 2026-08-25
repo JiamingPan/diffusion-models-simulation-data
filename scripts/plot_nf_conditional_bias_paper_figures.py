@@ -121,19 +121,20 @@ def build_conditional_recovery_figure(
     limits = (lo - pad, hi + pad)
     colors = _training_colors()
 
-    figure = plt.figure(figsize=(FULL_W, 2.80))
+    figure = plt.figure(figsize=(FULL_W, 4.40))
     grid = figure.add_gridspec(
-        1,
-        4,
-        width_ratios=(1.0, 1.0, 1.0, 2.05),
-        left=0.080,
+        2,
+        3,
+        height_ratios=(1.35, 1.0),
+        left=0.090,
         right=0.985,
-        bottom=0.205,
-        top=0.935,
-        wspace=0.27,
+        bottom=0.115,
+        top=0.965,
+        wspace=0.28,
+        hspace=0.58,
     )
     scatter_axes = [figure.add_subplot(grid[0, index]) for index in range(3)]
-    transition_axis = figure.add_subplot(grid[0, 3])
+    transition_axis = figure.add_subplot(grid[1, :])
 
     for index, (axis, power, marker) in enumerate(
         zip(scatter_axes, REPRESENTATIVE_POWERS, REPRESENTATIVE_MARKERS)
@@ -221,7 +222,7 @@ def build_conditional_recovery_figure(
     scatter_right = scatter_axes[-1].get_position().x1
     figure.text(
         (scatter_left + scatter_right) / 2.0,
-        0.070,
+        scatter_axes[0].get_position().y0 - 0.055,
         r"Requested $\Omega_m$",
         ha="center",
         va="center",
