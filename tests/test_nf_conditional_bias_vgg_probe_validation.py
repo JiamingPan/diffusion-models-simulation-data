@@ -79,4 +79,3 @@ def test_probe_validation_writes_all_parameter_figures_and_summary(tmp_path):
     assert table_path.exists()
     saved = pd.read_csv(table_path)
     assert saved["parameter"].tolist() == plotting.PARAM_ORDER
-
