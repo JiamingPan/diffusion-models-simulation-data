@@ -204,6 +204,43 @@ def test_results_notebook_contains_full_sweep_section():
     assert "while PROJECT_DIR != PROJECT_DIR.parent" in source
 
 
+def test_results_notebook_reports_real_probe_slope_and_r2_for_all_parameters():
+    notebook = json.loads((ROOT / "notebooks/nf_conditional_bias_vgg_results.ipynb").read_text())
+    source = "\n".join(
+        "".join(cell.get("source", []))
+        for cell in notebook.get("cells", [])
+    )
+    assert "plot_nf_conditional_bias_vgg_probe_validation" in source
+    assert "vgg_real_probe_all_parameters_1to1.png" in source
+    assert "vgg_real_probe_slope_r2_summary.png" in source
+    assert "vgg_real_probe_slope_r2_summary.csv" in source
+    assert "vgg_real_test_metadata.json" in source
+    assert "bias_probe_eval_metadata.json" in source
+    assert "probe provenance" in source.lower()
+
+
+def test_real_probe_validation_cells_are_idempotently_tagged():
+    notebook = json.loads((ROOT / "notebooks/nf_conditional_bias_vgg_results.ipynb").read_text())
+    cells = [
+        cell
+        for cell in notebook.get("cells", [])
+        if "vgg-real-probe-validation" in cell.get("metadata", {}).get("tags", [])
+    ]
+    assert [cell["cell_type"] for cell in cells] == ["markdown", "code", "code", "markdown"]
+
+
+def test_real_probe_notebook_updater_is_idempotent(tmp_path):
+    source = ROOT / "notebooks/nf_conditional_bias_vgg_results.ipynb"
+    target = tmp_path / source.name
+    target.write_text(source.read_text())
+    updater = _module("update_nf_conditional_bias_vgg_probe_validation_notebook")
+
+    updater.update(target)
+    once = target.read_text()
+    updater.update(target)
+    assert target.read_text() == once
+
+
 def test_full_sweep_cell_does_not_depend_on_an_earlier_root_variable():
     notebook = json.loads((ROOT / "notebooks/nf_conditional_bias_vgg_results.ipynb").read_text())
     sweep_cells = [
