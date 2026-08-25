@@ -115,6 +115,8 @@ fi
 import inspect
 import os
 from pathlib import Path
+from simdiff_eval.torch_compat import install_torch_backend_compat
+install_torch_backend_compat(entry_point="sample_nf_sweep_array")
 from cosmodiff import optim
 
 expected_root = Path(os.environ["COSMODIFF_DIR"]).resolve()

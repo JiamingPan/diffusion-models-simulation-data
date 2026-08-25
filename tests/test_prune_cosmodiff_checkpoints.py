@@ -3,6 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import yaml
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PRUNE_PATH = REPO_ROOT / "scripts" / "prune_cosmodiff_checkpoints.py"
@@ -25,8 +27,12 @@ def make_complete(path: Path) -> Path:
         "noise_scheduler.pkl",
         "lr_scheduler.pkl",
         "random_states_0.pkl",
+        "scaler.pt",
     ):
         (path / name).write_bytes(b"test")
+    (path / "checkpoint_config.yaml").write_text(
+        yaml.safe_dump({"ema_sigma_rels": None, "ema_burn_in": 0})
+    )
     return path
 
 

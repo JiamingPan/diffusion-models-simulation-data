@@ -11,10 +11,15 @@ import yaml
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 COSMODIFF_ROOT = PROJECT_ROOT / "cosmo_diffusion"
 if str(COSMODIFF_ROOT) not in sys.path:
     sys.path.insert(0, str(COSMODIFF_ROOT))
 
+from simdiff_eval.torch_compat import install_torch_backend_compat  # noqa: E402
+
+install_torch_backend_compat(entry_point=__name__)
 from cosmodiff.utils import parse_config_model  # noqa: E402
 
 

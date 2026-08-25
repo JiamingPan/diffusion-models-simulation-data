@@ -28,6 +28,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from simdiff_eval.probe_eval import load_heldout_real_slices
 from prepare_nf_conditional_u128_config import DATA_ROOT, PARAM_NAMES, image_path, load_params, params_path
 from train_nf_conditional_bias_encoder import (
     SWEEP_NAME,
@@ -239,7 +240,6 @@ def main() -> None:
     grid_path = image_path(args.data_root)
     train_pairs = select_slice_pairs(train_sims, args.head_train_slices)
     val_pairs = select_slice_pairs(val_sims, args.head_val_slices)
-    test_pairs = select_slice_pairs(heldout, int(len(heldout) * args.test_slices_per_sim))
 
     device = torch_device(args.device)
     vgg, weights_label = load_vgg_features(args.weights, device)
@@ -263,7 +263,24 @@ def main() -> None:
 
     x_train, y_train_norm, y_train_raw = embed_pairs(train_pairs)
     x_val, y_val_norm, y_val_raw = embed_pairs(val_pairs)
-    x_test, y_test_norm, y_test_raw = embed_pairs(test_pairs)
+    test_images, y_test_raw, test_sim_index, test_z_index = load_heldout_real_slices(
+        args.data_root,
+        heldout,
+        args.test_slices_per_sim,
+        norm,
+    )
+    test_pairs = np.stack([test_sim_index, test_z_index], axis=1)
+    x_test = vgg_embed(
+        test_images,
+        vgg,
+        device=device,
+        batch_size=args.embedding_batch_size,
+        image_size=args.image_size,
+        value_min=args.value_min,
+        value_max=args.value_max,
+        pool=args.pool,
+    )
+    y_test_norm = params_norm_all[test_sim_index].astype(np.float32, copy=False)
 
     if args.head_type == "ridge":
         coef, intercept = fit_ridge(x_train, y_train_norm, args.ridge_alpha)
