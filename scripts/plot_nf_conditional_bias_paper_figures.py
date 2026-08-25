@@ -30,6 +30,7 @@ REGIME_COLORS = {
     "memorization": "#D55E00",
     "generalization": "#0072B2",
 }
+TRANSITION_COLOR = "#4D4D4D"
 REGIME_LABELS = {
     7: "memorization regime",
     14: "generalization regime",
@@ -110,56 +111,9 @@ def _omega_tables(
     return omega_points, omega_slopes.sort_values("dataset_size").reset_index(drop=True)
 
 
-def novelty_transition_boundary(
-    metrics: pd.DataFrame,
-    *,
-    architecture: str = "u128",
-    threshold: float = 0.5,
-) -> float:
-    """Interpolate the novelty crossing used by the generalization-score figure."""
-
-    required = {"arch", "dataset_size", "gen_gl_q95"}
-    missing = sorted(required - set(metrics.columns))
-    if missing:
-        raise ValueError(f"generalization table is missing columns: {missing}")
-    sub = metrics[metrics["arch"] == architecture].copy()
-    if sub.empty:
-        raise ValueError(f"generalization table has no {architecture} rows")
-    _require_sizes(sub)
-    counts = sub.groupby("dataset_size", observed=True).size()
-    invalid = counts[counts != 1]
-    if not invalid.empty:
-        raise ValueError(
-            f"expected one {architecture} novelty value per size, found {invalid.to_dict()}"
-        )
-    sub["power"] = np.log2(sub["dataset_size"].astype(float))
-    sub = sub.sort_values("power")
-    powers = sub["power"].to_numpy(float)
-    scores = sub["gen_gl_q95"].to_numpy(float)
-    exact = np.flatnonzero(np.isclose(scores, threshold))
-    if len(exact) == 1:
-        return float(powers[exact[0]])
-    if len(exact) > 1:
-        raise ValueError(
-            f"{architecture} novelty curve equals {threshold} at multiple training sizes"
-        )
-    crossings: list[float] = []
-    for left in range(len(powers) - 1):
-        y0, y1 = scores[left], scores[left + 1]
-        if (y0 - threshold) * (y1 - threshold) < 0.0:
-            fraction = (threshold - y0) / (y1 - y0)
-            crossings.append(float(powers[left] + fraction * (powers[left + 1] - powers[left])))
-    if len(crossings) != 1:
-        raise ValueError(
-            f"expected one {architecture} novelty crossing at {threshold}, found {crossings}"
-        )
-    return crossings[0]
-
-
 def build_conditional_recovery_figure(
     points: pd.DataFrame,
     slopes: pd.DataFrame,
-    generalization_metrics: pd.DataFrame,
 ) -> tuple[plt.Figure, pd.DataFrame]:
     """Return a two-regime calibration contrast and the full response transition."""
 
@@ -179,9 +133,6 @@ def build_conditional_recovery_figure(
     hi = float(max(omega_points["theta_in"].max(), omega_points["theta_rec_q84"].max()))
     pad = 0.055 * max(hi - lo, 1.0e-6)
     limits = (lo - pad, hi + pad)
-    boundary_power = novelty_transition_boundary(generalization_metrics)
-    report.attrs["novelty_boundary_power"] = boundary_power
-
     figure = plt.figure(figsize=(FULL_W, 2.4))
     grid = figure.add_gridspec(
         1,
@@ -253,26 +204,9 @@ def build_conditional_recovery_figure(
     y = report["slope"].to_numpy(float)
     lower = np.maximum(y - report["slope_ci16"].to_numpy(float), 0.0)
     upper = np.maximum(report["slope_ci84"].to_numpy(float) - y, 0.0)
-    transition_axis.axvspan(
-        5.65,
-        boundary_power,
-        color=REGIME_COLORS["memorization"],
-        alpha=0.12,
-        lw=0,
-        zorder=0,
-    )
-    transition_axis.axvspan(
-        boundary_power,
-        15.35,
-        color=REGIME_COLORS["generalization"],
-        alpha=0.12,
-        lw=0,
-        zorder=0,
-    )
     transition_axis.axhline(1.0, color="0.38", ls="--", lw=0.9, label="_nolegend_")
-    transition_axis.plot(x, y, color="0.42", lw=0.9, zorder=1)
+    transition_axis.plot(x, y, color=TRANSITION_COLOR, lw=0.9, zorder=1)
     for xpos, value, low, high in zip(x, y, lower, upper):
-        regime = "memorization" if xpos < boundary_power else "generalization"
         transition_axis.errorbar(
             xpos,
             value,
@@ -281,43 +215,36 @@ def build_conditional_recovery_figure(
             ms=3.7,
             capsize=1.8,
             elinewidth=0.8,
-            color=REGIME_COLORS[regime],
-            ecolor=REGIME_COLORS[regime],
+            color=TRANSITION_COLOR,
+            ecolor=TRANSITION_COLOR,
             markeredgecolor="white",
             markeredgewidth=0.35,
             zorder=2,
         )
     for power, regime in ((7, "memorization"), (14, "generalization")):
+        value = float(report.loc[report["dataset_size"] == 2**power, "slope"].iloc[0])
         transition_axis.plot(
             [power],
-            [0.015],
-            marker="v",
-            ms=4.5,
+            [value],
+            marker="o" if power == 7 else "s",
+            ms=5.2,
             color=REGIME_COLORS[regime],
-            transform=transition_axis.get_xaxis_transform(),
-            clip_on=False,
+            markeredgecolor="white",
+            markeredgewidth=0.55,
+            linestyle="none",
             zorder=4,
         )
-    transition_axis.text(
-        (5.65 + boundary_power) / 2.0,
-        0.94,
-        "memorization",
-        color=REGIME_COLORS["memorization"],
-        fontsize=7.0,
-        ha="center",
-        va="top",
-        transform=transition_axis.get_xaxis_transform(),
-    )
-    transition_axis.text(
-        (boundary_power + 15.35) / 2.0,
-        0.94,
-        "generalization",
-        color=REGIME_COLORS["generalization"],
-        fontsize=7.0,
-        ha="center",
-        va="top",
-        transform=transition_axis.get_xaxis_transform(),
-    )
+        transition_axis.annotate(
+            rf"$2^{{{power}}}$",
+            xy=(power, value),
+            xytext=(5, 7) if power == 7 else (-5, 7),
+            textcoords="offset points",
+            color=REGIME_COLORS[regime],
+            fontsize=7.0,
+            ha="left" if power == 7 else "right",
+            va="bottom",
+            zorder=5,
+        )
     style_training_size_axis(transition_axis, label_every=2)
     transition_axis.set_xlabel(r"Training images $N_{2D}$")
     transition_axis.set_ylabel(r"$\Omega_m$ response slope")
