@@ -43,7 +43,7 @@ from pathlib import Path
 import sys
 import pandas as pd
 import matplotlib.pyplot as plt
-from IPython.display import Markdown, display
+from IPython.display import Image, Markdown, display
 
 PAPER_PROJECT_DIR = Path.cwd().resolve()
 while PAPER_PROJECT_DIR != PAPER_PROJECT_DIR.parent and not (PAPER_PROJECT_DIR / '.git').exists():
@@ -105,6 +105,8 @@ conditional_figure, conditional_slope_report = build_conditional_recovery_figure
 paper_dimensions = {
     'conditional': save_figure(conditional_figure, paper_outputs['conditional'])
 }
+display(Markdown('### Conditional recovery transition'))
+display(conditional_figure)
 plt.close(conditional_figure)
 
 generalization_figure = build_generalization_figure(pd.read_csv(paper_inputs['generalization']))
@@ -112,15 +114,21 @@ paper_dimensions['generalization'] = save_figure(
     generalization_figure,
     paper_outputs['generalization'],
 )
+display(Markdown('### Memorization-to-novelty transition'))
+display(generalization_figure)
 plt.close(generalization_figure)
 
 paper_dimensions['nearest'] = export_nearest_training_pdf(
     paper_inputs['nearest'],
     paper_outputs['nearest'],
 )
+display(Markdown('### Generated samples and nearest training slices'))
+display(Image(filename=str(paper_inputs['nearest'])))
 
 probe_figure = build_probe_summary_figure(pd.read_csv(paper_inputs['probe']))
 paper_dimensions['probe'] = save_figure(probe_figure, paper_outputs['probe'])
+display(Markdown('### Frozen VGG16+MLP heldout-real validation'))
+display(probe_figure)
 plt.close(probe_figure)
 
 display(Markdown('### Saved paper figures'))

@@ -225,3 +225,32 @@ def test_results_notebook_contains_idempotent_paper_figure_section(tmp_path):
     assert "slope_ci16" in source_text and "slope_ci84" in source_text
     assert "paper_dimensions" in source_text
     assert "plot_nf_conditional_bias_paper_figures" in source_text
+
+
+def test_results_notebook_displays_every_paper_figure_inline_before_closing(tmp_path):
+    updater = importlib.import_module("update_nf_conditional_bias_paper_figures_notebook")
+    source = ROOT / "notebooks" / "nf_conditional_bias_vgg_results.ipynb"
+    target = tmp_path / source.name
+    target.write_text(source.read_text())
+
+    updater.update(target)
+    notebook = json.loads(target.read_text())
+    code_cell = next(
+        cell
+        for cell in notebook["cells"]
+        if cell["cell_type"] == "code"
+        and updater.TAG in cell.get("metadata", {}).get("tags", [])
+    )
+    source_text = "".join(code_cell["source"])
+
+    for figure_name in (
+        "conditional_figure",
+        "generalization_figure",
+        "probe_figure",
+    ):
+        display_call = f"display({figure_name})"
+        close_call = f"plt.close({figure_name})"
+        assert display_call in source_text
+        assert source_text.index(display_call) < source_text.index(close_call)
+
+    assert "display(Image(filename=str(paper_inputs['nearest'])))" in source_text
