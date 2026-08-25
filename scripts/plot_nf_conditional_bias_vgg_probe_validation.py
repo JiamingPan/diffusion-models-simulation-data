@@ -197,4 +197,3 @@ def write_probe_validation_outputs(
     plot_probe_one_to_one(predictions, summary, panel_path, probe_label=probe_label)
     plot_probe_summary(summary, summary_path, probe_label=probe_label)
     return summary
-
