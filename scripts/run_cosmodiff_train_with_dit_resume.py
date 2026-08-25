@@ -29,6 +29,12 @@ from simdiff_eval.torch_compat import install_torch_backend_compat
 
 install_torch_backend_compat(entry_point=__name__)
 
+from simdiff_eval.terminal_reports import (
+    assert_rank_zero_json_writer,
+    atomic_write_json,
+    merge_json_object,
+)
+
 
 CHECKPOINT_RE = re.compile(r"checkpoint-epoch-(\d+)$")
 
@@ -189,11 +195,7 @@ def restore_posthoc_ema_state(
 
 
 def _write_json_atomic(path: Path, payload: dict[str, object]) -> None:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-    temporary.replace(path)
+    atomic_write_json(Path(path), payload)
 
 
 def write_completed_noop_audit(
@@ -205,6 +207,7 @@ def write_completed_noop_audit(
 ) -> None:
     """Record that a retry found its exact target already complete."""
     path = Path(path)
+    assert_rank_zero_json_writer()
     if path.exists():
         raise FileExistsError(f"Refusing to overwrite resume audit: {path}")
     _write_json_atomic(
@@ -366,15 +369,17 @@ def install_seed_restart_accelerator_hooks(
         if resume_seed is not None:
             seed_training_rng(resume_seed)
         state["loaded"] = True
-        _write_json_atomic(audit_path, audit)
+        merge_json_object(audit_path, audit)
         return result
 
     def backward_and_audit(self, loss, *args, **kwargs):
         if not state["loaded"]:
             raise RuntimeError("Backward occurred before checkpoint state was restored")
         if not state["first_loss_written"]:
-            audit["first_resumed_loss"] = float(loss.detach().item())
-            _write_json_atomic(audit_path, audit)
+            merge_json_object(
+                audit_path,
+                {"first_resumed_loss": float(loss.detach().item())},
+            )
             state["first_loss_written"] = True
         return original_backward(self, loss, *args, **kwargs)
 
@@ -431,10 +436,7 @@ def install_seed_restart_ema_factory(
         )
         ema._seed_restart_report = report
         if audit_path is not None:
-            audit_file = Path(audit_path)
-            audit = json.loads(audit_file.read_text()) if audit_file.exists() else {}
-            audit["ema_restore"] = report
-            _write_json_atomic(audit_file, audit)
+            merge_json_object(Path(audit_path), {"ema_restore": report})
         return ema
 
     ema_module.PostHocEMA = restored_posthoc_ema
@@ -1341,9 +1343,10 @@ def main() -> None:
             expected_ema_sigma_rels=expected_ema_sigma_rels,
             expected_ema_burn_in=expected_ema_burn_in,
         )
-        audit = json.loads(audit_path.read_text())
-        audit["target_checkpoint_state"] = target_state
-        _write_json_atomic(audit_path, audit)
+        audit = merge_json_object(
+            audit_path,
+            {"target_checkpoint_state": target_state},
+        )
         if "first_resumed_loss" not in audit or "ema_restore" not in audit:
             raise RuntimeError(
                 f"Seed-restart audit is incomplete after training: {audit_path}"
