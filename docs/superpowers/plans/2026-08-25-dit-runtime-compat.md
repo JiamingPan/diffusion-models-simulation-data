@@ -21,7 +21,7 @@
 - Torch must resolve inside `/home/jiamingp/venvs/cosmodiff_nf_class`; sklearn must resolve inside the audited narrow runtime stub, not Great Lakes Anaconda.
 - Treat `/home/jiamingp/venvs/cosmodiff_nf/lib/python3.10/site-packages` and `/sw/pkgs/arc/python3.10-anaconda/2023.03` as incompatible runtime roots.
 - Keep immutable-pin publication atomic and fail closed on missing, modified, or extra recorded files.
-- Read `superpowers:test-driven-development/references/writing-good-tests.md` before the first test edit, and observe every required RED failure before production implementation.
+- Read `superpowers:test-driven-development/writing-good-tests.md` before the first test edit, and observe every required RED failure before production implementation.
 
 ---
 
@@ -41,7 +41,7 @@
 - [ ] **Step 1: Read the test-quality reference before editing tests**
 
 ```bash
-sed -n '1,260p' /Users/apple/.codex/plugins/cache/openai-curated-remote/superpowers/6.3.0/skills/test-driven-development/references/writing-good-tests.md
+sed -n '1,260p' /Users/apple/.codex/plugins/cache/openai-curated-remote/superpowers/6.3.0/skills/test-driven-development/writing-good-tests.md
 ```
 
 - [ ] **Step 2: Write the baseline subprocess reproduction**
