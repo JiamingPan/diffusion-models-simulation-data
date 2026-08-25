@@ -82,6 +82,8 @@ fi
 "${PYTHON_BIN}" - <<'PY'
 import sys
 from pathlib import Path
+from simdiff_eval.torch_compat import install_torch_backend_compat
+install_torch_backend_compat(entry_point="sample_repro_u64_u128_array")
 from cosmodiff import utils
 text = Path(utils.__file__).read_text()
 if "tanh_norm" not in text and "self.method in ['tanh']" not in text:

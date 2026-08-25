@@ -14,7 +14,7 @@ import argparse
 from pathlib import Path
 
 
-PATCH_MARKER = "Codex direct checkpoint model-class patch v2"
+PATCH_MARKER = "Codex direct checkpoint model-class patch v3"
 
 
 def source_for_patch(path: Path) -> tuple[str, Path]:
@@ -44,6 +44,8 @@ def patch_utils(path: Path) -> bool:
     replacement = "\n".join(
         [
             f"{indent}# {PATCH_MARKER}: avoid AutoModel optional pipeline imports.",
+            f"{indent}from simdiff_eval.torch_compat import install_torch_backend_compat",
+            f"{indent}install_torch_backend_compat(entry_point='patched_cosmodiff.utils.load_checkpoint')",
             f"{indent}import json as _codex_json",
             f"{indent}with open(os.path.join(ckpt_path, \"config.json\")) as _codex_f:",
             f"{indent}    _codex_model_config = _codex_json.load(_codex_f)",

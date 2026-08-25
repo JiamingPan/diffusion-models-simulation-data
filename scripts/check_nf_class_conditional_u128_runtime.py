@@ -14,12 +14,16 @@ import argparse
 import copy
 import inspect
 import sys
-from contextlib import nullcontext
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
 
 import numpy as np
 import yaml
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from simdiff_eval.torch_compat import install_torch_backend_compat
 
 
 DEFAULT_COSMODIFF_DIR = "/home/jiamingp/Diffusion_model/cosmo_diffusion_main"
@@ -33,184 +37,6 @@ def parse_version(value: str) -> tuple[int, ...]:
             break
         parts.append(int(digits))
     return tuple(parts)
-
-
-class TorchOptionalDeviceStub:
-    """Small false backend so import-time optional-device probes do not fail."""
-
-    def is_available(self) -> bool:
-        return False
-
-    def device_count(self) -> int:
-        return 0
-
-    def empty_cache(self) -> None:
-        return None
-
-    def _is_compiled(self) -> bool:
-        return False
-
-    def current_device(self) -> int:
-        return 0
-
-    def set_device(self, *args, **kwargs) -> None:
-        return None
-
-    def synchronize(self, *args, **kwargs) -> None:
-        return None
-
-    def manual_seed(self, *args, **kwargs) -> None:
-        return None
-
-    def manual_seed_all(self, *args, **kwargs) -> None:
-        return None
-
-    def seed(self, *args, **kwargs) -> int:
-        return 0
-
-    def initial_seed(self, *args, **kwargs) -> int:
-        return 0
-
-    def get_rng_state(self, *args, **kwargs):
-        return None
-
-    def set_rng_state(self, *args, **kwargs) -> None:
-        return None
-
-    def is_built(self, *args, **kwargs) -> bool:
-        return False
-
-    def current_stream(self, *args, **kwargs):
-        return None
-
-    def stream(self, *args, **kwargs):
-        return nullcontext()
-
-    def device(self, *args, **kwargs):
-        return nullcontext()
-
-    def memory_allocated(self, *args, **kwargs) -> int:
-        return 0
-
-    def max_memory_allocated(self, *args, **kwargs) -> int:
-        return 0
-
-    def reset_peak_memory_stats(self, *args, **kwargs) -> None:
-        return None
-
-    def get_device_name(self, *args, **kwargs) -> str:
-        return "optional-device-unavailable"
-
-    def get_device_properties(self, *args, **kwargs):
-        return None
-
-    def __getattr__(self, name: str):
-        def missing(*args, **kwargs):
-            if name.startswith("is_"):
-                return False
-            return None
-
-        return missing
-
-
-class TorchCompilerStub:
-    """No-op torch.compiler facade for import-time diffusers decorators."""
-
-    def disable(self, fn=None, recursive: bool = True):
-        if fn is None:
-            return lambda inner: inner
-        return fn
-
-    def is_compiling(self) -> bool:
-        return False
-
-    def is_exporting(self) -> bool:
-        return False
-
-
-def ensure_torch_optional_device_stubs():
-    import torch
-
-    stub = TorchOptionalDeviceStub()
-    required = ("empty_cache", "is_available", "device_count", "manual_seed")
-    for backend in ("xpu", "mps"):
-        existing = getattr(torch, backend, None)
-        if existing is None or any(not hasattr(existing, name) for name in required):
-            setattr(torch, backend, stub)
-            continue
-        for name in dir(stub):
-            if name.startswith("__"):
-                continue
-            if not hasattr(existing, name):
-                setattr(existing, name, getattr(stub, name))
-
-    # diffusers>=0.32 imports TorchAO quantizer modules at model import time.
-    # Those modules reference float8/float4 dtype names added in much newer
-    # PyTorch releases.  The class-conditional UNet does not use quantization;
-    # these aliases only keep the import path alive under torch 1.12.
-    for name in (
-        "float8_e4m3fn",
-        "float8_e4m3fnuz",
-        "float8_e5m2",
-        "float8_e5m2fnuz",
-        "float8_e8m0fnu",
-        "float4_e2m1fn_x2",
-    ):
-        if not hasattr(torch, name):
-            setattr(torch, name, torch.float16)
-    for bits in range(1, 8):
-        name = f"uint{bits}"
-        if not hasattr(torch, name):
-            setattr(torch, name, torch.uint8)
-    compiler_stub = TorchCompilerStub()
-    compiler = getattr(torch, "compiler", None)
-    if compiler is None:
-        torch.compiler = compiler_stub
-    else:
-        for name in ("disable", "is_compiling", "is_exporting"):
-            if not hasattr(compiler, name):
-                setattr(compiler, name, getattr(compiler_stub, name))
-    try:
-        from torch.utils import _pytree
-    except Exception:
-        _pytree = None
-    if _pytree is not None and not hasattr(_pytree, "register_pytree_node"):
-        private_register = getattr(_pytree, "_register_pytree_node", None)
-        if private_register is not None:
-
-            def register_pytree_node(cls, flatten_fn, unflatten_fn, *args, **kwargs):
-                try:
-                    return private_register(cls, flatten_fn, unflatten_fn, *args, **kwargs)
-                except TypeError:
-                    supported = {
-                        key: kwargs[key]
-                        for key in ("to_dumpable_context", "from_dumpable_context")
-                        if key in kwargs
-                    }
-                    try:
-                        return private_register(cls, flatten_fn, unflatten_fn, *args, **supported)
-                    except TypeError:
-                        return private_register(cls, flatten_fn, unflatten_fn)
-
-            _pytree.register_pytree_node = register_pytree_node
-    if hasattr(torch, "distributed") and not hasattr(torch.distributed, "device_mesh"):
-        torch.distributed.device_mesh = SimpleNamespace(DeviceMesh=object)
-    if hasattr(torch, "distributed") and "torch.distributed._functional_collectives" not in sys.modules:
-        funcol = ModuleType("torch.distributed._functional_collectives")
-
-        class AsyncCollectiveTensor:
-            pass
-
-        def _identity_collective(tensor, *args, **kwargs):
-            return tensor
-
-        funcol.AsyncCollectiveTensor = AsyncCollectiveTensor
-        funcol.all_to_all_single = _identity_collective
-        funcol.all_gather_tensor = _identity_collective
-        funcol.permute_tensor = _identity_collective
-        sys.modules["torch.distributed._functional_collectives"] = funcol
-        torch.distributed._functional_collectives = funcol
-    return torch
 
 
 def as_list(value):
@@ -245,7 +71,7 @@ def preflight(args: argparse.Namespace) -> None:
     sys.path.insert(0, str(project_dir))
     sys.path.insert(0, str(cosmodiff_dir))
 
-    torch = ensure_torch_optional_device_stubs()
+    torch = install_torch_backend_compat(entry_point=__name__)
     print(f"[preflight] python={sys.executable}", flush=True)
     print(f"[preflight] torch={torch.__version__} cuda_available={torch.cuda.is_available()}", flush=True)
     print(f"[preflight] torch_cuda_build={torch.version.cuda}", flush=True)

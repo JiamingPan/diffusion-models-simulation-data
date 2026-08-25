@@ -20,6 +20,15 @@ from pathlib import Path
 
 import yaml
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from simdiff_eval.torch_compat import install_torch_backend_compat
+
+
+install_torch_backend_compat(entry_point=__name__)
+
 
 CHECKPOINT_RE = re.compile(r"checkpoint-epoch-(\d+)$")
 

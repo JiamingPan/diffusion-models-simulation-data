@@ -103,6 +103,8 @@ PATCH_LOCK="${COSMODIFF_DIR}/.codex_dit_patches.lock"
 import inspect
 import os
 from pathlib import Path
+from simdiff_eval.torch_compat import install_torch_backend_compat
+install_torch_backend_compat(entry_point="train_nf_generalize_fig2_dit_array")
 from cosmodiff import optim, utils
 from cosmodiff.transform import Transform
 
