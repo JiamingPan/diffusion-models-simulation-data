@@ -20,6 +20,7 @@ CHECK_SCRIPT = REPO_ROOT / "scripts/check_nf_generalize_fig2_dit_l16_seed_restar
 SUBMIT_SCRIPT = REPO_ROOT / "scripts/slurm/submit_nf_generalize_fig2_dit_l16_seed_restart500k.sh"
 PRECHECK_SCRIPT = REPO_ROOT / "scripts/slurm/precheck_nf_generalize_fig2_dit_l16_seed_restart500k.sbatch"
 TRAIN_SCRIPT = REPO_ROOT / "scripts/slurm/train_nf_generalize_fig2_dit_l16_seed_restart500k_array.sbatch"
+NO_SUBMIT_SCRIPT = REPO_ROOT / "scripts/preflight_nf_generalize_fig2_dit_l16_seed_restart500k_no_submit.sh"
 SOURCE_METADATA_SCRIPT = REPO_ROOT / "scripts/write_source_checkout_metadata.py"
 PIN_BUILDER_SCRIPT = REPO_ROOT / "scripts/build_cosmodiff_seed_restart_pin.py"
 PIN_VERIFY_SCRIPT = REPO_ROOT / "scripts/verify_cosmodiff_seed_restart_runtime.py"
@@ -761,23 +762,32 @@ def test_seed_restart_wrappers_consume_verified_pin_and_exact_precheck_job():
     assert "COSMODIFF_DIR_OVERRIDE" not in submit
 
 
-def test_seed_restart_gpu_jobs_stub_optional_sklearn_before_diffusers_imports():
-    """Great Lakes' system sklearn must not enter the DiT resume import path."""
-    for path in (PRECHECK_SCRIPT, TRAIN_SCRIPT):
+def test_seed_restart_consumers_use_the_runtime_frozen_inside_the_pin():
+    """Every consumer must use the same hashed adapter and sklearn stub."""
+    for path in (PRECHECK_SCRIPT, TRAIN_SCRIPT, SUBMIT_SCRIPT):
         source = path.read_text()
-        assert "STUB_ROOT=" in source
-        assert 'mkdir -p "${STUB_ROOT}/sklearn/metrics"' in source
-        assert 'write_diffusers_runtime_sitecustomize.py' in source
-        assert "sklearn.metrics.roc_curve is stubbed for DiT seed restart" in source
-        assert 'export PYTHONPATH="${STUB_ROOT}:${COSMODIFF_PIN_ROOT}:${CODE_ROOT}' in source
+        assert "RUNTIME_ROOT=${COSMODIFF_PIN_ROOT}/seed_restart_runtime" in source
+        assert 'export PYTHONPATH="${RUNTIME_ROOT}:${CODE_ROOT}:${COSMODIFF_PIN_ROOT}"' in source
+        assert 'export PYTHONNOUSERSITE=1' in source
+        assert 'mkdir -p "${STUB_ROOT}/sklearn/metrics"' not in source
+        assert "write_diffusers_runtime_sitecustomize.py" not in source
+        assert "--code-root" in source
+        assert "--expected-torch-prefix" in source
+        assert source.count("--incompatible-python-path") == 2
 
-        stub_index = source.index('mkdir -p "${STUB_ROOT}/sklearn/metrics"')
-        load_index = (
-            source.index("check_nf_generalize_fig2_dit_resume.py")
-            if path == PRECHECK_SCRIPT
-            else source.index("run_cosmodiff_train_with_dit_resume.py")
-        )
-        assert stub_index < load_index
+
+def test_seed_restart_no_submit_preflight_cannot_mutate_the_scheduler():
+    source = NO_SUBMIT_SCRIPT.read_text()
+
+    for forbidden in ("sbatch", "srun", "scancel", "salloc"):
+        assert forbidden not in source
+    assert "build_cosmodiff_seed_restart_pin.py" in source
+    assert "verify_cosmodiff_seed_restart_runtime.py" in source
+    assert "source_checkpoint" in source
+    assert "checkpoint_inventory" in source
+    assert "resume_seed" in source
+    assert "target_total_updates" in source
+    assert "NO JOB SUBMITTED" in source
 
 
 def test_slurm_jobs_pin_the_exact_audited_cosmodiff_runtime():

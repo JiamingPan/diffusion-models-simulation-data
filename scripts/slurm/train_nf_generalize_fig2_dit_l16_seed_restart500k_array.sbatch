@@ -23,13 +23,15 @@ PRECHECK_REPORT=${PRECHECK_REPORT:?Set PRECHECK_REPORT to the completed stage re
 EXPECTED_PRECHECK_JOB_ID=${EXPECTED_PRECHECK_JOB_ID:?Set the exact producer precheck job ID}
 COSMODIFF_PIN_ROOT=${COSMODIFF_PIN_ROOT:?Set the immutable cosmodiff pin root}
 COSMODIFF_PIN_MANIFEST=${COSMODIFF_PIN_MANIFEST:?Set the immutable cosmodiff pin manifest}
+RUNTIME_ROOT=${COSMODIFF_PIN_ROOT}/seed_restart_runtime
 VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf_class}
 BASE_VENV_PATH=${BASE_VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
 PYTHON_BIN=${PYTHON_BIN:-${VENV_PATH}/bin/python}
 SWEEP=nf_generalize_fig2_dit_l16_seed_restart500k_v1
 PREPARE=${CODE_ROOT}/scripts/prepare_nf_generalize_fig2_dit_l16_seed_restart500k_configs.py
 DATASET_TAGS=(d2p08 d2p10)
-STUB_ROOT=${PROJECT_DIR}/results/cache/python_stubs/seed_restart_train_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}
+SYSTEM_ANACONDA_SITE=/sw/pkgs/arc/python3.10-anaconda/2023.03/lib/python3.10/site-packages
+BASE_VENV_SITE=${BASE_VENV_PATH}/lib/python3.10/site-packages
 
 if (( CONTINUE_STAGE < 1 || CONTINUE_STAGE > 5 )); then
   echo "CONTINUE_STAGE must be between 1 and 5" >&2
@@ -85,20 +87,21 @@ test ! -e "${AUDIT_PATH}"
 test ! -e "${COMPLETION}"
 
 export TORCHDYNAMO_DISABLE=1
-mkdir -p "${STUB_ROOT}/sklearn/metrics"
-printf 'from . import metrics\n' > "${STUB_ROOT}/sklearn/__init__.py"
-printf "def roc_curve(*args, **kwargs):\n    raise RuntimeError('sklearn.metrics.roc_curve is stubbed for DiT seed restart')\n" \
-  > "${STUB_ROOT}/sklearn/metrics/__init__.py"
-"${PYTHON_BIN}" "${CODE_ROOT}/scripts/write_diffusers_runtime_sitecustomize.py" \
-  "${STUB_ROOT}/sitecustomize.py"
-export PYTHONPATH="${STUB_ROOT}:${COSMODIFF_PIN_ROOT}:${CODE_ROOT}:${PYTHONPATH:-}"
+export PYTHONNOUSERSITE=1
+export PYTHONPATH="${RUNTIME_ROOT}:${CODE_ROOT}:${COSMODIFF_PIN_ROOT}"
 export COSMODIFF_DIR="${COSMODIFF_PIN_ROOT}"
+test -s "${RUNTIME_ROOT}/sitecustomize.py"
+test -s "${RUNTIME_ROOT}/sklearn/__init__.py"
 
 "${PYTHON_BIN}" "${CODE_ROOT}/scripts/verify_cosmodiff_seed_restart_runtime.py" \
   "${COSMODIFF_PIN_ROOT}" \
   --manifest "${COSMODIFF_PIN_MANIFEST}" \
   --expected-base-revision "${EXPECTED_COSMODIFF_BASE_REVISION}" \
   --python-bin "${PYTHON_BIN}" \
+  --code-root "${CODE_ROOT}" \
+  --expected-torch-prefix "${VENV_PATH}" \
+  --incompatible-python-path "${BASE_VENV_SITE}" \
+  --incompatible-python-path "${SYSTEM_ANACONDA_SITE}" \
   --patch-script "${CODE_ROOT}/scripts/patch_cosmodiff_package_metadata.py" \
   --patch-script "${CODE_ROOT}/scripts/patch_cosmodiff_constant_label.py" \
   --patch-script "${CODE_ROOT}/scripts/patch_cosmodiff_dit_class_labels.py" \
