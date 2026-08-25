@@ -517,6 +517,72 @@ class DitCheckpointResumeTests(unittest.TestCase):
                 -3.0,
             )
 
+    def test_seed_restart_audit_writers_preserve_fields_in_both_orders(self):
+        module = load_wrapper_module()
+        ema_report = {
+            "step": 1_199_000,
+            "profiles": 2,
+            "sigma_rels": [0.02, 0.1],
+            "burn_in": 1_000,
+            "snapshots": ["0.1199000.pt", "1.1199000.pt"],
+        }
+
+        for order in ("ema_before_load", "load_before_ema"):
+            with self.subTest(order=order), tempfile.TemporaryDirectory() as tmpdir:
+                class FakeAccelerator:
+                    def load_state(self, _checkpoint):
+                        return "loaded"
+
+                    def backward(self, _loss):
+                        return None
+
+                    def log(self, _values, step=None):
+                        return step
+
+                class FakePostHocEMA:
+                    def __init__(self, _model):
+                        pass
+
+                checkpoint = Path(tmpdir) / "checkpoint-epoch-9374"
+                checkpoint.mkdir()
+                audit_path = Path(tmpdir) / "resume_audit.json"
+                ema_module = SimpleNamespace(PostHocEMA=FakePostHocEMA)
+                module.install_seed_restart_accelerator_hooks(
+                    FakeAccelerator,
+                    checkpoint=checkpoint,
+                    resume_seed=456,
+                    source_updates=300_000,
+                    source_microbatches=1_200_000,
+                    audit_path=audit_path,
+                    audit_context={"run_name": "d2p08-seed456"},
+                )
+                module.install_seed_restart_ema_factory(
+                    ema_module,
+                    checkpoint=checkpoint,
+                    expected_step=1_199_000,
+                    expected_sigma_rels=[0.02, 0.1],
+                    expected_burn_in=1_000,
+                    audit_path=audit_path,
+                )
+                accelerator = FakeAccelerator()
+                with mock.patch.object(
+                    module,
+                    "restore_posthoc_ema_state",
+                    return_value=ema_report,
+                ):
+                    if order == "ema_before_load":
+                        ema_module.PostHocEMA(object())
+                        accelerator.load_state(checkpoint)
+                    else:
+                        accelerator.load_state(checkpoint)
+                        ema_module.PostHocEMA(object())
+                    accelerator.backward(torch.tensor(0.125))
+
+                audit = __import__("json").loads(audit_path.read_text())
+                self.assertEqual(audit["ema_restore"], ema_report)
+                self.assertEqual(audit["first_resumed_loss"], 0.125)
+                self.assertEqual(audit["run_name"], "d2p08-seed456")
+
     def test_seed_restart_contract_uses_absolute_updates_and_fixed_subset(self):
         module = load_wrapper_module()
         config = {
