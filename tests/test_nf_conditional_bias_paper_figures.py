@@ -107,7 +107,7 @@ def test_conditional_figure_has_shared_scatter_limits_and_exact_training_axis(tm
     figure, report = plotting.build_conditional_recovery_figure(points, slopes)
     try:
         assert figure.get_size_inches()[0] == pytest.approx(6.75)
-        assert figure.get_size_inches()[1] == pytest.approx(4.4)
+        assert figure.get_size_inches()[1] == pytest.approx(1.95)
         assert figure._suptitle is None
         assert len(figure.axes) == 4
         limits = [(axis.get_xlim(), axis.get_ylim()) for axis in figure.axes[:3]]
@@ -119,21 +119,26 @@ def test_conditional_figure_has_shared_scatter_limits_and_exact_training_axis(tm
         assert transition_axis.get_xlim() == pytest.approx((5.65, 15.35))
         assert transition_axis.get_xticks().tolist() == list(range(6, 16))
         assert [tick.get_text() for tick in transition_axis.get_xticklabels()] == [
-            rf"$2^{{{power}}}$" for power in range(6, 16)
+            rf"$2^{{{power}}}$" if power % 2 == 0 else "" for power in range(6, 16)
         ]
         assert all(tick.get_rotation() == 0 for tick in transition_axis.get_xticklabels())
         assert all(axis.get_xlabel() == "" for axis in figure.axes[:3])
         assert transition_axis.get_ylabel() == r"$\Omega_m$ response slope"
+        assert transition_axis.yaxis.labelpad == pytest.approx(0.0)
         scatter_positions = [axis.get_position() for axis in figure.axes[:3]]
         assert max(position.y0 for position in scatter_positions) == pytest.approx(
             min(position.y0 for position in scatter_positions)
         )
-        assert all(position.y0 > transition_axis.get_position().y1 for position in scatter_positions)
+        assert transition_axis.get_position().y0 == pytest.approx(scatter_positions[0].y0)
+        assert transition_axis.get_position().x0 > scatter_positions[-1].x1
         assert transition_axis.get_position().width > max(
             position.width for position in scatter_positions
         )
-        assert transition_axis.get_position().x0 == pytest.approx(scatter_positions[0].x0)
-        assert transition_axis.get_position().x1 == pytest.approx(scatter_positions[-1].x1)
+        figure.canvas.draw()
+        renderer = figure.canvas.get_renderer()
+        third_axis_box = figure.axes[2].get_window_extent(renderer)
+        transition_label_box = transition_axis.yaxis.label.get_window_extent(renderer)
+        assert transition_label_box.x0 >= third_axis_box.x1 + 2.0
         shared_labels = [
             text for text in figure.texts if text.get_text() == r"Requested $\Omega_m$"
         ]
@@ -146,6 +151,15 @@ def test_conditional_figure_has_shared_scatter_limits_and_exact_training_axis(tm
             text.get_text() for axis in figure.axes[:3] for text in axis.texts
         )
         assert "slope = 0.25" in annotation_text
+        assert all(
+            text.get_fontsize() == pytest.approx(7.0)
+            for axis in figure.axes[:3]
+            for text in axis.texts
+        )
+        assert "(a)" not in annotation_text
+        assert "(b)" not in "\n".join(
+            text.get_text() for axis in figure.axes for text in axis.texts
+        )
         assert report["dataset_size"].tolist() == [2**power for power in range(6, 16)]
         assert report.loc[0, "slope"] == pytest.approx(0.25)
         assert report.loc[9, "slope_ci84"] == pytest.approx(0.25 + 0.055 * 9 + 0.045)
