@@ -22,6 +22,49 @@ def _write_fake_torch_and_diffusers(root: Path) -> None:
         "float16 = 'float16'\n"
         "uint8 = 'uint8'\n"
     )
+
+
+def _write_runtime_audit_fixture(tmp_path: Path):
+    from simdiff_eval.seed_restart_runtime import write_runtime_assets
+
+    runtime_root = tmp_path / "seed_restart_runtime"
+    pin_root = tmp_path / "cosmodiff_pin"
+    fixture_root = tmp_path / "third_party"
+    pin_package = pin_root / "cosmodiff"
+    pin_package.mkdir(parents=True)
+    fixture_root.mkdir()
+
+    (pin_package / "__init__.py").write_text('__version__ = "0+source.fixture"\n')
+    for name in ("optim", "utils", "augment", "transform"):
+        (pin_package / f"{name}.py").write_text(f'VALUE = "{name}"\n')
+
+    (fixture_root / "torch.py").write_text(
+        "__version__ = '2.1.2+cu118'\n"
+        "float16 = 'float16'\n"
+        "uint8 = 'uint8'\n"
+    )
+    diffusers = fixture_root / "diffusers"
+    diffusers.mkdir()
+    (diffusers / "__init__.py").write_text(
+        "import torch\n"
+        "__version__ = '0.35.0.fixture'\n"
+        "DEVICE_EMPTY_CACHE = {'xpu': torch.xpu.empty_cache}\n"
+        "class DDPMScheduler: pass\n"
+        "class DiTTransformer2DModel: pass\n"
+    )
+    hub = fixture_root / "huggingface_hub"
+    hub.mkdir()
+    (hub / "__init__.py").write_text(
+        "__version__ = '0.25.0.fixture'\n"
+        "def hf_hub_download(*args, **kwargs): return None\n"
+        "def snapshot_download(*args, **kwargs): return None\n"
+    )
+    write_runtime_assets(
+        runtime_root,
+        code_root=REPO_ROOT,
+        entry_point="tests.runtime_audit.sitecustomize",
+    )
+    return runtime_root, pin_root, fixture_root
     (root / "diffusers/__init__.py").write_text(
         "import torch\n"
         "DEVICE_EMPTY_CACHE = {'xpu': torch.xpu.empty_cache}\n"
@@ -222,3 +265,118 @@ def test_sitecustomize_writer_cli_delegates_to_the_runtime_adapter(tmp_path):
     assert spec is not None
     assert "tests.writer_cli" in output.read_text()
     assert str((REPO_ROOT / "simdiff_eval/torch_compat.py").resolve()) in output.read_text()
+
+
+def test_runtime_audit_imports_exact_pinned_modules_and_records_versions(tmp_path):
+    from simdiff_eval.seed_restart_runtime import run_runtime_audit
+
+    runtime_root, pin_root, fixture_root = _write_runtime_audit_fixture(tmp_path)
+
+    report = run_runtime_audit(
+        Path(sys.executable),
+        pin_root=pin_root,
+        runtime_root=runtime_root,
+        code_root=REPO_ROOT,
+        expected_torch_prefix=fixture_root,
+        approved_residual_paths=(fixture_root,),
+    )
+
+    assert report["python"]["executable"] == sys.executable
+    assert report["sitecustomize"]["file"] == str(
+        (runtime_root / "sitecustomize.py").resolve()
+    )
+    assert report["torch"]["version"] == "2.1.2+cu118"
+    assert report["torch"]["compat"]["schema_version"] == 1
+    assert report["sklearn"] == {
+        "file": str((runtime_root / "sklearn/__init__.py").resolve()),
+        "runtime_kind": "simdiff-seed-restart-stub",
+        "version": "0+simdiff-seed-restart-stub",
+    }
+    assert report["diffusers"]["symbols"] == [
+        "DDPMScheduler",
+        "DiTTransformer2DModel",
+    ]
+    assert report["huggingface_hub"]["symbols"] == [
+        "hf_hub_download",
+        "snapshot_download",
+    ]
+    assert set(report["cosmodiff"]["modules"]) == {
+        "cosmodiff",
+        "cosmodiff.optim",
+        "cosmodiff.utils",
+        "cosmodiff.augment",
+        "cosmodiff.transform",
+    }
+    assert report["cosmodiff"]["version"] == "0+source.fixture"
+
+
+def test_runtime_audit_rejects_torch_outside_expected_prefix(tmp_path):
+    from simdiff_eval.seed_restart_runtime import run_runtime_audit
+
+    runtime_root, pin_root, fixture_root = _write_runtime_audit_fixture(tmp_path)
+
+    with pytest.raises(RuntimeError, match="torch.*expected prefix") as caught:
+        run_runtime_audit(
+            Path(sys.executable),
+            pin_root=pin_root,
+            runtime_root=runtime_root,
+            code_root=REPO_ROOT,
+            expected_torch_prefix=tmp_path / "wrong_torch_prefix",
+            approved_residual_paths=(fixture_root,),
+        )
+
+    assert str((fixture_root / "torch.py").resolve()) in str(caught.value)
+
+
+def test_runtime_audit_rejects_missing_huggingface_hub_symbol(tmp_path):
+    from simdiff_eval.seed_restart_runtime import run_runtime_audit
+
+    runtime_root, pin_root, fixture_root = _write_runtime_audit_fixture(tmp_path)
+    (fixture_root / "huggingface_hub/__init__.py").write_text(
+        "__version__ = '0.25.0.fixture'\n"
+        "def hf_hub_download(*args, **kwargs): return None\n"
+    )
+
+    with pytest.raises(RuntimeError, match="snapshot_download"):
+        run_runtime_audit(
+            Path(sys.executable),
+            pin_root=pin_root,
+            runtime_root=runtime_root,
+            code_root=REPO_ROOT,
+            expected_torch_prefix=fixture_root,
+            approved_residual_paths=(fixture_root,),
+        )
+
+
+def test_runtime_audit_child_uses_site_and_honors_pythonpath_order(tmp_path):
+    from simdiff_eval.seed_restart_runtime import run_runtime_audit
+
+    runtime_root, pin_root, fixture_root = _write_runtime_audit_fixture(tmp_path)
+    argv_path = tmp_path / "python_argv.json"
+    wrapper = tmp_path / "python-wrapper"
+    wrapper.write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"$@\" > {str(argv_path)!r}\n"
+        f"exec {sys.executable!r} \"$@\"\n"
+    )
+    wrapper.chmod(0o755)
+
+    report = run_runtime_audit(
+        wrapper,
+        pin_root=pin_root,
+        runtime_root=runtime_root,
+        code_root=REPO_ROOT,
+        expected_torch_prefix=fixture_root,
+        approved_residual_paths=(fixture_root,),
+    )
+
+    argv = argv_path.read_text().splitlines()
+    assert "-S" not in argv
+    assert "-E" not in argv
+    assert Path(argv[0]).name == "check_cosmodiff_seed_restart_imports.py"
+    assert report["python"]["pythonpath"][:3] == [
+        str(runtime_root.resolve()),
+        str(REPO_ROOT.resolve()),
+        str(pin_root.resolve()),
+    ]
+    assert str((REPO_ROOT / "scripts").resolve()) in report["python"]["path"]

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from pathlib import Path
+import subprocess
 from typing import Any, Mapping, Sequence
 
 
@@ -179,3 +181,84 @@ def build_child_env(
     env["PYTHONNOUSERSITE"] = "1"
     env["PYTHONPATH"] = os.pathsep.join(str(path) for path in ordered)
     return env
+
+
+def run_runtime_audit(
+    python_bin: Path,
+    *,
+    pin_root: Path,
+    runtime_root: Path,
+    code_root: Path,
+    expected_torch_prefix: Path,
+    incompatible_paths: Sequence[Path] = (),
+    approved_residual_paths: Sequence[Path] = (),
+) -> dict[str, Any]:
+    """Run the supported child import audit with the exact runtime ordering."""
+
+    python_bin = Path(os.path.abspath(os.path.expanduser(str(python_bin))))
+    pin_root = Path(pin_root).resolve()
+    runtime_root = Path(runtime_root).resolve()
+    code_root = Path(code_root).resolve()
+    expected_torch_prefix = Path(expected_torch_prefix).resolve()
+    auditor = code_root / "scripts/check_cosmodiff_seed_restart_imports.py"
+    if not python_bin.is_file():
+        raise FileNotFoundError(f"Python interpreter is missing: {python_bin}")
+    for path, label in (
+        (pin_root, "pin root"),
+        (runtime_root, "runtime root"),
+        (code_root, "code root"),
+    ):
+        if not path.is_dir():
+            raise FileNotFoundError(f"{label} is missing: {path}")
+    if not auditor.is_file():
+        raise FileNotFoundError(f"runtime auditor is missing: {auditor}")
+
+    command = [
+        str(python_bin),
+        str(auditor),
+        "--pin-root",
+        str(pin_root),
+        "--runtime-root",
+        str(runtime_root),
+        "--code-root",
+        str(code_root),
+        "--expected-torch-prefix",
+        str(expected_torch_prefix),
+    ]
+    for path in incompatible_paths:
+        command.extend(("--incompatible-python-path", str(Path(path).resolve())))
+    env = build_child_env(
+        os.environ,
+        runtime_root=runtime_root,
+        code_root=code_root,
+        pin_root=pin_root,
+        incompatible_paths=incompatible_paths,
+        approved_residual_paths=approved_residual_paths,
+    )
+    completed = subprocess.run(
+        command,
+        cwd=code_root,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        details = "\n".join(
+            part.strip()
+            for part in (completed.stdout, completed.stderr)
+            if part.strip()
+        )
+        raise RuntimeError(f"seed-restart runtime audit failed:\n{details}")
+    prefix = "SEED_RESTART_RUNTIME_JSON="
+    payload_lines = [
+        line.removeprefix(prefix)
+        for line in completed.stdout.splitlines()
+        if line.startswith(prefix)
+    ]
+    if len(payload_lines) != 1:
+        raise RuntimeError(
+            "seed-restart runtime audit did not emit exactly one JSON payload:\n"
+            + completed.stdout
+        )
+    return json.loads(payload_lines[0])
