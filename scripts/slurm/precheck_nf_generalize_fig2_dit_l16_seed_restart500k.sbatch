@@ -20,6 +20,7 @@ EXPECTED_COSMODIFF_BASE_REVISION=${EXPECTED_COSMODIFF_BASE_REVISION:?Set the exa
 CONTINUE_STAGE=${CONTINUE_STAGE:?Set CONTINUE_STAGE to 1, 2, 3, 4, or 5}
 COSMODIFF_PIN_ROOT=${COSMODIFF_PIN_ROOT:?Set the immutable cosmodiff pin root}
 COSMODIFF_PIN_MANIFEST=${COSMODIFF_PIN_MANIFEST:?Set the immutable cosmodiff pin manifest}
+RUNTIME_ROOT=${COSMODIFF_PIN_ROOT}/seed_restart_runtime
 VENV_PATH=${VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf_class}
 BASE_VENV_PATH=${BASE_VENV_PATH:-/home/jiamingp/venvs/cosmodiff_nf}
 PYTHON_BIN=${PYTHON_BIN:-${VENV_PATH}/bin/python}
@@ -28,7 +29,8 @@ PREPARE=${CODE_ROOT}/scripts/prepare_nf_generalize_fig2_dit_l16_seed_restart500k
 CHECK=${CODE_ROOT}/scripts/check_nf_generalize_fig2_dit_l16_seed_restart500k.py
 REPORT_PATH=${PROJECT_DIR}/local/${SWEEP}/preflight_reports/stage${CONTINUE_STAGE}_${SLURM_JOB_ID}.json
 FINALIZER=${CODE_ROOT}/scripts/finalize_terminal_report.py
-STUB_ROOT=${PROJECT_DIR}/results/cache/python_stubs/seed_restart_precheck_${SLURM_JOB_ID}
+SYSTEM_ANACONDA_SITE=/sw/pkgs/arc/python3.10-anaconda/2023.03/lib/python3.10/site-packages
+BASE_VENV_SITE=${BASE_VENV_PATH}/lib/python3.10/site-packages
 REPORT_FINALIZED=0
 
 finalize_on_exit() {
@@ -64,19 +66,20 @@ mkdir -p "${PROJECT_DIR}/logs/${SWEEP}" "$(dirname "${REPORT_PATH}")"
 source "${CODE_ROOT}/scripts/nf_class_conditional_pythonpath.sh"
 set_nf_class_conditional_pythonpath "${PYTHON_BIN}" "${BASE_VENV_PATH}"
 export TORCHDYNAMO_DISABLE=1
-mkdir -p "${STUB_ROOT}/sklearn/metrics"
-printf 'from . import metrics\n' > "${STUB_ROOT}/sklearn/__init__.py"
-printf "def roc_curve(*args, **kwargs):\n    raise RuntimeError('sklearn.metrics.roc_curve is stubbed for DiT seed restart')\n" \
-  > "${STUB_ROOT}/sklearn/metrics/__init__.py"
-"${PYTHON_BIN}" "${CODE_ROOT}/scripts/write_diffusers_runtime_sitecustomize.py" \
-  "${STUB_ROOT}/sitecustomize.py"
-export PYTHONPATH="${STUB_ROOT}:${COSMODIFF_PIN_ROOT}:${CODE_ROOT}:${PYTHONPATH:-}"
+export PYTHONNOUSERSITE=1
+export PYTHONPATH="${RUNTIME_ROOT}:${CODE_ROOT}:${COSMODIFF_PIN_ROOT}"
+test -s "${RUNTIME_ROOT}/sitecustomize.py"
+test -s "${RUNTIME_ROOT}/sklearn/__init__.py"
 
 "${PYTHON_BIN}" "${CODE_ROOT}/scripts/verify_cosmodiff_seed_restart_runtime.py" \
   "${COSMODIFF_PIN_ROOT}" \
   --manifest "${COSMODIFF_PIN_MANIFEST}" \
   --expected-base-revision "${EXPECTED_COSMODIFF_BASE_REVISION}" \
   --python-bin "${PYTHON_BIN}" \
+  --code-root "${CODE_ROOT}" \
+  --expected-torch-prefix "${VENV_PATH}" \
+  --incompatible-python-path "${BASE_VENV_SITE}" \
+  --incompatible-python-path "${SYSTEM_ANACONDA_SITE}" \
   --patch-script "${CODE_ROOT}/scripts/patch_cosmodiff_package_metadata.py" \
   --patch-script "${CODE_ROOT}/scripts/patch_cosmodiff_constant_label.py" \
   --patch-script "${CODE_ROOT}/scripts/patch_cosmodiff_dit_class_labels.py" \
