@@ -52,6 +52,10 @@ REQUIRED_IMPORTS = (
     "cosmodiff.augment",
     "cosmodiff.transform",
 )
+CONSTANT_LABEL_SUPPORT_FRAGMENTS = (
+    'constant_label = data_cfg.get("constant_label", None)',
+    "labels is None and constant_label is not None",
+)
 
 
 def sha256_file(path: Path) -> str:
@@ -129,6 +133,12 @@ def _target_hashes(root: Path, targets: tuple[str, ...]) -> dict[str, str]:
             raise FileNotFoundError(f"declared patch target is missing: {path}")
         hashes[relative] = sha256_file(path)
     return hashes
+
+
+def has_constant_label_support(utils_path: Path) -> bool:
+    """Recognize the declared native/patch contract before importing Cosmodiff."""
+    source = Path(utils_path).read_text()
+    return all(fragment in source for fragment in CONSTANT_LABEL_SUPPORT_FRAGMENTS)
 
 
 def imported_modules(
@@ -218,6 +228,9 @@ def build_pin(
     published = False
     try:
         _extract_revision(source_repo, revision, staging)
+        native_constant_label_support = has_constant_label_support(
+            staging / "cosmodiff/utils.py"
+        )
         patch_records = []
         for script in patches:
             targets = PATCH_TARGETS[script.name]
@@ -239,6 +252,21 @@ def build_pin(
                         for name in targets
                     },
                 }
+            )
+
+        constant_label_patch = next(
+            row
+            for row in patch_records
+            if row["name"] == "patch_cosmodiff_constant_label.py"
+        )
+        expected_patch_status = (
+            "already_supported" if native_constant_label_support else "applied"
+        )
+        if constant_label_patch["status"] != expected_patch_status:
+            raise RuntimeError(
+                "constant-label patch result disagrees with base-revision support: "
+                f"native={native_constant_label_support}, "
+                f"patch_status={constant_label_patch['status']}"
             )
 
         runtime_root = staging / RUNTIME_DIR_NAME
@@ -264,12 +292,22 @@ def build_pin(
             if name.startswith("sklearn/")
         }
         manifest = {
-            "pin_schema_version": 2,
+            "pin_schema_version": 3,
             "base_revision": revision,
             "python_executable": str(python_bin),
             "patches": patch_records,
             "imports": imports["paths"],
             "cosmodiff_version": imports["version"],
+            "constant_label_support": {
+                "native_in_base_revision": native_constant_label_support,
+                "effective_in_published_pin": True,
+                "provenance": (
+                    "base_revision"
+                    if native_constant_label_support
+                    else "patch_cosmodiff_constant_label.py"
+                ),
+                "utils_path": "cosmodiff/utils.py",
+            },
             "runtime_compatibility": {
                 "schema_version": runtime_assets["schema_version"],
                 "runtime_root": RUNTIME_DIR_NAME,

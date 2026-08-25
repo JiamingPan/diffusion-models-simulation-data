@@ -89,7 +89,7 @@ def verify_pin(
     code_root = Path(code_root).resolve()
     expected_torch_prefix = Path(expected_torch_prefix).resolve()
     manifest = json.loads(manifest_path.read_text())
-    if manifest.get("pin_schema_version") != 2:
+    if manifest.get("pin_schema_version") != 3:
         raise RuntimeError("unsupported cosmodiff pin schema")
     if manifest.get("base_revision") != str(expected_base_revision):
         raise RuntimeError(
@@ -106,6 +106,37 @@ def verify_pin(
             raise RuntimeError(f"patch script hash mismatch: {script}")
         if row.get("status") not in {"applied", "already_supported"}:
             raise RuntimeError(f"invalid patch status for {script.name}")
+    constant_label_patch = next(
+        row
+        for row in patch_rows
+        if row.get("name") == "patch_cosmodiff_constant_label.py"
+    )
+    constant_label_support = manifest.get("constant_label_support")
+    if not isinstance(constant_label_support, dict):
+        raise RuntimeError("cosmodiff pin lacks constant-label support provenance")
+    expected_support_keys = {
+        "native_in_base_revision",
+        "effective_in_published_pin",
+        "provenance",
+        "utils_path",
+    }
+    if set(constant_label_support) != expected_support_keys:
+        raise RuntimeError("cosmodiff pin constant-label support fields differ")
+    native_support = constant_label_support.get("native_in_base_revision")
+    if not isinstance(native_support, bool):
+        raise RuntimeError("cosmodiff pin native constant-label flag is not boolean")
+    if constant_label_support.get("effective_in_published_pin") is not True:
+        raise RuntimeError("published cosmodiff pin lacks effective constant-label support")
+    expected_provenance = (
+        "base_revision" if native_support else "patch_cosmodiff_constant_label.py"
+    )
+    expected_patch_status = "already_supported" if native_support else "applied"
+    if constant_label_support.get("provenance") != expected_provenance:
+        raise RuntimeError("cosmodiff pin constant-label provenance is inconsistent")
+    if constant_label_support.get("utils_path") != "cosmodiff/utils.py":
+        raise RuntimeError("cosmodiff pin constant-label source path is inconsistent")
+    if constant_label_patch.get("status") != expected_patch_status:
+        raise RuntimeError("cosmodiff pin constant-label patch status is inconsistent")
     actual_inventory = file_inventory(pin_root)
     if actual_inventory != manifest.get("inventory"):
         raise RuntimeError("cosmodiff pin inventory differs from its manifest")
