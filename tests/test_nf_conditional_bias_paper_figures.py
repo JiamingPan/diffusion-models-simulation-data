@@ -107,6 +107,7 @@ def test_conditional_figure_has_shared_scatter_limits_and_exact_training_axis(tm
     figure, report = plotting.build_conditional_recovery_figure(points, slopes)
     try:
         assert figure.get_size_inches()[0] == pytest.approx(6.75)
+        assert figure.get_size_inches()[1] == pytest.approx(2.8)
         assert figure._suptitle is None
         assert len(figure.axes) == 4
         limits = [(axis.get_xlim(), axis.get_ylim()) for axis in figure.axes[:3]]
@@ -121,6 +122,20 @@ def test_conditional_figure_has_shared_scatter_limits_and_exact_training_axis(tm
             rf"$2^{{{power}}}$" for power in range(6, 16)
         ]
         assert all(tick.get_rotation() == 0 for tick in transition_axis.get_xticklabels())
+        assert all(axis.get_xlabel() == "" for axis in figure.axes[:3])
+        assert transition_axis.get_ylabel() == "Slope"
+        shared_labels = [
+            text for text in figure.texts if text.get_text() == r"Requested $\Omega_m$"
+        ]
+        assert len(shared_labels) == 1
+        scatter_center = (
+            figure.axes[0].get_position().x0 + figure.axes[2].get_position().x1
+        ) / 2.0
+        assert shared_labels[0].get_position()[0] == pytest.approx(scatter_center, abs=0.01)
+        annotation_text = "\n".join(
+            text.get_text() for axis in figure.axes[:3] for text in axis.texts
+        )
+        assert "slope = 0.25" in annotation_text
         assert report["dataset_size"].tolist() == [2**power for power in range(6, 16)]
         assert report.loc[0, "slope"] == pytest.approx(0.25)
         assert report.loc[9, "slope_ci84"] == pytest.approx(0.25 + 0.055 * 9 + 0.045)
