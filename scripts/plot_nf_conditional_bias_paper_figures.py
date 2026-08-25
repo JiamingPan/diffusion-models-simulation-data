@@ -25,8 +25,15 @@ from paperstyle import FULL_W, INK, set_paper_style, style_axis
 
 ALL_POWERS = tuple(range(6, 16))
 ALL_DATASET_SIZES = tuple(2**power for power in ALL_POWERS)
-REPRESENTATIVE_POWERS = (6, 11, 15)
-REPRESENTATIVE_MARKERS = ("o", "s", "^")
+REPRESENTATIVE_POWERS = (7, 14)
+REGIME_COLORS = {
+    "memorization": "#D55E00",
+    "generalization": "#0072B2",
+}
+REGIME_LABELS = {
+    7: "memorization regime",
+    14: "generalization regime",
+}
 PARAM_ORDER = ("Omega_m", "sigma_8", "A_SN1", "A_AGN1", "A_SN2", "A_AGN2")
 PARAM_LABELS = {
     "Omega_m": r"$\Omega_m$",
@@ -103,11 +110,58 @@ def _omega_tables(
     return omega_points, omega_slopes.sort_values("dataset_size").reset_index(drop=True)
 
 
+def novelty_transition_boundary(
+    metrics: pd.DataFrame,
+    *,
+    architecture: str = "u128",
+    threshold: float = 0.5,
+) -> float:
+    """Interpolate the novelty crossing used by the generalization-score figure."""
+
+    required = {"arch", "dataset_size", "gen_gl_q95"}
+    missing = sorted(required - set(metrics.columns))
+    if missing:
+        raise ValueError(f"generalization table is missing columns: {missing}")
+    sub = metrics[metrics["arch"] == architecture].copy()
+    if sub.empty:
+        raise ValueError(f"generalization table has no {architecture} rows")
+    _require_sizes(sub)
+    counts = sub.groupby("dataset_size", observed=True).size()
+    invalid = counts[counts != 1]
+    if not invalid.empty:
+        raise ValueError(
+            f"expected one {architecture} novelty value per size, found {invalid.to_dict()}"
+        )
+    sub["power"] = np.log2(sub["dataset_size"].astype(float))
+    sub = sub.sort_values("power")
+    powers = sub["power"].to_numpy(float)
+    scores = sub["gen_gl_q95"].to_numpy(float)
+    exact = np.flatnonzero(np.isclose(scores, threshold))
+    if len(exact) == 1:
+        return float(powers[exact[0]])
+    if len(exact) > 1:
+        raise ValueError(
+            f"{architecture} novelty curve equals {threshold} at multiple training sizes"
+        )
+    crossings: list[float] = []
+    for left in range(len(powers) - 1):
+        y0, y1 = scores[left], scores[left + 1]
+        if (y0 - threshold) * (y1 - threshold) < 0.0:
+            fraction = (threshold - y0) / (y1 - y0)
+            crossings.append(float(powers[left] + fraction * (powers[left + 1] - powers[left])))
+    if len(crossings) != 1:
+        raise ValueError(
+            f"expected one {architecture} novelty crossing at {threshold}, found {crossings}"
+        )
+    return crossings[0]
+
+
 def build_conditional_recovery_figure(
     points: pd.DataFrame,
     slopes: pd.DataFrame,
+    generalization_metrics: pd.DataFrame,
 ) -> tuple[plt.Figure, pd.DataFrame]:
-    """Return the three-regime calibration view and full transition curve."""
+    """Return a two-regime calibration contrast and the full response transition."""
 
     set_paper_style()
     omega_points, report = _omega_tables(points, slopes)
@@ -125,28 +179,25 @@ def build_conditional_recovery_figure(
     hi = float(max(omega_points["theta_in"].max(), omega_points["theta_rec_q84"].max()))
     pad = 0.055 * max(hi - lo, 1.0e-6)
     limits = (lo - pad, hi + pad)
-    colors = _training_colors()
+    boundary_power = novelty_transition_boundary(generalization_metrics)
+    report.attrs["novelty_boundary_power"] = boundary_power
 
-    figure = plt.figure(figsize=(FULL_W, 1.95))
+    figure = plt.figure(figsize=(FULL_W, 2.4))
     grid = figure.add_gridspec(
         1,
-        4,
-        width_ratios=(1.0, 1.0, 1.0, 1.6),
-        left=0.080,
+        2,
+        width_ratios=(1.0, 1.15),
+        left=0.085,
         right=0.990,
-        bottom=0.255,
-        top=0.950,
-        wspace=0.42,
+        bottom=0.205,
+        top=0.955,
+        wspace=0.34,
     )
-    scatter_axes = [figure.add_subplot(grid[0, 0])]
-    scatter_axes.extend(
-        figure.add_subplot(grid[0, index], sharey=scatter_axes[0]) for index in range(1, 3)
-    )
-    transition_axis = figure.add_subplot(grid[0, 3])
+    calibration_axis = figure.add_subplot(grid[0, 0])
+    transition_axis = figure.add_subplot(grid[0, 1])
 
-    for index, (axis, power, marker) in enumerate(
-        zip(scatter_axes, REPRESENTATIVE_POWERS, REPRESENTATIVE_MARKERS)
-    ):
+    calibration_axis.plot(limits, limits, color="0.38", ls="--", lw=0.9, label="_nolegend_")
+    for index, power in enumerate(REPRESENTATIVE_POWERS):
         dataset_size = 2**power
         sub = omega_points[omega_points["dataset_size"] == dataset_size].sort_values("theta_in")
         row = report[report["dataset_size"] == dataset_size].iloc[0]
@@ -155,14 +206,14 @@ def build_conditional_recovery_figure(
         q16 = sub["theta_rec_q16"].to_numpy(float)
         q84 = sub["theta_rec_q84"].to_numpy(float)
         yerr = np.vstack((np.maximum(y - q16, 0.0), np.maximum(q84 - y, 0.0)))
-        color = colors[dataset_size]
-        axis.plot(limits, limits, color="0.38", ls="--", lw=0.9, label="_nolegend_")
-        axis.errorbar(
+        regime = REGIME_LABELS[power].split()[0]
+        color = REGIME_COLORS[regime]
+        calibration_axis.errorbar(
             x,
             y,
             yerr=yerr,
-            fmt=marker,
-            ms=2.8,
+            fmt="o" if index == 0 else "s",
+            ms=3.0,
             capsize=1.4,
             elinewidth=0.7,
             color=color,
@@ -170,44 +221,58 @@ def build_conditional_recovery_figure(
             markeredgecolor="white",
             markeredgewidth=0.35,
             alpha=0.9,
+            label=REGIME_LABELS[power],
         )
         fit_x = np.asarray(limits)
-        axis.plot(
+        calibration_axis.plot(
             fit_x,
             float(row["slope"]) * fit_x + float(row["intercept"]),
             color=color,
             lw=1.35,
         )
-        axis.set_xlim(limits)
-        axis.set_ylim(limits)
-        axis.text(
+        calibration_axis.text(
             0.05,
-            0.95,
-            rf"$N_{{2D}}=2^{{{power}}}$"
+            0.95 - 0.16 * index,
+            REGIME_LABELS[power]
             + "\n"
-            + rf"slope = {float(row['slope']):.2f}",
-            transform=axis.transAxes,
+            + rf"$N_{{2D}}=2^{{{power}}}$, slope = {float(row['slope']):.2f}",
+            transform=calibration_axis.transAxes,
             ha="left",
             va="top",
             fontsize=7.0,
-            color=INK,
+            color=color,
         )
-        if index == 0:
-            axis.set_ylabel(r"Recovered $\Omega_m$")
-        else:
-            axis.tick_params(labelleft=False)
-        axis.set_xlabel("")
-        style_axis(axis)
+
+    calibration_axis.set_xlim(limits)
+    calibration_axis.set_ylim(limits)
+    calibration_axis.set_xlabel(r"Requested $\Omega_m$")
+    calibration_axis.set_ylabel(r"Recovered $\Omega_m$")
+    style_axis(calibration_axis)
 
     x = np.log2(report["dataset_size"].to_numpy(float))
     y = report["slope"].to_numpy(float)
     lower = np.maximum(y - report["slope_ci16"].to_numpy(float), 0.0)
     upper = np.maximum(report["slope_ci84"].to_numpy(float) - y, 0.0)
+    transition_axis.axvspan(
+        5.65,
+        boundary_power,
+        color=REGIME_COLORS["memorization"],
+        alpha=0.12,
+        lw=0,
+        zorder=0,
+    )
+    transition_axis.axvspan(
+        boundary_power,
+        15.35,
+        color=REGIME_COLORS["generalization"],
+        alpha=0.12,
+        lw=0,
+        zorder=0,
+    )
     transition_axis.axhline(1.0, color="0.38", ls="--", lw=0.9, label="_nolegend_")
-    transition_axis.plot(x, y, color="0.55", lw=0.8, zorder=1)
-    for xpos, value, low, high, dataset_size in zip(
-        x, y, lower, upper, report["dataset_size"].astype(int)
-    ):
+    transition_axis.plot(x, y, color="0.42", lw=0.9, zorder=1)
+    for xpos, value, low, high in zip(x, y, lower, upper):
+        regime = "memorization" if xpos < boundary_power else "generalization"
         transition_axis.errorbar(
             xpos,
             value,
@@ -216,25 +281,47 @@ def build_conditional_recovery_figure(
             ms=3.7,
             capsize=1.8,
             elinewidth=0.8,
-            color=colors[dataset_size],
-            ecolor=colors[dataset_size],
+            color=REGIME_COLORS[regime],
+            ecolor=REGIME_COLORS[regime],
             markeredgecolor="white",
             markeredgewidth=0.35,
             zorder=2,
         )
+    for power, regime in ((7, "memorization"), (14, "generalization")):
+        transition_axis.plot(
+            [power],
+            [0.015],
+            marker="v",
+            ms=4.5,
+            color=REGIME_COLORS[regime],
+            transform=transition_axis.get_xaxis_transform(),
+            clip_on=False,
+            zorder=4,
+        )
+    transition_axis.text(
+        (5.65 + boundary_power) / 2.0,
+        0.94,
+        "memorization",
+        color=REGIME_COLORS["memorization"],
+        fontsize=7.0,
+        ha="center",
+        va="top",
+        transform=transition_axis.get_xaxis_transform(),
+    )
+    transition_axis.text(
+        (boundary_power + 15.35) / 2.0,
+        0.94,
+        "generalization",
+        color=REGIME_COLORS["generalization"],
+        fontsize=7.0,
+        ha="center",
+        va="top",
+        transform=transition_axis.get_xaxis_transform(),
+    )
     style_training_size_axis(transition_axis, label_every=2)
     transition_axis.set_xlabel(r"Training images $N_{2D}$")
-    transition_axis.set_ylabel(r"$\Omega_m$ response slope", labelpad=0)
+    transition_axis.set_ylabel(r"$\Omega_m$ response slope")
     transition_axis.set_ylim(bottom=min(0.0, float(report["slope_ci16"].min()) - 0.04), top=1.05)
-    scatter_left = scatter_axes[0].get_position().x0
-    scatter_right = scatter_axes[-1].get_position().x1
-    figure.text(
-        (scatter_left + scatter_right) / 2.0,
-        0.055,
-        r"Requested $\Omega_m$",
-        ha="center",
-        va="center",
-    )
     return figure, report
 
 
