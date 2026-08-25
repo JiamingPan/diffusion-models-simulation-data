@@ -99,66 +99,77 @@ def test_paper_style_sets_vector_text_and_full_width():
     assert plt.rcParams["xtick.labelsize"] == pytest.approx(8.0)
 
 
-def test_conditional_figure_has_shared_scatter_limits_and_exact_training_axis(tmp_path):
+def test_conditional_figure_contrasts_two_regimes_and_shows_novelty_boundary(tmp_path):
     plotting = _module()
     points, slopes = _conditional_tables()
+    generalization = _generalization_table()
     output = tmp_path / "conditional_recovery_transition.pdf"
 
-    figure, report = plotting.build_conditional_recovery_figure(points, slopes)
+    figure, report = plotting.build_conditional_recovery_figure(
+        points,
+        slopes,
+        generalization,
+    )
     try:
         assert figure.get_size_inches()[0] == pytest.approx(6.75)
-        assert figure.get_size_inches()[1] == pytest.approx(1.95)
+        assert figure.get_size_inches()[1] == pytest.approx(2.4)
         assert figure._suptitle is None
-        assert len(figure.axes) == 4
-        limits = [(axis.get_xlim(), axis.get_ylim()) for axis in figure.axes[:3]]
-        assert limits[0] == limits[1] == limits[2]
+        assert len(figure.axes) == 2
         assert all(axis.get_title() == "" for axis in figure.axes)
         for axis in figure.axes:
             _assert_paper_axis(axis)
-        transition_axis = figure.axes[-1]
+
+        calibration_axis, transition_axis = figure.axes
+        assert calibration_axis.get_xlabel() == r"Requested $\Omega_m$"
+        assert calibration_axis.get_ylabel() == r"Recovered $\Omega_m$"
+        annotation_text = "\n".join(text.get_text() for text in calibration_axis.texts)
+        assert "memorization regime" in annotation_text
+        assert "generalization regime" in annotation_text
+        assert r"$N_{2D}=2^{7}$" in annotation_text
+        assert r"$N_{2D}=2^{14}$" in annotation_text
+        assert "slope = 0.30" in annotation_text
+        assert "slope = 0.69" in annotation_text
+        assert all(text.get_fontsize() == pytest.approx(7.0) for text in calibration_axis.texts)
+        assert len(calibration_axis.collections) == 2
+        fit_colors = {
+            line.get_color()
+            for line in calibration_axis.lines
+            if line.get_linestyle() == "-"
+        }
+        assert set(plotting.REGIME_COLORS.values()).issubset(fit_colors)
+
         assert transition_axis.get_xlim() == pytest.approx((5.65, 15.35))
         assert transition_axis.get_xticks().tolist() == list(range(6, 16))
         assert [tick.get_text() for tick in transition_axis.get_xticklabels()] == [
             rf"$2^{{{power}}}$" if power % 2 == 0 else "" for power in range(6, 16)
         ]
         assert all(tick.get_rotation() == 0 for tick in transition_axis.get_xticklabels())
-        assert all(axis.get_xlabel() == "" for axis in figure.axes[:3])
         assert transition_axis.get_ylabel() == r"$\Omega_m$ response slope"
-        assert transition_axis.yaxis.labelpad == pytest.approx(0.0)
-        scatter_positions = [axis.get_position() for axis in figure.axes[:3]]
-        assert max(position.y0 for position in scatter_positions) == pytest.approx(
-            min(position.y0 for position in scatter_positions)
-        )
-        assert transition_axis.get_position().y0 == pytest.approx(scatter_positions[0].y0)
-        assert transition_axis.get_position().x0 > scatter_positions[-1].x1
-        assert transition_axis.get_position().width > max(
-            position.width for position in scatter_positions
-        )
-        figure.canvas.draw()
-        renderer = figure.canvas.get_renderer()
-        third_axis_box = figure.axes[2].get_window_extent(renderer)
-        transition_label_box = transition_axis.yaxis.label.get_window_extent(renderer)
-        assert transition_label_box.x0 >= third_axis_box.x1 + 2.0
-        shared_labels = [
-            text for text in figure.texts if text.get_text() == r"Requested $\Omega_m$"
+        assert transition_axis.get_xlabel() == r"Training images $N_{2D}$"
+        assert transition_axis.get_position().width > calibration_axis.get_position().width
+
+        # Synthetic U-Net-128 q95 values cross 0.5 exactly at log2(N)=9.
+        assert report.attrs["novelty_boundary_power"] == pytest.approx(9.0)
+        assert len(transition_axis.patches) == 2
+        spans = [
+            (patch.get_x(), patch.get_x() + patch.get_width())
+            for patch in transition_axis.patches
         ]
-        assert len(shared_labels) == 1
-        scatter_center = (
-            figure.axes[0].get_position().x0 + figure.axes[2].get_position().x1
-        ) / 2.0
-        assert shared_labels[0].get_position()[0] == pytest.approx(scatter_center, abs=0.01)
-        annotation_text = "\n".join(
-            text.get_text() for axis in figure.axes[:3] for text in axis.texts
-        )
-        assert "slope = 0.25" in annotation_text
-        assert all(
-            text.get_fontsize() == pytest.approx(7.0)
-            for axis in figure.axes[:3]
-            for text in axis.texts
-        )
-        assert "(a)" not in annotation_text
-        assert "(b)" not in "\n".join(
-            text.get_text() for axis in figure.axes for text in axis.texts
+        assert spans[0] == pytest.approx((5.65, 9.0))
+        assert spans[1] == pytest.approx((9.0, 15.35))
+        assert all(patch.get_alpha() == pytest.approx(0.12) for patch in transition_axis.patches)
+        transition_text = "\n".join(text.get_text() for text in transition_axis.texts)
+        assert "memorization" in transition_text
+        assert "generalization" in transition_text
+
+        example_markers = [
+            line
+            for line in transition_axis.lines
+            if line.get_marker() == "v" and line.get_markersize() > 0
+        ]
+        assert {float(line.get_xdata()[0]) for line in example_markers} == {7.0, 14.0}
+        assert {line.get_color() for line in example_markers} == set(
+            plotting.REGIME_COLORS.values()
         )
         assert report["dataset_size"].tolist() == [2**power for power in range(6, 16)]
         assert report.loc[0, "slope"] == pytest.approx(0.25)
@@ -175,7 +186,25 @@ def test_conditional_figure_fails_closed_if_any_training_size_is_missing():
     points, slopes = _conditional_tables()
     incomplete = slopes[slopes["dataset_size"] != 2**11]
     with pytest.raises(ValueError, match="missing dataset sizes"):
-        plotting.build_conditional_recovery_figure(points, incomplete)
+        plotting.build_conditional_recovery_figure(
+            points,
+            incomplete,
+            _generalization_table(),
+        )
+
+
+def test_novelty_boundary_is_interpolated_from_unet128_q95_curve():
+    plotting = _module()
+    metrics = _generalization_table()
+    metrics.loc[
+        (metrics["arch"] == "u128") & (metrics["dataset_size"] == 2**9),
+        "gen_gl_q95",
+    ] = 0.25
+    metrics.loc[
+        (metrics["arch"] == "u128") & (metrics["dataset_size"] == 2**10),
+        "gen_gl_q95",
+    ] = 0.75
+    assert plotting.novelty_transition_boundary(metrics) == pytest.approx(9.5)
 
 
 def test_generalization_figure_uses_the_identical_training_axis(tmp_path):
@@ -264,6 +293,8 @@ def test_results_notebook_contains_idempotent_paper_figure_section(tmp_path):
     assert "slope_ci16" in source_text and "slope_ci84" in source_text
     assert "paper_dimensions" in source_text
     assert "plot_nf_conditional_bias_paper_figures" in source_text
+    assert "paper_generalization" in source_text
+    assert "paper_points,\n    paper_slopes,\n    paper_generalization" in source_text
 
 
 def test_results_notebook_displays_every_paper_figure_inline_before_closing(tmp_path):
