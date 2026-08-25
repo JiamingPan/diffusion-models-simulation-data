@@ -99,17 +99,12 @@ def test_paper_style_sets_vector_text_and_full_width():
     assert plt.rcParams["xtick.labelsize"] == pytest.approx(8.0)
 
 
-def test_conditional_figure_contrasts_two_regimes_and_shows_novelty_boundary(tmp_path):
+def test_conditional_figure_contrasts_two_regimes_and_highlights_matching_curve_points(tmp_path):
     plotting = _module()
     points, slopes = _conditional_tables()
-    generalization = _generalization_table()
     output = tmp_path / "conditional_recovery_transition.pdf"
 
-    figure, report = plotting.build_conditional_recovery_figure(
-        points,
-        slopes,
-        generalization,
-    )
+    figure, report = plotting.build_conditional_recovery_figure(points, slopes)
     try:
         assert figure.get_size_inches()[0] == pytest.approx(6.75)
         assert figure.get_size_inches()[1] == pytest.approx(2.4)
@@ -148,29 +143,38 @@ def test_conditional_figure_contrasts_two_regimes_and_shows_novelty_boundary(tmp
         assert transition_axis.get_xlabel() == r"Training images $N_{2D}$"
         assert transition_axis.get_position().width > calibration_axis.get_position().width
 
-        # Synthetic U-Net-128 q95 values cross 0.5 exactly at log2(N)=9.
-        assert report.attrs["novelty_boundary_power"] == pytest.approx(9.0)
-        assert len(transition_axis.patches) == 2
-        spans = [
-            (patch.get_x(), patch.get_x() + patch.get_width())
-            for patch in transition_axis.patches
-        ]
-        assert spans[0] == pytest.approx((5.65, 9.0))
-        assert spans[1] == pytest.approx((9.0, 15.35))
-        assert all(patch.get_alpha() == pytest.approx(0.12) for patch in transition_axis.patches)
+        assert len(transition_axis.patches) == 0
         transition_text = "\n".join(text.get_text() for text in transition_axis.texts)
-        assert "memorization" in transition_text
-        assert "generalization" in transition_text
+        assert "memorization" not in transition_text
+        assert "generalization" not in transition_text
+        assert set(transition_text.splitlines()) == {r"$2^{7}$", r"$2^{14}$"}
 
-        example_markers = [
+        axis_triangles = [
             line
             for line in transition_axis.lines
             if line.get_marker() == "v" and line.get_markersize() > 0
         ]
-        assert {float(line.get_xdata()[0]) for line in example_markers} == {7.0, 14.0}
-        assert {line.get_color() for line in example_markers} == set(
+        assert axis_triangles == []
+        neutral_points = [
+            line
+            for line in transition_axis.lines
+            if line.get_marker() == "o"
+            and line.get_markersize() == pytest.approx(3.7)
+        ]
+        assert len(neutral_points) == 10
+        assert {line.get_color() for line in neutral_points} == {plotting.TRANSITION_COLOR}
+        highlighted_points = [
+            line
+            for line in transition_axis.lines
+            if line.get_markersize() == pytest.approx(5.2)
+        ]
+        assert {float(line.get_xdata()[0]) for line in highlighted_points} == {7.0, 14.0}
+        assert {line.get_color() for line in highlighted_points} == set(
             plotting.REGIME_COLORS.values()
         )
+        assert {
+            text.get_color() for text in transition_axis.texts
+        } == set(plotting.REGIME_COLORS.values())
         assert report["dataset_size"].tolist() == [2**power for power in range(6, 16)]
         assert report.loc[0, "slope"] == pytest.approx(0.25)
         assert report.loc[9, "slope_ci84"] == pytest.approx(0.25 + 0.055 * 9 + 0.045)
@@ -189,22 +193,7 @@ def test_conditional_figure_fails_closed_if_any_training_size_is_missing():
         plotting.build_conditional_recovery_figure(
             points,
             incomplete,
-            _generalization_table(),
         )
-
-
-def test_novelty_boundary_is_interpolated_from_unet128_q95_curve():
-    plotting = _module()
-    metrics = _generalization_table()
-    metrics.loc[
-        (metrics["arch"] == "u128") & (metrics["dataset_size"] == 2**9),
-        "gen_gl_q95",
-    ] = 0.25
-    metrics.loc[
-        (metrics["arch"] == "u128") & (metrics["dataset_size"] == 2**10),
-        "gen_gl_q95",
-    ] = 0.75
-    assert plotting.novelty_transition_boundary(metrics) == pytest.approx(9.5)
 
 
 def test_generalization_figure_uses_the_identical_training_axis(tmp_path):
@@ -294,7 +283,8 @@ def test_results_notebook_contains_idempotent_paper_figure_section(tmp_path):
     assert "paper_dimensions" in source_text
     assert "plot_nf_conditional_bias_paper_figures" in source_text
     assert "paper_generalization" in source_text
-    assert "paper_points,\n    paper_slopes,\n    paper_generalization" in source_text
+    assert "paper_points,\n    paper_slopes,\n)" in source_text
+    assert "paper_points,\n    paper_slopes,\n    paper_generalization" not in source_text
 
 
 def test_results_notebook_displays_every_paper_figure_inline_before_closing(tmp_path):

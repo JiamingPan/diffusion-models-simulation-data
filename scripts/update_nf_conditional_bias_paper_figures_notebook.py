@@ -32,7 +32,7 @@ def _cells() -> list[dict]:
 This cell exports the conditional-recovery result and its two comparison figures at the exact paper width.
 It reads the completed ten-size calibration tables without refitting or changing any data selection. The
 conditional figure contrasts the saved $N_{2D}=2^7$ memorization and $N_{2D}=2^{14}$ generalization runs,
-then shows all ten response slopes against the data-derived U-Net-128 novelty boundary. It also saves the
+then highlights those same two training sizes on the neutral all-ten response-slope curve. It also saves the
 frozen VGG16+MLP heldout-real slope/$R^2$ summary used to establish which conditional directions the probe
 can verify.
 """,
@@ -103,7 +103,6 @@ paper_generalization = pd.read_csv(paper_inputs['generalization'])
 conditional_figure, conditional_slope_report = build_conditional_recovery_figure(
     paper_points,
     paper_slopes,
-    paper_generalization,
 )
 paper_dimensions = {
     'conditional': save_figure(conditional_figure, paper_outputs['conditional'])
