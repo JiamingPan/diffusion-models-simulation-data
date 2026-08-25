@@ -215,7 +215,7 @@ def build_conditional_recovery_figure(
         )
     style_training_size_axis(transition_axis)
     transition_axis.set_xlabel(r"Training images $N_{2D}$")
-    transition_axis.set_ylabel("Slope", labelpad=2)
+    transition_axis.set_ylabel(r"$\Omega_m$ response slope", labelpad=2)
     transition_axis.set_ylim(bottom=min(0.0, float(report["slope_ci16"].min()) - 0.04), top=1.05)
     scatter_left = scatter_axes[0].get_position().x0
     scatter_right = scatter_axes[-1].get_position().x1

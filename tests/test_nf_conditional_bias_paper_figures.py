@@ -123,7 +123,7 @@ def test_conditional_figure_has_shared_scatter_limits_and_exact_training_axis(tm
         ]
         assert all(tick.get_rotation() == 0 for tick in transition_axis.get_xticklabels())
         assert all(axis.get_xlabel() == "" for axis in figure.axes[:3])
-        assert transition_axis.get_ylabel() == "Slope"
+        assert transition_axis.get_ylabel() == r"$\Omega_m$ response slope"
         shared_labels = [
             text for text in figure.texts if text.get_text() == r"Requested $\Omega_m$"
         ]
