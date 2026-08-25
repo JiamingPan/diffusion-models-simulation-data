@@ -121,16 +121,16 @@ def build_conditional_recovery_figure(
     limits = (lo - pad, hi + pad)
     colors = _training_colors()
 
-    figure = plt.figure(figsize=(FULL_W, 2.45))
+    figure = plt.figure(figsize=(FULL_W, 2.80))
     grid = figure.add_gridspec(
         1,
         4,
-        width_ratios=(0.92, 0.92, 0.92, 2.20),
-        left=0.085,
+        width_ratios=(1.0, 1.0, 1.0, 2.05),
+        left=0.080,
         right=0.985,
-        bottom=0.22,
-        top=0.95,
-        wspace=0.23,
+        bottom=0.205,
+        top=0.935,
+        wspace=0.27,
     )
     scatter_axes = [figure.add_subplot(grid[0, index]) for index in range(3)]
     transition_axis = figure.add_subplot(grid[0, 3])
@@ -174,7 +174,9 @@ def build_conditional_recovery_figure(
         axis.text(
             0.05,
             0.95,
-            rf"$N_{{2D}}=2^{{{power}}}$" + "\n" + rf"$s={float(row['slope']):.2f}$",
+            rf"$N_{{2D}}=2^{{{power}}}$"
+            + "\n"
+            + rf"slope = {float(row['slope']):.2f}",
             transform=axis.transAxes,
             ha="left",
             va="top",
@@ -182,11 +184,10 @@ def build_conditional_recovery_figure(
             color=INK,
         )
         if index == 0:
-            axis.set_xlabel(r"Requested $\Omega_m$")
             axis.set_ylabel(r"Recovered $\Omega_m$")
         else:
             axis.tick_params(labelleft=False)
-            axis.set_xlabel("")
+        axis.set_xlabel("")
         style_axis(axis)
 
     x = np.log2(report["dataset_size"].to_numpy(float))
@@ -214,10 +215,37 @@ def build_conditional_recovery_figure(
         )
     style_training_size_axis(transition_axis)
     transition_axis.set_xlabel(r"Training images $N_{2D}$")
-    transition_axis.set_ylabel(r"$\Omega_m$ response slope", labelpad=2)
+    transition_axis.set_ylabel("Slope", labelpad=2)
     transition_axis.set_ylim(bottom=min(0.0, float(report["slope_ci16"].min()) - 0.04), top=1.05)
-    scatter_axes[0].text(0.01, 1.02, "(a)", transform=scatter_axes[0].transAxes, fontweight="bold")
-    transition_axis.text(0.01, 1.02, "(b)", transform=transition_axis.transAxes, fontweight="bold")
+    scatter_left = scatter_axes[0].get_position().x0
+    scatter_right = scatter_axes[-1].get_position().x1
+    figure.text(
+        (scatter_left + scatter_right) / 2.0,
+        0.070,
+        r"Requested $\Omega_m$",
+        ha="center",
+        va="center",
+    )
+    scatter_axes[0].text(
+        0.0,
+        1.025,
+        "(a)",
+        transform=scatter_axes[0].transAxes,
+        ha="left",
+        va="bottom",
+        fontsize=8.5,
+        fontweight="bold",
+    )
+    transition_axis.text(
+        0.0,
+        1.025,
+        "(b)",
+        transform=transition_axis.transAxes,
+        ha="left",
+        va="bottom",
+        fontsize=8.5,
+        fontweight="bold",
+    )
     return figure, report
 
 
