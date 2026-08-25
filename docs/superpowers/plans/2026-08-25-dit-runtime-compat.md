@@ -318,11 +318,11 @@ Path(torch.__file__).resolve().is_relative_to(expected_torch_prefix.resolve())
 Path(sklearn.__file__).resolve().is_relative_to(runtime_root.resolve())
 ```
 
-Require all cosmodiff module files under `pin_root`; require the canonical module and auditor under `code_root`; reject loaded modules or `sys.path` entries under an incompatible root. On failure, print Torch, sklearn, sitecustomize, Python executable, and complete `sys.path` values before raising.
+Require all cosmodiff module files under `pin_root`; require the canonical module and auditor under `code_root`; reject Torch, sklearn, or NumPy when their resolved module files are under an incompatible root. Print the complete `sys.path` for diagnosis, but do not reject a path merely for being present because the class environment deliberately exposes selected base-environment dependencies such as `accelerate`.
 
 - [ ] **Step 5: Add negative audit tests**
 
-Cover wrong Torch prefix, sklearn from a fake Anaconda path, cosmodiff outside the pin, generated sitecustomize not selected, a missing Hub symbol, missing source-tree package metadata, and NumPy under an incompatible root. Assert each error names the offending path or symbol.
+Cover wrong Torch prefix, sklearn from a fake Anaconda path, cosmodiff outside the pin, generated sitecustomize not selected, a missing Hub symbol, and NumPy under an incompatible root. Assert each error names the offending path or symbol. Package-metadata fallback is verified through the mandatory first pin patch and the resulting `cosmodiff.__version__`, not by requiring a `.dist-info` directory in the source pin.
 
 - [ ] **Step 6: Add production subprocess argument guards**
 
