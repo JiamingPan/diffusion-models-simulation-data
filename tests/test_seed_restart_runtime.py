@@ -22,6 +22,10 @@ def _write_fake_torch_and_diffusers(root: Path) -> None:
         "float16 = 'float16'\n"
         "uint8 = 'uint8'\n"
     )
+    (root / "diffusers/__init__.py").write_text(
+        "import torch\n"
+        "DEVICE_EMPTY_CACHE = {'xpu': torch.xpu.empty_cache}\n"
+    )
 
 
 def _write_runtime_audit_fixture(tmp_path: Path):
@@ -65,10 +69,6 @@ def _write_runtime_audit_fixture(tmp_path: Path):
         entry_point="tests.runtime_audit.sitecustomize",
     )
     return runtime_root, pin_root, fixture_root
-    (root / "diffusers/__init__.py").write_text(
-        "import torch\n"
-        "DEVICE_EMPTY_CACHE = {'xpu': torch.xpu.empty_cache}\n"
-    )
 
 
 def _run_child(program: str, *python_paths: Path) -> subprocess.CompletedProcess[str]:
