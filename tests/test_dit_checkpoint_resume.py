@@ -1,8 +1,10 @@
 import importlib.util
+import io
 import pickle
 import random
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -362,10 +364,84 @@ class DitCheckpointResumeTests(unittest.TestCase):
             }
         )
         module.install_constant_label_adapter(utils)
-        output = utils.parse_config_data({"data": {"constant_label": 0}})
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            output = utils.parse_config_data({"data": {"constant_label": 0}})
 
         self.assertTrue(torch.equal(output["data"].labels, torch.zeros(3, dtype=torch.long)))
         self.assertIsNone(output["norm"])
+        self.assertIn(
+            "[constant-label] path=legacy_injected dtype=torch.int64 length=3 unique=[0]",
+            stdout.getvalue(),
+        )
+
+    def test_constant_label_adapter_accepts_recent_cosmodiff_labels_as_noop(self):
+        module = load_wrapper_module()
+
+        class Dataset:
+            def __init__(self):
+                self.arrays = torch.zeros(3, 1, 2, 2)
+                self.labels = torch.zeros(3, dtype=torch.long)
+
+            def __len__(self):
+                return len(self.arrays)
+
+        dataset = Dataset()
+        original_labels = dataset.labels
+        utils = SimpleNamespace(
+            parse_config_data=lambda config: {
+                "data": dataset,
+                "norm": None,
+                "tform": None,
+            }
+        )
+        module.install_constant_label_adapter(utils)
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            output = utils.parse_config_data({"data": {"constant_label": 0}})
+
+        self.assertIs(output["data"].labels, original_labels)
+        self.assertIn(
+            "[constant-label] path=existing_constant_noop "
+            "dtype=torch.int64 length=3 unique=[0]",
+            stdout.getvalue(),
+        )
+
+    def test_constant_label_adapter_refuses_genuine_multivalued_labels(self):
+        module = load_wrapper_module()
+
+        class Dataset:
+            def __init__(self):
+                self.arrays = torch.zeros(3, 1, 2, 2)
+                self.labels = torch.tensor([0, 1, 0], dtype=torch.long)
+
+            def __len__(self):
+                return len(self.arrays)
+
+        dataset = Dataset()
+        original_labels = dataset.labels
+        utils = SimpleNamespace(
+            parse_config_data=lambda config: {
+                "data": dataset,
+                "norm": None,
+                "tform": None,
+            }
+        )
+        module.install_constant_label_adapter(utils)
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Refusing to replace existing dataset labels",
+            ):
+                utils.parse_config_data({"data": {"constant_label": 0}})
+
+        self.assertIs(dataset.labels, original_labels)
+        self.assertIn(
+            "[constant-label] path=conflict_refused "
+            "dtype=torch.int64 length=3 unique=[0, 1]",
+            stdout.getvalue(),
+        )
 
     def test_seed_restart_exact_target_adapter_does_not_repeat_ema_burnin(self):
         module = load_wrapper_module()

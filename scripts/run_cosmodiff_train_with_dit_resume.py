@@ -254,6 +254,20 @@ def install_constant_label_adapter(utils_module) -> None:
     def parse_config_data_with_constant_label(config):
         import torch
 
+        def describe(labels):
+            tensor = torch.as_tensor(labels)
+            length = len(labels) if tensor.ndim > 0 else 0
+            unique = [value.item() for value in torch.unique(tensor.detach().cpu())]
+            return tensor, length, unique
+
+        def log_path(path, labels):
+            tensor, length, unique = describe(labels)
+            print(
+                f"[constant-label] path={path} dtype={tensor.dtype} "
+                f"length={length} unique={unique}",
+                flush=True,
+            )
+
         output = original_parse_config_data(config)
         constant_label = config.get("data", {}).get("constant_label")
         dataset = output.get("data")
@@ -262,16 +276,31 @@ def install_constant_label_adapter(utils_module) -> None:
                 raise RuntimeError(
                     "data.constant_label requires an ArrayDataset-like object with arrays and labels"
                 )
-            if dataset.labels is not None:
-                raise RuntimeError(
-                    "Refusing to replace existing dataset labels with data.constant_label"
+            expected_length = len(dataset.arrays)
+            if dataset.labels is None:
+                dataset.labels = torch.full(
+                    (expected_length,),
+                    int(constant_label),
+                    dtype=torch.long,
+                    device=dataset.arrays.device,
                 )
-            dataset.labels = torch.full(
-                (len(dataset),),
-                int(constant_label),
-                dtype=torch.long,
-                device=dataset.arrays.device,
+                log_path("legacy_injected", dataset.labels)
+                return output
+
+            labels, label_length, _unique = describe(dataset.labels)
+            matches_requested_constant = (
+                label_length == expected_length
+                and labels.numel() == expected_length
+                and bool(torch.all(labels == int(constant_label)).item())
             )
+            if matches_requested_constant:
+                log_path("existing_constant_noop", dataset.labels)
+            else:
+                log_path("conflict_refused", dataset.labels)
+                raise RuntimeError(
+                    "Refusing to replace existing dataset labels with "
+                    "data.constant_label: labels differ in length or value"
+                )
         return output
 
     utils_module.parse_config_data = parse_config_data_with_constant_label

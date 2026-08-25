@@ -62,7 +62,10 @@ def load_path_module(path: Path, name: str):
 
 
 def make_pin_source_repo(
-    tmp_path: Path, *, required_runtime_module: str | None = None
+    tmp_path: Path,
+    *,
+    required_runtime_module: str | None = None,
+    native_constant_label_support: bool = False,
 ) -> tuple[Path, str]:
     source = tmp_path / "cosmodiff_source"
     package = source / "cosmodiff"
@@ -73,8 +76,18 @@ def make_pin_source_repo(
     (package / "__init__.py").write_text(
         runtime_import + '__version__ = "0+fixture"\n'
     )
-    for name in ("optim", "utils", "augment", "transform"):
+    for name in ("optim", "augment", "transform"):
         (package / f"{name}.py").write_text(f'VALUE = "{name}"\n')
+    utils_source = 'VALUE = "utils"\n'
+    if native_constant_label_support:
+        utils_source += (
+            "def apply_constant_label(data_cfg, labels, images):\n"
+            '    constant_label = data_cfg.get("constant_label", None)\n'
+            "    if labels is None and constant_label is not None:\n"
+            "        labels = [int(constant_label)] * len(images)\n"
+            "    return labels\n"
+        )
+    (package / "utils.py").write_text(utils_source)
     (source / "scripts").mkdir()
     (source / "scripts/cosmodiff_train.py").write_text("print('fixture')\n")
     subprocess.run(["git", "init", "-q"], cwd=source, check=True)
@@ -104,12 +117,30 @@ def make_pin_patch_scripts(tmp_path: Path) -> list[Path]:
     paths = []
     for index, (name, target) in enumerate(targets.items(), start=1):
         path = patch_root / name
-        path.write_text(
-            "from pathlib import Path\n"
-            "import sys\n"
-            f"path = Path(sys.argv[1]) / {target!r}\n"
-            f"path.write_text(path.read_text() + '# patch {index}\\n')\n"
-        )
+        if name == "patch_cosmodiff_constant_label.py":
+            path.write_text(
+                "from pathlib import Path\n"
+                "import sys\n"
+                f"path = Path(sys.argv[1]) / {target!r}\n"
+                "source = path.read_text()\n"
+                'fragment = \'constant_label = data_cfg.get("constant_label", None)\'\n'
+                "if fragment not in source:\n"
+                "    source += (\n"
+                "        '\\ndef apply_constant_label(data_cfg, labels, images):\\n'\n"
+                "        '    constant_label = data_cfg.get(\\\"constant_label\\\", None)\\n'\n"
+                "        '    if labels is None and constant_label is not None:\\n'\n"
+                "        '        labels = [int(constant_label)] * len(images)\\n'\n"
+                "        '    return labels\\n'\n"
+                "    )\n"
+                "    path.write_text(source)\n"
+            )
+        else:
+            path.write_text(
+                "from pathlib import Path\n"
+                "import sys\n"
+                f"path = Path(sys.argv[1]) / {target!r}\n"
+                f"path.write_text(path.read_text() + '# patch {index}\\n')\n"
+            )
         paths.append(path)
     return paths
 
@@ -191,7 +222,13 @@ def test_immutable_pin_builder_records_ordered_patches_imports_and_inventory(tmp
         "cosmodiff.transform",
     }
     assert manifest["cosmodiff_version"] == "0+fixture"
-    assert manifest["pin_schema_version"] == 2
+    assert manifest["pin_schema_version"] == 3
+    assert manifest["constant_label_support"] == {
+        "effective_in_published_pin": True,
+        "native_in_base_revision": False,
+        "provenance": "patch_cosmodiff_constant_label.py",
+        "utils_path": "cosmodiff/utils.py",
+    }
     runtime = manifest["runtime_compatibility"]
     assert runtime["schema_version"] == 1
     assert runtime["runtime_root"] == "seed_restart_runtime"
@@ -225,6 +262,53 @@ def test_immutable_pin_builder_records_ordered_patches_imports_and_inventory(tmp
         approved_residual_paths=(third_party,),
         check_source_contract=False,
     )["base_revision"] == revision
+
+
+def test_pin_manifest_records_native_constant_label_support(tmp_path):
+    builder = load_path_module(PIN_BUILDER_SCRIPT, "pin_builder_native_labels")
+    verifier = load_path_module(PIN_VERIFY_SCRIPT, "pin_verifier_native_labels")
+    source, revision = make_pin_source_repo(
+        tmp_path,
+        native_constant_label_support=True,
+    )
+    patches = make_pin_patch_scripts(tmp_path)
+    third_party = make_pin_third_party_runtime(tmp_path)
+    destination = tmp_path / "published_pin"
+
+    manifest = builder.build_pin(
+        source_repo=source,
+        base_revision=revision,
+        destination=destination,
+        python_bin=Path(sys.executable),
+        patch_scripts=patches,
+        code_root=REPO_ROOT,
+        expected_torch_prefix=Path(sys.prefix),
+        approved_residual_paths=(third_party,),
+    )
+
+    assert manifest["constant_label_support"] == {
+        "effective_in_published_pin": True,
+        "native_in_base_revision": True,
+        "provenance": "base_revision",
+        "utils_path": "cosmodiff/utils.py",
+    }
+    constant_patch = next(
+        row
+        for row in manifest["patches"]
+        if row["name"] == "patch_cosmodiff_constant_label.py"
+    )
+    assert constant_patch["status"] == "already_supported"
+    assert verifier.verify_pin(
+        destination,
+        destination / builder.PIN_MANIFEST_NAME,
+        expected_base_revision=revision,
+        python_bin=Path(sys.executable),
+        expected_patch_scripts=patches,
+        code_root=REPO_ROOT,
+        expected_torch_prefix=Path(sys.prefix),
+        approved_residual_paths=(third_party,),
+        check_source_contract=False,
+    )["constant_label_support"]["native_in_base_revision"] is True
 
 
 def test_pin_builder_and_verifier_preserve_virtualenv_python_symlink(tmp_path):
