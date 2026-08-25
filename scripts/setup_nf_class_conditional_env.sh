@@ -11,6 +11,7 @@ TORCH_CUDA_INDEX_URL=${TORCH_CUDA_INDEX_URL:-https://download.pytorch.org/whl/cu
 NUMPY_VERSION=${NUMPY_VERSION:-1.26.4}
 SCIPY_VERSION=${SCIPY_VERSION:-1.11.4}
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+PROJECT_DIR=$(cd "${SCRIPT_DIR}/.." && pwd)
 source "${SCRIPT_DIR}/nf_class_conditional_pythonpath.sh"
 
 if [[ ! -x "${BASE_VENV_PATH}/bin/python" ]]; then
@@ -37,6 +38,7 @@ fi
 "${CLASS_VENV_PATH}/bin/python" -m pip install --upgrade --no-deps "diffusers==${DIFFUSERS_VERSION}"
 
 set_nf_class_conditional_pythonpath "${CLASS_VENV_PATH}/bin/python" "${BASE_VENV_PATH}"
+export PYTHONPATH="${PROJECT_DIR}:${PYTHONPATH:-}"
 echo "Class package path:    ${NF_CLASS_CONDITIONAL_CLASS_SITES}"
 echo "Base package fallback: ${NF_CLASS_CONDITIONAL_BASE_SITES}"
 echo "PYTHONPATH:            ${PYTHONPATH:-<empty>}"
@@ -48,125 +50,11 @@ from pathlib import Path
 
 expected = os.environ["DIFFUSERS_VERSION"]
 
-import torch
-
-from contextlib import nullcontext
 from importlib.machinery import ModuleSpec
-from types import ModuleType, SimpleNamespace
+from types import ModuleType
+from simdiff_eval.torch_compat import install_torch_backend_compat
 
-
-class _OptionalDeviceStub:
-    def is_available(self): return False
-    def device_count(self): return 0
-    def empty_cache(self): return None
-    def _is_compiled(self): return False
-    def current_device(self): return 0
-    def set_device(self, *args, **kwargs): return None
-    def synchronize(self, *args, **kwargs): return None
-    def manual_seed(self, *args, **kwargs): return None
-    def manual_seed_all(self, *args, **kwargs): return None
-    def seed(self, *args, **kwargs): return 0
-    def initial_seed(self, *args, **kwargs): return 0
-    def get_rng_state(self, *args, **kwargs): return None
-    def set_rng_state(self, *args, **kwargs): return None
-    def is_built(self, *args, **kwargs): return False
-    def current_stream(self, *args, **kwargs): return None
-    def stream(self, *args, **kwargs): return nullcontext()
-    def device(self, *args, **kwargs): return nullcontext()
-    def memory_allocated(self, *args, **kwargs): return 0
-    def max_memory_allocated(self, *args, **kwargs): return 0
-    def reset_peak_memory_stats(self, *args, **kwargs): return None
-    def get_device_name(self, *args, **kwargs): return "optional-device-unavailable"
-    def get_device_properties(self, *args, **kwargs): return None
-    def __getattr__(self, name):
-        def missing(*args, **kwargs):
-            if name.startswith("is_"):
-                return False
-            return None
-        return missing
-
-
-class _CompilerStub:
-    def disable(self, fn=None, recursive=True):
-        if fn is None:
-            return lambda inner: inner
-        return fn
-    def is_compiling(self): return False
-    def is_exporting(self): return False
-
-
-_stub = _OptionalDeviceStub()
-_required = ("empty_cache", "is_available", "device_count", "manual_seed")
-for _backend in ("xpu", "mps"):
-    _existing = getattr(torch, _backend, None)
-    if _existing is None or any(not hasattr(_existing, _name) for _name in _required):
-        setattr(torch, _backend, _stub)
-        continue
-    for _name in dir(_stub):
-        if _name.startswith("__"):
-            continue
-        if not hasattr(_existing, _name):
-            setattr(_existing, _name, getattr(_stub, _name))
-for _name in (
-    "float8_e4m3fn",
-    "float8_e4m3fnuz",
-    "float8_e5m2",
-    "float8_e5m2fnuz",
-    "float8_e8m0fnu",
-    "float4_e2m1fn_x2",
-):
-    if not hasattr(torch, _name):
-        setattr(torch, _name, torch.float16)
-for _bits in range(1, 8):
-    _name = f"uint{_bits}"
-    if not hasattr(torch, _name):
-        setattr(torch, _name, torch.uint8)
-_compiler_stub = _CompilerStub()
-_compiler = getattr(torch, "compiler", None)
-if _compiler is None:
-    torch.compiler = _compiler_stub
-else:
-    for _name in ("disable", "is_compiling", "is_exporting"):
-        if not hasattr(_compiler, _name):
-            setattr(_compiler, _name, getattr(_compiler_stub, _name))
-try:
-    from torch.utils import _pytree
-except Exception:
-    _pytree = None
-if _pytree is not None and not hasattr(_pytree, "register_pytree_node"):
-    _private_register = getattr(_pytree, "_register_pytree_node", None)
-    if _private_register is not None:
-        def _register_pytree_node(cls, flatten_fn, unflatten_fn, *args, **kwargs):
-            try:
-                return _private_register(cls, flatten_fn, unflatten_fn, *args, **kwargs)
-            except TypeError:
-                _supported = {
-                    _key: kwargs[_key]
-                    for _key in ("to_dumpable_context", "from_dumpable_context")
-                    if _key in kwargs
-                }
-                try:
-                    return _private_register(cls, flatten_fn, unflatten_fn, *args, **_supported)
-                except TypeError:
-                    return _private_register(cls, flatten_fn, unflatten_fn)
-        _pytree.register_pytree_node = _register_pytree_node
-if hasattr(torch, "distributed") and not hasattr(torch.distributed, "device_mesh"):
-    torch.distributed.device_mesh = SimpleNamespace(DeviceMesh=object)
-if hasattr(torch, "distributed") and "torch.distributed._functional_collectives" not in sys.modules:
-    funcol = ModuleType("torch.distributed._functional_collectives")
-
-    class AsyncCollectiveTensor:
-        pass
-
-    def _identity_collective(tensor, *args, **kwargs):
-        return tensor
-
-    funcol.AsyncCollectiveTensor = AsyncCollectiveTensor
-    funcol.all_to_all_single = _identity_collective
-    funcol.all_gather_tensor = _identity_collective
-    funcol.permute_tensor = _identity_collective
-    sys.modules["torch.distributed._functional_collectives"] = funcol
-    torch.distributed._functional_collectives = funcol
+torch = install_torch_backend_compat(entry_point="setup_nf_class_conditional_env")
 
 sklearn = ModuleType("sklearn")
 sklearn_metrics = ModuleType("sklearn.metrics")

@@ -145,6 +145,8 @@ from pathlib import Path
 
 import torch
 import yaml
+from simdiff_eval.torch_compat import install_torch_backend_compat
+install_torch_backend_compat(entry_point="train_nf_conditional_u128_continue800k_array")
 from cosmodiff import optim, utils
 
 expected_root = Path(os.environ["COSMODIFF_DIR"]).resolve()

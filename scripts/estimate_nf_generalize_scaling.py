@@ -24,11 +24,21 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sys
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from simdiff_eval.torch_compat import install_torch_backend_compat
+
+
+install_torch_backend_compat(entry_point=__name__)
 
 
 ARCH_ORDER = ("u64", "u128", "u256")
