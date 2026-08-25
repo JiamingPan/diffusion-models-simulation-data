@@ -71,12 +71,18 @@ def _training_colors() -> dict[int, np.ndarray]:
     return dict(zip(ALL_DATASET_SIZES, colors))
 
 
-def style_training_size_axis(axis) -> None:
+def style_training_size_axis(axis, *, label_every: int = 1) -> None:
     """Use the exact shared horizontal power-of-two axis for paper comparisons."""
 
     axis.set_xlim(5.65, 15.35)
     axis.set_xticks(ALL_POWERS)
-    axis.set_xticklabels([rf"$2^{{{power}}}$" for power in ALL_POWERS], rotation=0)
+    axis.set_xticklabels(
+        [
+            rf"$2^{{{power}}}$" if (power - ALL_POWERS[0]) % label_every == 0 else ""
+            for power in ALL_POWERS
+        ],
+        rotation=0,
+    )
     style_axis(axis)
 
 
@@ -121,20 +127,22 @@ def build_conditional_recovery_figure(
     limits = (lo - pad, hi + pad)
     colors = _training_colors()
 
-    figure = plt.figure(figsize=(FULL_W, 4.40))
+    figure = plt.figure(figsize=(FULL_W, 1.95))
     grid = figure.add_gridspec(
-        2,
-        3,
-        height_ratios=(1.35, 1.0),
-        left=0.090,
-        right=0.985,
-        bottom=0.115,
-        top=0.965,
-        wspace=0.28,
-        hspace=0.58,
+        1,
+        4,
+        width_ratios=(1.0, 1.0, 1.0, 1.6),
+        left=0.080,
+        right=0.990,
+        bottom=0.255,
+        top=0.950,
+        wspace=0.42,
     )
-    scatter_axes = [figure.add_subplot(grid[0, index]) for index in range(3)]
-    transition_axis = figure.add_subplot(grid[1, :])
+    scatter_axes = [figure.add_subplot(grid[0, 0])]
+    scatter_axes.extend(
+        figure.add_subplot(grid[0, index], sharey=scatter_axes[0]) for index in range(1, 3)
+    )
+    transition_axis = figure.add_subplot(grid[0, 3])
 
     for index, (axis, power, marker) in enumerate(
         zip(scatter_axes, REPRESENTATIVE_POWERS, REPRESENTATIVE_MARKERS)
@@ -181,7 +189,7 @@ def build_conditional_recovery_figure(
             transform=axis.transAxes,
             ha="left",
             va="top",
-            fontsize=7.6,
+            fontsize=7.0,
             color=INK,
         )
         if index == 0:
@@ -214,38 +222,18 @@ def build_conditional_recovery_figure(
             markeredgewidth=0.35,
             zorder=2,
         )
-    style_training_size_axis(transition_axis)
+    style_training_size_axis(transition_axis, label_every=2)
     transition_axis.set_xlabel(r"Training images $N_{2D}$")
-    transition_axis.set_ylabel(r"$\Omega_m$ response slope", labelpad=2)
+    transition_axis.set_ylabel(r"$\Omega_m$ response slope", labelpad=0)
     transition_axis.set_ylim(bottom=min(0.0, float(report["slope_ci16"].min()) - 0.04), top=1.05)
     scatter_left = scatter_axes[0].get_position().x0
     scatter_right = scatter_axes[-1].get_position().x1
     figure.text(
         (scatter_left + scatter_right) / 2.0,
-        scatter_axes[0].get_position().y0 - 0.055,
+        0.055,
         r"Requested $\Omega_m$",
         ha="center",
         va="center",
-    )
-    scatter_axes[0].text(
-        0.0,
-        1.025,
-        "(a)",
-        transform=scatter_axes[0].transAxes,
-        ha="left",
-        va="bottom",
-        fontsize=8.5,
-        fontweight="bold",
-    )
-    transition_axis.text(
-        0.0,
-        1.025,
-        "(b)",
-        transform=transition_axis.transAxes,
-        ha="left",
-        va="bottom",
-        fontsize=8.5,
-        fontweight="bold",
     )
     return figure, report
 
