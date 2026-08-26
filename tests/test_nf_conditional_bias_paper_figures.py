@@ -122,8 +122,8 @@ def test_conditional_figure_contrasts_two_regimes_and_highlights_matching_curve_
         assert "generalization regime" in annotation_text
         assert r"$N_{2D}=2^{7}$" in annotation_text
         assert r"$N_{2D}=2^{14}$" in annotation_text
-        assert "slope = 0.30" in annotation_text
-        assert "slope = 0.69" in annotation_text
+        assert r"slope = $0.305^{+0.045}_{-0.035}$" in annotation_text
+        assert r"slope = $0.690^{+0.045}_{-0.035}$" in annotation_text
         assert all(text.get_fontsize() == pytest.approx(7.0) for text in calibration_axis.texts)
         assert len(calibration_axis.collections) == 2
         fit_colors = {
@@ -277,7 +277,8 @@ def test_results_notebook_contains_idempotent_paper_figure_section(tmp_path):
     source_text = "\n".join("".join(cell.get("source", [])) for cell in tagged)
     assert "conditional_recovery_transition.pdf" in source_text
     assert "generalization_transition.pdf" in source_text
-    assert "nearest_training_unet128.pdf" in source_text
+    assert "nearest_training_u128.pdf" in source_text
+    assert "nearest_training_u128.csv" in source_text
     assert "vgg_probe_heldout_real.pdf" in source_text
     assert "slope_ci16" in source_text and "slope_ci84" in source_text
     assert "paper_dimensions" in source_text
@@ -306,6 +307,7 @@ def test_results_notebook_displays_every_paper_figure_inline_before_closing(tmp_
     for figure_name in (
         "conditional_figure",
         "generalization_figure",
+        "nearest_figure",
         "probe_figure",
     ):
         display_call = f"display({figure_name})"
@@ -313,4 +315,7 @@ def test_results_notebook_displays_every_paper_figure_inline_before_closing(tmp_
         assert display_call in source_text
         assert source_text.index(display_call) < source_text.index(close_call)
 
-    assert "display(Image(filename=str(paper_inputs['nearest'])))" in source_text
+    assert "build_nearest_training_panels" in source_text
+    assert "export_nearest_training_outputs" in source_text
+    assert "display(nearest_training_report)" in source_text
+    assert "display(Image(" not in source_text

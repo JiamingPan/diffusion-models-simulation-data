@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import matplotlib
 
@@ -17,10 +19,19 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 PAPER_DIR = ROOT / "paper" / "ai4science_verification"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 if str(PAPER_DIR) not in sys.path:
     sys.path.insert(0, str(PAPER_DIR))
 
 from paperstyle import FULL_W, INK, set_paper_style, style_axis
+from simdiff_eval.paper_nearest_training import (
+    load_npz_samples,
+    load_sscd_embedding_cache,
+    normalized_sscd_frechet,
+    resolve_sscd_embedding_cache,
+    summarize_exact_training_reference,
+)
 
 
 ALL_POWERS = tuple(range(6, 16))
@@ -49,6 +60,26 @@ ARCHITECTURES = (
     ("u128", "U-Net-128", "#D55E00", "o"),
     ("u256", "U-Net-256", "#0072B2", "s"),
 )
+NEAREST_POWERS = tuple(range(6, 12))
+NEAREST_DATASET_SIZES = tuple(2**power for power in NEAREST_POWERS)
+NEAREST_TABLE_COLUMNS = (
+    "dataset_tag",
+    "dataset_size",
+    "cos_max",
+    "pk_log10_mae",
+    "sscd_frechet_normalized",
+    "n_generated",
+    "n_real_split",
+    "config_path",
+)
+
+
+def format_slope_with_interval(slope: float, ci16: float, ci84: float) -> str:
+    """Format one fitted slope with its 16th--84th percentile interval."""
+
+    lower = max(float(slope) - float(ci16), 0.0)
+    upper = max(float(ci84) - float(slope), 0.0)
+    return rf"${float(slope):.3f}^{{+{upper:.3f}}}_{{-{lower:.3f}}}$"
 
 
 def _single_protocol(frame: pd.DataFrame) -> pd.DataFrame:
@@ -186,7 +217,12 @@ def build_conditional_recovery_figure(
             0.95 - 0.16 * index,
             REGIME_LABELS[power]
             + "\n"
-            + rf"$N_{{2D}}=2^{{{power}}}$, slope = {float(row['slope']):.2f}",
+            + rf"$N_{{2D}}=2^{{{power}}}$, slope = "
+            + format_slope_with_interval(
+                float(row["slope"]),
+                float(row["slope_ci16"]),
+                float(row["slope_ci84"]),
+            ),
             transform=calibration_axis.transAxes,
             ha="left",
             va="top",
@@ -324,6 +360,257 @@ def export_nearest_training_pdf(
     return FULL_W, height
 
 
+def _load_manifest(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        raise FileNotFoundError(f"missing nf_generalize_fig2 manifest: {path}")
+    payload = json.loads(path.read_text())
+    rows = payload.get("rows", payload.get("runs", [])) if isinstance(payload, dict) else payload
+    if not isinstance(rows, list):
+        raise ValueError(f"manifest must contain a list of runs: {path}")
+    return [dict(row) for row in rows]
+
+
+def _project_path(project_dir: Path, value: str | Path) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else project_dir / path
+
+
+def _sample_path(project_dir: Path, row: dict[str, Any], *, seed: int, sample_label: str) -> Path:
+    template = str(row.get("sample_path", ""))
+    if not template:
+        raise ValueError(f"manifest row has no sample_path: {row.get('run_name', '<unknown>')}")
+    return _project_path(
+        project_dir,
+        template.format(seed=int(seed), sample_label=sample_label),
+    )
+
+
+def build_nearest_training_panels(
+    project_dir: str | Path,
+    manifest_path: str | Path,
+    sscd_cache_dir: str | Path,
+    *,
+    seed: int = 123,
+    sample_label: str = "dpm50",
+    nbins: int = 30,
+    k_max: float = 64.0,
+) -> list[dict[str, Any]]:
+    """Resolve all data products for the three-row U-Net-128 paper figure."""
+
+    project_dir = Path(project_dir).resolve()
+    manifest_path = _project_path(project_dir, manifest_path)
+    cache_dir = _project_path(project_dir, sscd_cache_dir)
+    selected = [
+        row
+        for row in _load_manifest(manifest_path)
+        if row.get("arch") == "u128" and int(row.get("dataset_size", -1)) in NEAREST_DATASET_SIZES
+    ]
+    by_size = {int(row["dataset_size"]): row for row in selected}
+    if len(selected) != len(NEAREST_DATASET_SIZES) or set(by_size) != set(NEAREST_DATASET_SIZES):
+        raise ValueError(
+            "expected exactly one U-Net-128 manifest row for each of "
+            f"{list(NEAREST_DATASET_SIZES)}, found {[int(row['dataset_size']) for row in selected]}"
+        )
+
+    panels: list[dict[str, Any]] = []
+    for dataset_size in NEAREST_DATASET_SIZES:
+        row = by_size[dataset_size]
+        run_name = str(row["run_name"])
+        config_path = _project_path(project_dir, row["config"])
+        sample_path = _sample_path(
+            project_dir,
+            row,
+            seed=int(seed),
+            sample_label=sample_label,
+        )
+        generated = load_npz_samples(sample_path)
+        reference = summarize_exact_training_reference(
+            config_path,
+            expected_slices=int(row.get("actual_2d", row["dataset_size"])),
+            generated=generated,
+            nbins=int(nbins),
+            k_max=float(k_max),
+        )
+
+        heldout_cache = resolve_sscd_embedding_cache(
+            cache_dir,
+            run_name=run_name,
+            kind="heldout",
+            sample_label=sample_label,
+            seed=int(seed),
+        )
+        generated_cache = resolve_sscd_embedding_cache(
+            cache_dir,
+            run_name=run_name,
+            kind="generated",
+            sample_label=sample_label,
+            seed=int(seed),
+        )
+        heldout_features = load_sscd_embedding_cache(heldout_cache)
+        generated_features = load_sscd_embedding_cache(generated_cache)
+        if len(generated_features) != len(generated):
+            raise RuntimeError(
+                "generated sample/cache count mismatch: "
+                f"samples={len(generated)}, cache={len(generated_features)}, "
+                f"sample_path={sample_path}, cache_path={generated_cache}"
+            )
+        frechet = normalized_sscd_frechet(
+            heldout_features,
+            generated_features,
+            seed=int(seed),
+        )
+        panels.append(
+            {
+                "dataset_tag": str(row["dataset_tag"]),
+                "dataset_size": int(dataset_size),
+                "generated_image": generated[0, 0],
+                "nearest_training_image": reference["nearest_training_image"],
+                "cos_max": float(reference["nearest_cosine"]),
+                "k_bins": reference["k_bins"],
+                "pk_ratio": reference["pk_ratio"],
+                "pk_log10_mae": float(reference["pk_log10_mae"]),
+                "sscd_frechet_normalized": float(frechet["sscd_frechet_normalized"]),
+                "n_generated": int(frechet["n_generated"]),
+                "n_real_split": int(frechet["n_real_split"]),
+                "config_path": str(config_path),
+            }
+        )
+    return panels
+
+
+def build_nearest_training_figure(panels: list[dict[str, Any]]) -> plt.Figure:
+    """Build the generated/nearest/P(k) three-row U-Net-128 paper figure."""
+
+    if len(panels) != len(NEAREST_DATASET_SIZES):
+        raise ValueError(f"expected six nearest-training panels, found {len(panels)}")
+    ordered = sorted(panels, key=lambda row: int(row["dataset_size"]))
+    if [int(row["dataset_size"]) for row in ordered] != list(NEAREST_DATASET_SIZES):
+        raise ValueError("nearest-training panels do not cover N_2D=2^6,...,2^11 exactly")
+
+    set_paper_style()
+    figure, axes = plt.subplots(
+        3,
+        6,
+        figsize=(FULL_W, 3.25),
+        gridspec_kw={"height_ratios": (1.0, 1.0, 0.72)},
+    )
+    figure.subplots_adjust(left=0.085, right=0.995, bottom=0.14, top=0.965, wspace=0.10, hspace=0.10)
+
+    image_values = np.concatenate(
+        [
+            np.asarray(row[key], dtype=float).reshape(-1)
+            for row in ordered
+            for key in ("generated_image", "nearest_training_image")
+        ]
+    )
+    finite_images = image_values[np.isfinite(image_values)]
+    if not len(finite_images):
+        raise ValueError("nearest-training panels contain no finite image values")
+    image_limits = tuple(np.quantile(finite_images, (0.005, 0.995)))
+
+    ratio_values = np.concatenate([np.asarray(row["pk_ratio"], dtype=float) for row in ordered])
+    finite_ratios = ratio_values[np.isfinite(ratio_values)]
+    if not len(finite_ratios):
+        raise ValueError("nearest-training panels contain no finite power-spectrum ratios")
+    ratio_low = min(1.0, float(finite_ratios.min()))
+    ratio_high = max(1.0, float(finite_ratios.max()))
+    ratio_pad = 0.07 * max(ratio_high - ratio_low, 0.1)
+    shared_ratio_limits = (max(0.0, ratio_low - ratio_pad), ratio_high + ratio_pad)
+
+    for column, row in enumerate(ordered):
+        power = int(round(np.log2(int(row["dataset_size"]))))
+        generated_axis = axes[0, column]
+        nearest_axis = axes[1, column]
+        spectrum_axis = axes[2, column]
+        generated_axis.imshow(
+            row["generated_image"],
+            cmap="viridis",
+            vmin=image_limits[0],
+            vmax=image_limits[1],
+            interpolation="nearest",
+        )
+        nearest_axis.imshow(
+            row["nearest_training_image"],
+            cmap="viridis",
+            vmin=image_limits[0],
+            vmax=image_limits[1],
+            interpolation="nearest",
+        )
+        generated_axis.set_title(rf"$2^{{{power}}}$", pad=2.0)
+        generated_axis.text(
+            0.04,
+            0.04,
+            f"F={float(row['sscd_frechet_normalized']):.2f}",
+            transform=generated_axis.transAxes,
+            fontsize=6.3,
+            color="white",
+            ha="left",
+            va="bottom",
+            bbox={"facecolor": "black", "alpha": 0.55, "edgecolor": "none", "pad": 1.2},
+        )
+        nearest_axis.text(
+            0.04,
+            0.04,
+            f"cos={float(row['cos_max']):.3f}",
+            transform=nearest_axis.transAxes,
+            fontsize=6.3,
+            color="white",
+            ha="left",
+            va="bottom",
+            bbox={"facecolor": "black", "alpha": 0.55, "edgecolor": "none", "pad": 1.2},
+        )
+        for image_axis in (generated_axis, nearest_axis):
+            image_axis.set_xticks([])
+            image_axis.set_yticks([])
+            for spine in image_axis.spines.values():
+                spine.set_linewidth(0.55)
+                spine.set_color(INK)
+
+        k_bins = np.asarray(row["k_bins"], dtype=float)
+        ratio = np.asarray(row["pk_ratio"], dtype=float)
+        if np.nanmax(k_bins) > 64.0 + 1.0e-9:
+            raise ValueError(f"post-Nyquist k bin reached the paper figure: {np.nanmax(k_bins)}")
+        spectrum_axis.axhline(1.0, color="0.42", ls="--", lw=0.7)
+        spectrum_axis.plot(k_bins, ratio, color="0.20", lw=0.9)
+        spectrum_axis.set_xlim(left=0.0, right=64.0)
+        spectrum_axis.set_ylim(shared_ratio_limits)
+        spectrum_axis.set_xticks((0, 32, 64))
+        style_axis(spectrum_axis)
+        if column:
+            spectrum_axis.tick_params(labelleft=False)
+            spectrum_axis.set_xticklabels([])
+
+    axes[0, 0].set_ylabel("Generated", labelpad=5.0)
+    axes[1, 0].set_ylabel("Closest training", labelpad=5.0)
+    axes[2, 0].set_ylabel(r"$R(k)=P_{\rm gen}/P_{\rm real}$", labelpad=5.0)
+    axes[2, 0].set_xlabel(r"$k$")
+    return figure
+
+
+def nearest_training_table(panels: list[dict[str, Any]]) -> pd.DataFrame:
+    table = pd.DataFrame(
+        [{column: row[column] for column in NEAREST_TABLE_COLUMNS} for row in panels]
+    )
+    return table.loc[:, list(NEAREST_TABLE_COLUMNS)].sort_values("dataset_size").reset_index(drop=True)
+
+
+def export_nearest_training_outputs(
+    panels: list[dict[str, Any]],
+    pdf_path: str | Path,
+    csv_path: str | Path,
+) -> tuple[tuple[float, float], pd.DataFrame]:
+    figure = build_nearest_training_figure(panels)
+    try:
+        dimensions = save_figure(figure, Path(pdf_path))
+    finally:
+        plt.close(figure)
+    table = nearest_training_table(panels)
+    csv_path = Path(csv_path)
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    table.to_csv(csv_path, index=False)
+    return dimensions, table
+
+
 def build_probe_summary_figure(summary: pd.DataFrame) -> plt.Figure:
     """Show held-out-real VGG+MLP response slope and R2 for all parameters."""
 
@@ -376,7 +663,19 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--points", type=Path, required=True)
     parser.add_argument("--slopes", type=Path, required=True)
     parser.add_argument("--generalization", type=Path, required=True)
-    parser.add_argument("--nearest", type=Path, required=True)
+    parser.add_argument("--project-dir", type=Path, default=ROOT)
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=ROOT / "local" / "nf_generalize_fig2" / "manifest.json",
+    )
+    parser.add_argument(
+        "--sscd-cache-dir",
+        type=Path,
+        default=ROOT / "results" / "nf_generalize_fig2" / "cache" / "sscd_full_nn",
+    )
+    parser.add_argument("--seed", type=int, default=123)
+    parser.add_argument("--sample-label", default="dpm50")
     parser.add_argument("--probe-summary", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, default=PAPER_DIR / "figures")
     return parser.parse_args()
@@ -387,7 +686,8 @@ def main() -> None:
     outputs = {
         "conditional": args.output_dir / "conditional_recovery_transition.pdf",
         "generalization": args.output_dir / "generalization_transition.pdf",
-        "nearest": args.output_dir / "nearest_training_unet128.pdf",
+        "nearest": args.output_dir / "nearest_training_u128.pdf",
+        "nearest_table": args.output_dir / "nearest_training_u128.csv",
         "probe": args.output_dir / "vgg_probe_heldout_real.pdf",
     }
     points = pd.read_csv(args.points)
@@ -398,12 +698,25 @@ def main() -> None:
     generalization = build_generalization_figure(pd.read_csv(args.generalization))
     dimensions["generalization"] = save_figure(generalization, outputs["generalization"])
     plt.close(generalization)
-    dimensions["nearest"] = export_nearest_training_pdf(args.nearest, outputs["nearest"])
+    nearest_panels = build_nearest_training_panels(
+        args.project_dir,
+        args.manifest,
+        args.sscd_cache_dir,
+        seed=args.seed,
+        sample_label=args.sample_label,
+    )
+    dimensions["nearest"], nearest_table = export_nearest_training_outputs(
+        nearest_panels,
+        outputs["nearest"],
+        outputs["nearest_table"],
+    )
     probe = build_probe_summary_figure(pd.read_csv(args.probe_summary))
     dimensions["probe"] = save_figure(probe, outputs["probe"])
     plt.close(probe)
-    for name, output in outputs.items():
+    for name in ("conditional", "generalization", "nearest", "probe"):
+        output = outputs[name]
         print(f"{name}: {output} ({dimensions[name][0]:.3f} x {dimensions[name][1]:.3f} in)")
+    print(f"nearest_table: {outputs['nearest_table']} ({len(nearest_table)} rows)")
     print(report[["dataset_size", "slope", "slope_ci16", "slope_ci84"]].to_string(index=False))
 
 
