@@ -267,7 +267,7 @@ def test_conditional_coverage_figure_shows_three_training_regimes_against_calibr
         seed=17,
     )
     try:
-        assert figure.get_size_inches() == pytest.approx((6.75, 3.25))
+        assert figure.get_size_inches() == pytest.approx((5.25, 3.70))
         assert figure._suptitle is None
         assert len(figure.axes) == 1
         axis = figure.axes[0]
