@@ -267,7 +267,7 @@ def test_conditional_coverage_figure_shows_three_training_regimes_against_calibr
         seed=17,
     )
     try:
-        assert figure.get_size_inches() == pytest.approx((6.75, 2.70))
+        assert figure.get_size_inches() == pytest.approx((6.75, 3.25))
         assert figure._suptitle is None
         assert len(figure.axes) == 1
         axis = figure.axes[0]
@@ -278,9 +278,9 @@ def test_conditional_coverage_figure_shows_three_training_regimes_against_calibr
         assert axis.get_ylim() == pytest.approx((0.0, 1.0))
         labels = axis.get_legend_handles_labels()[1]
         assert labels == [
-            r"$N_{2D}=2^{7}$ memorizing",
-            r"$N_{2D}=2^{10}$ transitional",
-            r"$N_{2D}=2^{14}$ generalizing",
+            r"$N_{2D}=2^{7}$ memorization regime",
+            r"$N_{2D}=2^{10}$",
+            r"$N_{2D}=2^{14}$ generalization regime",
         ]
         calibration_lines = [
             line
@@ -288,10 +288,13 @@ def test_conditional_coverage_figure_shows_three_training_regimes_against_calibr
             if np.allclose(line.get_xdata(), line.get_ydata())
         ]
         assert len(calibration_lines) == 1
-        assert {text.get_text() for text in axis.texts} == {
+        region_labels = {text.get_text(): text for text in axis.texts}
+        assert set(region_labels) == {
             "underconfident",
             "overconfident",
         }
+        assert all(text.get_fontsize() >= 8.0 for text in region_labels.values())
+        assert plotting.COVERAGE_MARKERS == {0.68: "o", 0.95: "s"}
         plotted_sizes = set(report.loc[report["plotted"], "dataset_size"])
         assert plotted_sizes == {2**7, 2**10, 2**14}
         assert report["nominal_coverage"].nunique() >= 41

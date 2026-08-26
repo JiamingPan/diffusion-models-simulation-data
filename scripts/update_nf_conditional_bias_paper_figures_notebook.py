@@ -30,8 +30,8 @@ def _cells() -> list[dict]:
 ## Paper-ready verification figures
 
 This cell exports the conditional-recovery result and its comparison figures at the exact paper width.
-The conditional figure reports full empirical calibration curves for representative memorizing,
-transitional, and generalizing training-set sizes. Coverage is computed directly from the individual generated-map
+The conditional figure reports full empirical calibration curves for three representative training-set sizes,
+including examples from the memorization and generalization regimes. Coverage is computed directly from the individual generated-map
 probe recoveries over the 32 held-out cosmologies; the plotted markers identify the nominal 68\% and 95\%
 intervals. It also
 saves the frozen VGG16+MLP heldout-real slope/$R^2$ summary used to establish which conditional directions
