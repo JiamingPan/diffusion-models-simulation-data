@@ -527,14 +527,14 @@ def build_nearest_training_figure(panels: list[dict[str, Any]]) -> plt.Figure:
             cmap="viridis",
             vmin=image_limits[0],
             vmax=image_limits[1],
-            interpolation="nearest",
+            interpolation="none",
         )
         nearest_axis.imshow(
             row["nearest_training_image"],
             cmap="viridis",
             vmin=image_limits[0],
             vmax=image_limits[1],
-            interpolation="nearest",
+            interpolation="none",
         )
         generated_axis.set_title(rf"$2^{{{power}}}$", pad=2.0)
         generated_axis.text(
@@ -598,10 +598,16 @@ def export_nearest_training_outputs(
     panels: list[dict[str, Any]],
     pdf_path: str | Path,
     csv_path: str | Path,
+    *,
+    preview_path: str | Path | None = None,
 ) -> tuple[tuple[float, float], pd.DataFrame]:
     figure = build_nearest_training_figure(panels)
     try:
         dimensions = save_figure(figure, Path(pdf_path))
+        if preview_path is not None:
+            preview_path = Path(preview_path)
+            preview_path.parent.mkdir(parents=True, exist_ok=True)
+            figure.savefig(preview_path, format="png", dpi=300, facecolor="white")
     finally:
         plt.close(figure)
     table = nearest_training_table(panels)
@@ -653,7 +659,7 @@ def build_probe_summary_figure(summary: pd.DataFrame) -> plt.Figure:
 def save_figure(figure: plt.Figure, output: Path) -> tuple[float, float]:
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(output, format="pdf", facecolor="white")
+    figure.savefig(output, format="pdf", dpi=300, facecolor="white")
     width, height = figure.get_size_inches()
     return float(width), float(height)
 
@@ -687,6 +693,7 @@ def main() -> None:
         "conditional": args.output_dir / "conditional_recovery_transition.pdf",
         "generalization": args.output_dir / "generalization_transition.pdf",
         "nearest": args.output_dir / "nearest_training_u128.pdf",
+        "nearest_preview": args.output_dir / "nearest_training_u128_preview.png",
         "nearest_table": args.output_dir / "nearest_training_u128.csv",
         "probe": args.output_dir / "vgg_probe_heldout_real.pdf",
     }
@@ -709,6 +716,7 @@ def main() -> None:
         nearest_panels,
         outputs["nearest"],
         outputs["nearest_table"],
+        preview_path=outputs["nearest_preview"],
     )
     probe = build_probe_summary_figure(pd.read_csv(args.probe_summary))
     dimensions["probe"] = save_figure(probe, outputs["probe"])
@@ -717,6 +725,7 @@ def main() -> None:
         output = outputs[name]
         print(f"{name}: {output} ({dimensions[name][0]:.3f} x {dimensions[name][1]:.3f} in)")
     print(f"nearest_table: {outputs['nearest_table']} ({len(nearest_table)} rows)")
+    print(f"nearest_preview: {outputs['nearest_preview']} (300 dpi)")
     print(report[["dataset_size", "slope", "slope_ci16", "slope_ci84"]].to_string(index=False))
 
 

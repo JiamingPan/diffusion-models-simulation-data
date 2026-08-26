@@ -45,7 +45,7 @@ from pathlib import Path
 import sys
 import pandas as pd
 import matplotlib.pyplot as plt
-from IPython.display import Markdown, display
+from IPython.display import Image, Markdown, display
 
 PAPER_PROJECT_DIR = Path.cwd().resolve()
 while PAPER_PROJECT_DIR != PAPER_PROJECT_DIR.parent and not (PAPER_PROJECT_DIR / '.git').exists():
@@ -60,7 +60,6 @@ if str(paper_scripts) not in sys.path:
 from plot_nf_conditional_bias_paper_figures import (
     build_conditional_recovery_figure,
     build_generalization_figure,
-    build_nearest_training_figure,
     build_nearest_training_panels,
     build_probe_summary_figure,
     export_nearest_training_outputs,
@@ -105,6 +104,7 @@ paper_outputs = {
     'conditional': paper_figure_dir / 'conditional_recovery_transition.pdf',
     'generalization': paper_figure_dir / 'generalization_transition.pdf',
     'nearest': paper_figure_dir / 'nearest_training_u128.pdf',
+    'nearest_preview': paper_figure_dir / 'nearest_training_u128_preview.png',
     'nearest_table': paper_figure_dir / 'nearest_training_u128.csv',
     'probe': paper_figure_dir / 'vgg_probe_heldout_real.pdf',
 }
@@ -143,11 +143,10 @@ paper_dimensions['nearest'], nearest_training_report = export_nearest_training_o
     nearest_panels,
     paper_outputs['nearest'],
     paper_outputs['nearest_table'],
+    preview_path=paper_outputs['nearest_preview'],
 )
-nearest_figure = build_nearest_training_figure(nearest_panels)
 display(Markdown('### Generated samples, nearest training slices, and in-distribution check'))
-display(nearest_figure)
-plt.close(nearest_figure)
+display(Image(filename=str(paper_outputs['nearest_preview']), width=1100))
 display(nearest_training_report)
 
 probe_figure = build_probe_summary_figure(pd.read_csv(paper_inputs['probe']))
@@ -162,6 +161,7 @@ for paper_name in ('conditional', 'generalization', 'nearest', 'probe'):
     width, height = paper_dimensions[paper_name]
     print(f'{paper_name}: {paper_path} ({width:.3f} x {height:.3f} in)')
 print(f"nearest_table: {paper_outputs['nearest_table']} ({len(nearest_training_report)} rows)")
+print(f"nearest_preview: {paper_outputs['nearest_preview']} (300 dpi)")
 
 display(Markdown('### Exact saved $\\Omega_m$ slopes'))
 display(

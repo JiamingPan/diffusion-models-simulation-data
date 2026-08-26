@@ -170,19 +170,29 @@ def test_three_row_figure_and_csv_contract(tmp_path):
         assert all(max(line.get_xdata()) <= 64.0 for axis in spectrum_axes for line in axis.lines)
         assert "F=0.90" in "\n".join(text.get_text() for text in image_axes[0, 0].texts)
         assert "cos=0.97" in "\n".join(text.get_text() for text in image_axes[1, 0].texts)
+        assert all(
+            image.get_interpolation() == "none"
+            for axis in image_axes.flat
+            for image in axis.images
+        )
 
         pdf_path = tmp_path / "nearest_training_u128.pdf"
+        preview_path = tmp_path / "nearest_training_u128_preview.png"
         csv_path = tmp_path / "nearest_training_u128.csv"
         dimensions, table = plotting.export_nearest_training_outputs(
             panels,
             pdf_path,
             csv_path,
+            preview_path=preview_path,
         )
     finally:
         plt.close(figure)
 
     assert dimensions[0] == pytest.approx(6.75)
     assert pdf_path.read_bytes().startswith(b"%PDF")
+    preview = plt.imread(preview_path)
+    assert preview.shape[1] >= 2000
+    assert preview.shape[0] >= 900
     saved = pd.read_csv(csv_path)
     expected_columns = [
         "dataset_tag",
