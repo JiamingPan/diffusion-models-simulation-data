@@ -26,6 +26,7 @@ def _complete_metrics() -> pd.DataFrame:
                 "dataset_size": 2**exponent,
                 "hist_l1": 0.02 + 0.002 * (exponent - 6),
                 "pk_log10_mae": 0.03 + 0.003 * (exponent - 6),
+                "std_ratio": 0.92 + 0.01 * (exponent - 6),
             }
         )
     rows.append(
@@ -34,6 +35,7 @@ def _complete_metrics() -> pd.DataFrame:
             "dataset_size": 64,
             "hist_l1": 99.0,
             "pk_log10_mae": 99.0,
+            "std_ratio": 99.0,
         }
     )
     return pd.DataFrame(rows)
@@ -74,7 +76,12 @@ def test_builds_complete_u128_paper_figure(tmp_path):
     assert np.allclose(figure.get_size_inches(), [6.75, 2.35])
     assert plotted["arch"].eq("u128").all()
     assert plotted["dataset_size"].tolist() == [2**k for k in range(6, 16)]
-    assert len(figure.axes) == 2
+    assert len(figure.axes) == 3
+    assert [axis.get_ylabel() for axis in figure.axes] == [
+        r"PDF $L_1$ distance",
+        r"Mean $|\log_{10}(P_{\rm gen}/P_{\rm real})|$",
+        r"$\sigma_{\rm gen}/\sigma_{\rm real}$",
+    ]
     assert all(not axis.xaxis._major_tick_kw.get("gridOn", False) for axis in figure.axes)
     plt.close(figure)
 
@@ -99,7 +106,9 @@ def test_notebook_exports_the_paper_figure():
     )
 
     assert "build_summary_statistics_curve_figure" in source
+    assert "build_summary_statistics_figure" in source
     assert "summary_statistics_sweep.pdf" in source
+    assert "summary_statistics_full_curves.pdf" in source
     assert "UNet-128 summary-statistics sweep" in source
 
 
