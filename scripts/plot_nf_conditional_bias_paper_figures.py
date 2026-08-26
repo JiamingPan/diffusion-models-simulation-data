@@ -283,8 +283,8 @@ def build_conditional_coverage_figure(
     )
     selected_sizes = {2**power for power in COVERAGE_POWERS}
     report["plotted"] = report["dataset_size"].isin(selected_sizes)
-    figure, axis = plt.subplots(figsize=(FULL_W, 3.25))
-    figure.subplots_adjust(left=0.09, right=0.985, bottom=0.17, top=0.97)
+    figure, axis = plt.subplots(figsize=(5.25, 3.70))
+    figure.subplots_adjust(left=0.13, right=0.98, bottom=0.15, top=0.98)
 
     axis.plot(
         (0.0, 1.0),
@@ -322,7 +322,14 @@ def build_conditional_coverage_figure(
                 zorder=3,
             )
 
-    axis.text(0.45, 0.82, "underconfident", color="0.38", fontsize=10.0)
+    axis.text(
+        0.58,
+        0.87,
+        "underconfident",
+        color="0.38",
+        fontsize=10.0,
+        ha="center",
+    )
     axis.text(0.72, 0.25, "overconfident", color="0.38", fontsize=10.0)
     axis.set_xlabel("Nominal coverage", fontsize=11.0)
     axis.set_ylabel("Empirical coverage", fontsize=11.0)
