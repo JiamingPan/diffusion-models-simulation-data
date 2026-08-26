@@ -29,13 +29,14 @@ def _cells() -> list[dict]:
             r"""
 ## Paper-ready verification figures
 
-This cell exports the conditional-recovery result and its two comparison figures at the exact paper width.
-It reads the completed ten-size calibration tables without refitting or changing any data selection. The
-conditional figure contrasts the saved $N_{2D}=2^7$ memorization and $N_{2D}=2^{14}$ generalization runs,
-then highlights those same two training sizes on the neutral all-ten response-slope curve. It also saves the
-frozen VGG16+MLP heldout-real slope/$R^2$ summary used to establish which conditional directions the probe
-can verify. The U-Net-128 audit is rebuilt from the generated archives, exact configured training subsets,
-and cached SSCD embeddings; its third row reports the corresponding Nyquist-limited power-spectrum ratio.
+This cell exports the conditional-recovery result and its comparison figures at the exact paper width.
+The conditional figure reports empirical coverage of the central 68\% and 95\% recovered-$\Omega_m$
+intervals across all ten training-set sizes. Coverage is computed directly from the individual generated-map
+probe recoveries, with 16th--84th percentile bootstrap intervals over the 32 held-out cosmologies. It also
+saves the frozen VGG16+MLP heldout-real slope/$R^2$ summary used to establish which conditional directions
+the probe can verify. The U-Net-128 audit is rebuilt from the generated archives, exact configured training
+subsets, and cached SSCD embeddings; its third row reports the corresponding Nyquist-limited power-spectrum
+ratio.
 """,
         ),
         _cell(
@@ -58,7 +59,7 @@ if str(paper_scripts) not in sys.path:
     sys.path.insert(0, str(paper_scripts))
 
 from plot_nf_conditional_bias_paper_figures import (
-    build_conditional_recovery_figure,
+    build_conditional_coverage_figure,
     build_generalization_figure,
     build_nearest_training_panels,
     build_probe_summary_figure,
@@ -73,8 +74,7 @@ full_sweep_dir = (
     / 'calibration_vgg'
 )
 paper_inputs = {
-    'points': full_sweep_dir / 'bias_probe_per_cosmology_points.csv',
-    'slopes': full_sweep_dir / 'bias_probe_regime_slopes.csv',
+    'samples': full_sweep_dir / 'bias_probe_per_sample_predictions.csv',
     'generalization': (
         PAPER_PROJECT_DIR / 'results' / 'nf_generalize_fig2' / 'tables'
         / 'nf_generalize_fig2_pca_full_nn_metrics.csv'
@@ -109,17 +109,17 @@ paper_outputs = {
     'probe': paper_figure_dir / 'vgg_probe_heldout_real.pdf',
 }
 
-paper_points = pd.read_csv(paper_inputs['points'])
-paper_slopes = pd.read_csv(paper_inputs['slopes'])
+paper_samples = pd.read_csv(paper_inputs['samples'])
 paper_generalization = pd.read_csv(paper_inputs['generalization'])
-conditional_figure, conditional_slope_report = build_conditional_recovery_figure(
-    paper_points,
-    paper_slopes,
+conditional_figure, conditional_coverage_report = build_conditional_coverage_figure(
+    paper_samples,
+    bootstrap=2000,
+    seed=123,
 )
 paper_dimensions = {
     'conditional': save_figure(conditional_figure, paper_outputs['conditional'])
 }
-display(Markdown('### Conditional recovery transition'))
+display(Markdown('### Conditional recovery coverage'))
 display(conditional_figure)
 plt.close(conditional_figure)
 
@@ -163,10 +163,14 @@ for paper_name in ('conditional', 'generalization', 'nearest', 'probe'):
 print(f"nearest_table: {paper_outputs['nearest_table']} ({len(nearest_training_report)} rows)")
 print(f"nearest_preview: {paper_outputs['nearest_preview']} (300 dpi)")
 
-display(Markdown('### Exact saved $\\Omega_m$ slopes'))
+display(Markdown('### Exact saved $\\Omega_m$ coverage'))
 display(
-    conditional_slope_report[
-        ['dataset_size', 'slope', 'slope_ci16', 'slope_ci84']
+    conditional_coverage_report[
+        [
+            'dataset_size', 'nominal_coverage', 'empirical_coverage',
+            'coverage_ci16', 'coverage_ci84', 'n_heldout',
+            'draws_per_cosmology',
+        ]
     ].sort_values('dataset_size').reset_index(drop=True)
 )
 """,
@@ -174,7 +178,8 @@ display(
         _cell(
             "markdown",
             r"""
-The PDFs above contain no figure-level titles; put the scientific description, reference-line definition,
+The PDFs above contain no figure-level titles; put the scientific description, nominal-coverage reference
+line definitions,
 and training protocol in the LaTeX captions. The conditional and generalization figures use the same
 $2^6$--$2^{15}$ horizontal axis so their transitions can be compared directly when stacked in the paper.
 The U-Net-128 table records the exact-subset configuration, copying similarity, power-spectrum error,
