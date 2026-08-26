@@ -278,6 +278,7 @@ def test_results_notebook_contains_idempotent_paper_figure_section(tmp_path):
     assert "conditional_recovery_transition.pdf" in source_text
     assert "generalization_transition.pdf" in source_text
     assert "nearest_training_u128.pdf" in source_text
+    assert "nearest_training_u128_preview.png" in source_text
     assert "nearest_training_u128.csv" in source_text
     assert "vgg_probe_heldout_real.pdf" in source_text
     assert "slope_ci16" in source_text and "slope_ci84" in source_text
@@ -307,7 +308,6 @@ def test_results_notebook_displays_every_paper_figure_inline_before_closing(tmp_
     for figure_name in (
         "conditional_figure",
         "generalization_figure",
-        "nearest_figure",
         "probe_figure",
     ):
         display_call = f"display({figure_name})"
@@ -318,4 +318,5 @@ def test_results_notebook_displays_every_paper_figure_inline_before_closing(tmp_
     assert "build_nearest_training_panels" in source_text
     assert "export_nearest_training_outputs" in source_text
     assert "display(nearest_training_report)" in source_text
-    assert "display(Image(" not in source_text
+    assert "display(Image(filename=str(paper_outputs['nearest_preview']), width=1100))" in source_text
+    assert "display(nearest_figure)" not in source_text
