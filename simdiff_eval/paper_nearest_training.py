@@ -204,8 +204,14 @@ def normalized_sscd_frechet(
     *,
     seed: int = 123,
     max_components: int = 64,
-) -> dict[str, float | int]:
-    """Reuse the established SSCD/PCA Fréchet ratio with equal-sized splits."""
+) -> dict[str, float | int | str]:
+    """Compute generated/heldout-real Fréchet relative to a matched-n real split.
+
+    ``heldout_features`` must contain real fields excluded from model training.
+    If there are ``n`` generated embeddings, the calculation uses all ``n`` and
+    requires at least ``2n`` heldout-real embeddings so both real baseline halves
+    also contain exactly ``n`` samples. It never reduces ``n`` silently.
+    """
 
     heldout = np.asarray(heldout_features, dtype=np.float64)
     generated = np.asarray(generated_features, dtype=np.float64)
@@ -213,14 +219,16 @@ def normalized_sscd_frechet(
         raise ValueError("SSCD embeddings must be two-dimensional")
     if heldout.shape[1] != generated.shape[1]:
         raise ValueError("heldout and generated SSCD feature dimensions differ")
-    n_available_generated = len(generated)
-    if n_available_generated < 2:
-        raise ValueError("generated SSCD cache must contain at least two samples")
-    n_eval = min(n_available_generated, len(heldout) // 2)
+    n_eval = len(generated)
     if n_eval < 2:
+        raise ValueError("generated SSCD cache must contain at least two samples")
+    required_heldout = 2 * n_eval
+    if len(heldout) < required_heldout:
         raise ValueError(
-            "heldout SSCD cache cannot provide two equal real splits: "
-            f"heldout={len(heldout)}, generated={n_available_generated}"
+            "matched-n heldout-real baseline requires two real splits with the "
+            "same sample count as generated: "
+            f"generated={n_eval}, heldout_real_available={len(heldout)}, "
+            f"heldout_real_required={required_heldout}"
         )
 
     heldout_projected, generated_projected, rank = _project_to_real_pca(
@@ -247,6 +255,8 @@ def normalized_sscd_frechet(
         "real_split_frechet": baseline_distance,
         "n_generated": int(n_eval),
         "n_real_split": int(baseline["n_first"]),
+        "n_heldout_real_available": int(len(heldout)),
+        "reference_kind": "heldout_real",
         "pca_rank": int(rank),
         "seed": int(seed),
     }

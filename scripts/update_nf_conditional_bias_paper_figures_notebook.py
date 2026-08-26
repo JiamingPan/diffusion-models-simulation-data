@@ -34,9 +34,13 @@ The conditional figure reports empirical coverage of the central 68\% and 95\% r
 intervals across all ten training-set sizes. Coverage is computed directly from the individual generated-map
 probe recoveries, with 16th--84th percentile bootstrap intervals over the 32 held-out cosmologies. It also
 saves the frozen VGG16+MLP heldout-real slope/$R^2$ summary used to establish which conditional directions
-the probe can verify. The U-Net-128 audit is rebuilt from the generated archives, exact configured training
-subsets, and cached SSCD embeddings; its third row reports the corresponding Nyquist-limited power-spectrum
-ratio.
+the probe can verify. The U-Net-128 audit uses $N_{2D}=2^6,2^8,2^{10},2^{12},2^{15}$
+to show copying, the intermediate degradation, and recovery at high data. The normalized SSCD Fréchet
+annotation compares 512 generated maps with 512 held-out real maps and divides by the distance between two
+independent 512-map held-out-real splits. The CSV records both raw distances and the ratio. This held-out-real
+reference tests whether generated maps remain in distribution. By contrast, the third-row Nyquist-limited
+power-spectrum ratio uses each model's exact configured training subset as its real reference, because that
+row tests whether the model reproduces the statistics of the distribution on which it was trained.
 """,
         ),
         _cell(

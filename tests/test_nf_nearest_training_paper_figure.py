@@ -13,8 +13,9 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
-if str(SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS))
+for path in (ROOT, SCRIPTS):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
 
 def _metrics_module():
@@ -101,15 +102,17 @@ def test_normalized_sscd_frechet_uses_equal_sample_counts():
 
     assert result["n_generated"] == 10
     assert result["n_real_split"] == 10
+    assert result["n_heldout_real_available"] == 24
+    assert result["reference_kind"] == "heldout_real"
     assert result["pca_rank"] == 6
     assert np.isfinite(result["sscd_frechet_normalized"])
     assert result["sscd_frechet_normalized"] >= 0.0
+    assert result["sscd_frechet_normalized"] == pytest.approx(
+        result["generated_to_real_frechet"] / result["real_split_frechet"]
+    )
 
-    reduced = metrics.normalized_sscd_frechet(heldout[:19], generated, seed=123)
-    assert reduced["n_generated"] == reduced["n_real_split"] == 9
-
-    with pytest.raises(ValueError, match="two equal real splits"):
-        metrics.normalized_sscd_frechet(heldout[:3], generated, seed=123)
+    with pytest.raises(ValueError, match="matched-n heldout-real baseline"):
+        metrics.normalized_sscd_frechet(heldout[:19], generated, seed=123)
 
 
 def test_missing_sscd_cache_fails_closed_with_pattern(tmp_path):
@@ -131,7 +134,7 @@ def _figure_panels() -> list[dict[str, object]]:
     panels: list[dict[str, object]] = []
     x = np.linspace(-1.0, 1.0, 128)
     base = np.outer(np.sin(np.pi * x), np.cos(np.pi * x)).astype(np.float32)
-    for power in range(6, 12):
+    for power in (6, 8, 10, 12, 15):
         panels.append(
             {
                 "dataset_tag": f"d2p{power:02d}",
@@ -143,8 +146,14 @@ def _figure_panels() -> list[dict[str, object]]:
                 "pk_ratio": np.linspace(0.82, 1.15 + 0.03 * (power - 6), 20),
                 "pk_log10_mae": 0.05 + 0.01 * (power - 6),
                 "sscd_frechet_normalized": 0.9 + 0.1 * (power - 6),
+                "generated_to_heldout_real_frechet": 1.8 + 0.2 * (power - 6),
+                "heldout_real_split_frechet": 2.0,
                 "n_generated": 512,
                 "n_real_split": 512,
+                "n_heldout_real_available": 1024,
+                "sscd_reference_kind": "heldout_real",
+                "generated_cache_path": f"cache/u128_d2p{power:02d}_generated.pt",
+                "heldout_real_cache_path": f"cache/u128_d2p{power:02d}_heldout.pt",
                 "config_path": f"local/nf_generalize_fig2/configs/u128_d2p{power:02d}.yaml",
             }
         )
@@ -157,17 +166,20 @@ def test_three_row_figure_and_csv_contract(tmp_path):
     figure = plotting.build_nearest_training_figure(panels)
     try:
         assert figure.get_size_inches()[0] == pytest.approx(6.75)
-        assert len(figure.axes) == 18
-        image_axes = np.asarray(figure.axes[:12], dtype=object).reshape(2, 6)
-        spectrum_axes = figure.axes[12:]
+        assert len(figure.axes) == 15
+        image_axes = np.asarray(figure.axes[:10], dtype=object).reshape(2, 5)
+        spectrum_axes = figure.axes[10:]
         assert [axis.get_title() for axis in image_axes[0]] == [
-            rf"$2^{{{power}}}$" for power in range(6, 12)
+            rf"$2^{{{power}}}$" for power in (6, 8, 10, 12, 15)
         ]
         assert "Generated" in image_axes[0, 0].get_ylabel()
         assert "Closest training" in image_axes[1, 0].get_ylabel()
         assert spectrum_axes[0].get_ylabel() == r"$R(k)=P_{\rm gen}/P_{\rm real}$"
         assert all(axis.get_ylim() == pytest.approx(spectrum_axes[0].get_ylim()) for axis in spectrum_axes)
         assert all(max(line.get_xdata()) <= 64.0 for axis in spectrum_axes for line in axis.lines)
+        assert spectrum_axes[0].get_ylim()[1] >= max(
+            float(np.max(panel["pk_ratio"])) for panel in panels
+        )
         assert "F=0.90" in "\n".join(text.get_text() for text in image_axes[0, 0].texts)
         assert "cos=0.97" in "\n".join(text.get_text() for text in image_axes[1, 0].texts)
         assert all(
@@ -199,14 +211,44 @@ def test_three_row_figure_and_csv_contract(tmp_path):
         "dataset_size",
         "cos_max",
         "pk_log10_mae",
+        "generated_to_heldout_real_frechet",
+        "heldout_real_split_frechet",
         "sscd_frechet_normalized",
         "n_generated",
         "n_real_split",
+        "n_heldout_real_available",
+        "sscd_reference_kind",
+        "generated_cache_path",
+        "heldout_real_cache_path",
         "config_path",
     ]
     assert list(saved.columns) == expected_columns
-    assert len(saved) == 6
+    assert len(saved) == 5
     pd.testing.assert_frame_equal(saved, table, check_dtype=False)
+
+
+def test_requested_unet128_columns_fail_closed_when_manifest_run_is_missing(tmp_path):
+    plotting = _plotting_module()
+    rows = [
+        {
+            "arch": "u128",
+            "dataset_tag": f"d2p{power:02d}",
+            "dataset_size": 2**power,
+            "run_name": f"u128_d2p{power:02d}",
+            "config": f"configs/u128_d2p{power:02d}.yaml",
+            "sample_path": f"samples/u128_d2p{power:02d}_{{sample_label}}_seed{{seed}}.npz",
+        }
+        for power in (6, 8, 10, 12)
+    ]
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(__import__("json").dumps({"rows": rows}))
+
+    with pytest.raises(ValueError, match=r"missing U-Net-128 runs.*32768"):
+        plotting.build_nearest_training_panels(
+            tmp_path,
+            manifest,
+            tmp_path / "cache",
+        )
 
 
 def test_authoritative_slope_annotation_keeps_interval():
