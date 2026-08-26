@@ -60,14 +60,14 @@ def _complete_u128_curves(curves: list[dict[str, object]]) -> list[dict[str, obj
 
 
 def _complete_u128_metrics(metrics: pd.DataFrame) -> pd.DataFrame:
-    required = {"arch", "dataset_size", "hist_l1", "pk_log10_mae"}
+    required = {"arch", "dataset_size", "hist_l1", "pk_log10_mae", "std_ratio"}
     missing_columns = sorted(required.difference(metrics.columns))
     if missing_columns:
         raise ValueError(f"metrics table is missing columns: {missing_columns}")
 
     selected = metrics.loc[
         metrics["arch"].astype(str).eq("u128"),
-        ["arch", "dataset_size", "hist_l1", "pk_log10_mae"],
+        ["arch", "dataset_size", "hist_l1", "pk_log10_mae", "std_ratio"],
     ].copy()
     selected["dataset_size"] = selected["dataset_size"].astype(int)
     selected = selected.sort_values("dataset_size").reset_index(drop=True)
@@ -78,7 +78,9 @@ def _complete_u128_metrics(metrics: pd.DataFrame) -> pd.DataFrame:
             "paper figure requires the complete UNet-128 sweep at "
             f"{list(U128_DATASET_SIZES)}; observed {list(observed)}"
         )
-    if not np.isfinite(selected[["hist_l1", "pk_log10_mae"]].to_numpy(dtype=float)).all():
+    if not np.isfinite(
+        selected[["hist_l1", "pk_log10_mae", "std_ratio"]].to_numpy(dtype=float)
+    ).all():
         raise ValueError("complete UNet-128 sweep contains non-finite physical metrics")
     return selected
 
@@ -96,18 +98,23 @@ def build_summary_statistics_figure(
     set_paper_style()
     figure, axes = plt.subplots(
         1,
-        2,
+        3,
         figsize=(FULL_W, 2.35),
         constrained_layout=True,
     )
     exponents = np.log2(selected["dataset_size"].to_numpy(dtype=float))
     color = "#00796B"
     panels = (
-        ("hist_l1", r"One-point PDF $L_1$ error", "(a) One-point distribution"),
+        ("hist_l1", r"PDF $L_1$ distance", "(a) One-point PDF"),
         (
             "pk_log10_mae",
             r"Mean $|\log_{10}(P_{\rm gen}/P_{\rm real})|$",
             "(b) Power spectrum",
+        ),
+        (
+            "std_ratio",
+            r"$\sigma_{\rm gen}/\sigma_{\rm real}$",
+            "(c) Field variance",
         ),
     )
 
@@ -123,10 +130,23 @@ def build_summary_statistics_figure(
             linewidth=0.65,
             zorder=2,
         )
-        axis.set_title(title, loc="left", pad=4.0)
-        axis.set_ylabel(ylabel)
+        axis.set_title(title, loc="left", pad=6.0, fontsize=9.2)
+        axis.set_ylabel(ylabel, fontsize=9.5)
         axis.set_xlim(5.7, 15.3)
-        axis.set_ylim(bottom=0.0)
+        if column == "std_ratio":
+            axis.axhline(
+                1.0,
+                color="#777777",
+                linewidth=0.7,
+                linestyle=(0, (3.0, 2.0)),
+                zorder=0,
+            )
+            low = min(float(np.min(values)), 1.0)
+            high = max(float(np.max(values)), 1.0)
+            padding = max(0.03, 0.12 * (high - low))
+            axis.set_ylim(low - padding, high + padding)
+        else:
+            axis.set_ylim(bottom=0.0)
         axis.set_xticks(
             [6, 8, 10, 12, 14],
             [rf"$2^{{{exponent}}}$" for exponent in [6, 8, 10, 12, 14]],
@@ -134,7 +154,7 @@ def build_summary_statistics_figure(
         axis.grid(False)
         style_axis(axis)
 
-    figure.supxlabel(r"Training images $N_{\rm 2D}$", fontsize=9)
+    figure.supxlabel(r"Training images $N_{\rm 2D}$", fontsize=9.5)
     figure.savefig(
         output,
         format="pdf",
