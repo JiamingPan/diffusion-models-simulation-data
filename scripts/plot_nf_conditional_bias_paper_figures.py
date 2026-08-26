@@ -322,16 +322,23 @@ def build_conditional_coverage_figure(
                 zorder=3,
             )
 
-    axis.text(0.45, 0.82, "underconfident", color="0.38", fontsize=8.5)
-    axis.text(0.72, 0.25, "overconfident", color="0.38", fontsize=8.5)
-    axis.set_xlabel("Nominal coverage")
-    axis.set_ylabel("Empirical coverage")
+    axis.text(0.45, 0.82, "underconfident", color="0.38", fontsize=10.0)
+    axis.text(0.72, 0.25, "overconfident", color="0.38", fontsize=10.0)
+    axis.set_xlabel("Nominal coverage", fontsize=11.0)
+    axis.set_ylabel("Empirical coverage", fontsize=11.0)
     axis.set_xlim(0.0, 1.0)
     axis.set_ylim(0.0, 1.0)
     axis.set_xticks(np.linspace(0.0, 1.0, 6))
     axis.set_yticks(np.linspace(0.0, 1.0, 6))
     style_axis(axis)
-    axis.legend(frameon=False, loc="upper left", ncol=1, handlelength=2.2)
+    axis.tick_params(axis="both", labelsize=9.5)
+    axis.legend(
+        frameon=False,
+        loc="upper left",
+        ncol=1,
+        handlelength=2.2,
+        fontsize=9.5,
+    )
     return figure, report
 
 

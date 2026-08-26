@@ -274,6 +274,10 @@ def test_conditional_coverage_figure_shows_three_training_regimes_against_calibr
         _assert_paper_axis(axis)
         assert axis.get_xlabel() == "Nominal coverage"
         assert axis.get_ylabel() == "Empirical coverage"
+        assert axis.xaxis.label.get_fontsize() >= 11.0
+        assert axis.yaxis.label.get_fontsize() >= 11.0
+        assert all(label.get_fontsize() >= 9.5 for label in axis.get_xticklabels())
+        assert all(label.get_fontsize() >= 9.5 for label in axis.get_yticklabels())
         assert axis.get_xlim() == pytest.approx((0.0, 1.0))
         assert axis.get_ylim() == pytest.approx((0.0, 1.0))
         labels = axis.get_legend_handles_labels()[1]
@@ -293,7 +297,12 @@ def test_conditional_coverage_figure_shows_three_training_regimes_against_calibr
             "underconfident",
             "overconfident",
         }
-        assert all(text.get_fontsize() >= 8.0 for text in region_labels.values())
+        assert all(text.get_fontsize() >= 10.0 for text in region_labels.values())
+        assert axis.get_legend().get_texts()
+        assert all(
+            text.get_fontsize() >= 9.5
+            for text in axis.get_legend().get_texts()
+        )
         assert plotting.COVERAGE_MARKERS == {0.68: "o", 0.95: "s"}
         plotted_sizes = set(report.loc[report["plotted"], "dataset_size"])
         assert plotted_sizes == {2**7, 2**10, 2**14}
