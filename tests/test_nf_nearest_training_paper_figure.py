@@ -176,7 +176,16 @@ def test_three_row_figure_and_csv_contract(tmp_path):
         assert "Closest training" in image_axes[1, 0].get_ylabel()
         assert spectrum_axes[0].get_ylabel() == r"$R(k)=P_{\rm gen}/P_{\rm real}$"
         assert all(axis.get_ylim() == pytest.approx(spectrum_axes[0].get_ylim()) for axis in spectrum_axes)
-        assert all(max(line.get_xdata()) <= 64.0 for axis in spectrum_axes for line in axis.lines)
+        expected_k_max = 2.0 * np.pi * 64.0 / 25.0
+        assert all(max(line.get_xdata()) <= expected_k_max + 1.0e-9 for axis in spectrum_axes for line in axis.lines)
+        assert all(
+            axis.get_xlabel() == r"$k\,[h\,\mathrm{Mpc}^{-1}]$"
+            for axis in spectrum_axes
+        )
+        assert all(
+            [tick.get_text() for tick in axis.get_xticklabels()] == ["0", "8", "16"]
+            for axis in spectrum_axes
+        )
         assert spectrum_axes[0].get_ylim()[1] >= max(
             float(np.max(panel["pk_ratio"])) for panel in panels
         )
@@ -186,6 +195,12 @@ def test_three_row_figure_and_csv_contract(tmp_path):
             image.get_interpolation() == "none"
             for axis in image_axes.flat
             for image in axis.images
+        )
+        figure.canvas.draw()
+        renderer = figure.canvas.get_renderer()
+        assert all(
+            axis.title.get_window_extent(renderer).y1 <= figure.bbox.y1
+            for axis in image_axes[0]
         )
 
         pdf_path = tmp_path / "nearest_training_u128.pdf"

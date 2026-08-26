@@ -259,7 +259,7 @@ def test_coverage_summary_fails_closed_on_inconsistent_draw_counts():
         plotting.compute_conditional_coverage(samples, bootstrap=20, seed=2)
 
 
-def test_conditional_coverage_figure_is_single_panel_and_paper_ready(tmp_path):
+def test_conditional_coverage_figure_shows_three_training_regimes_against_calibration(tmp_path):
     plotting = _module()
     figure, report = plotting.build_conditional_coverage_figure(
         _posterior_sample_table(),
@@ -267,33 +267,40 @@ def test_conditional_coverage_figure_is_single_panel_and_paper_ready(tmp_path):
         seed=17,
     )
     try:
-        assert figure.get_size_inches() == pytest.approx((6.75, 2.35))
+        assert figure.get_size_inches() == pytest.approx((6.75, 2.70))
         assert figure._suptitle is None
         assert len(figure.axes) == 1
         axis = figure.axes[0]
         _assert_paper_axis(axis)
-        assert axis.get_xlabel() == r"Training images $N_{2D}$"
+        assert axis.get_xlabel() == "Nominal coverage"
         assert axis.get_ylabel() == "Empirical coverage"
-        assert axis.get_xlim() == pytest.approx((5.65, 15.35))
-        assert axis.get_ylim() == pytest.approx((0.0, 1.02))
-        assert [tick.get_text() for tick in axis.get_xticklabels()] == [
-            rf"$2^{{{power}}}$" if power % 2 == 0 else "" for power in range(6, 16)
-        ]
+        assert axis.get_xlim() == pytest.approx((0.0, 1.0))
+        assert axis.get_ylim() == pytest.approx((0.0, 1.0))
         labels = axis.get_legend_handles_labels()[1]
-        assert labels == ["68% interval", "95% interval"]
-        horizontal_targets = {
-            float(line.get_ydata()[0])
+        assert labels == [
+            r"$N_{2D}=2^{7}$ memorizing",
+            r"$N_{2D}=2^{10}$ transitional",
+            r"$N_{2D}=2^{14}$ generalizing",
+        ]
+        calibration_lines = [
+            line
             for line in axis.lines
-            if len(np.atleast_1d(line.get_ydata())) == 2
-            and np.allclose(line.get_ydata()[0], line.get_ydata()[1])
+            if np.allclose(line.get_xdata(), line.get_ydata())
+        ]
+        assert len(calibration_lines) == 1
+        assert {text.get_text() for text in axis.texts} == {
+            "underconfident",
+            "overconfident",
         }
-        assert {0.68, 0.95}.issubset(horizontal_targets)
+        plotted_sizes = set(report.loc[report["plotted"], "dataset_size"])
+        assert plotted_sizes == {2**7, 2**10, 2**14}
+        assert report["nominal_coverage"].nunique() >= 41
         output = tmp_path / "conditional_recovery_transition.pdf"
         plotting.save_figure(figure, output)
     finally:
         plt.close(figure)
     assert output.read_bytes().startswith(b"%PDF")
-    assert len(report) == 20
+    assert len(report) >= 410
 
 
 def test_generalization_figure_uses_the_identical_training_axis(tmp_path):
@@ -376,6 +383,7 @@ def test_results_notebook_contains_idempotent_paper_figure_section(tmp_path):
     assert [cell["cell_type"] for cell in tagged] == ["markdown", "code", "markdown"]
     source_text = "\n".join("".join(cell.get("source", [])) for cell in tagged)
     assert "conditional_recovery_transition.pdf" in source_text
+    assert "conditional_recovery_coverage_curves.csv" in source_text
     assert "generalization_transition.pdf" in source_text
     assert "nearest_training_u128.pdf" in source_text
     assert "nearest_training_u128_preview.png" in source_text
@@ -384,6 +392,8 @@ def test_results_notebook_contains_idempotent_paper_figure_section(tmp_path):
     assert "bias_probe_per_sample_predictions.csv" in source_text
     assert "build_conditional_coverage_figure" in source_text
     assert "nominal_coverage" in source_text and "empirical_coverage" in source_text
+    assert "conditional_coverage_report.to_csv" in source_text
+    assert "conditional_coverage_report['plotted']" in source_text
     assert "paper_dimensions" in source_text
     assert "plot_nf_conditional_bias_paper_figures" in source_text
     assert "paper_generalization" in source_text

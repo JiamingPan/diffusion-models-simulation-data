@@ -43,12 +43,27 @@ REGIME_COLORS = {
 }
 TRANSITION_COLOR = "#4D4D4D"
 COVERAGE_LEVELS = (0.68, 0.95)
+COVERAGE_CURVE_LEVELS = tuple(
+    sorted(set(np.linspace(0.0, 1.0, 51).tolist()) | set(COVERAGE_LEVELS))
+)
+COVERAGE_POWERS = (7, 10, 14)
 COVERAGE_STYLES = {
-    0.68: {"color": "#0072B2", "marker": "o", "label": "68% interval"},
-    0.95: {"color": "#D55E00", "marker": "s", "label": "95% interval"},
+    7: {
+        "color": "#C23B2A",
+        "label": r"$N_{2D}=2^{7}$ memorizing",
+    },
+    10: {
+        "color": "#E67E22",
+        "label": r"$N_{2D}=2^{10}$ transitional",
+    },
+    14: {
+        "color": "#0072B2",
+        "label": r"$N_{2D}=2^{14}$ generalizing",
+    },
 }
 EXPECTED_HELDOUT_COSMOLOGIES = 32
 EXPECTED_NEAREST_SAMPLES = 512
+CAMELS_MAP_SIDE_HINV_MPC = 25.0
 REGIME_LABELS = {
     7: "memorization regime",
     14: "generalization regime",
@@ -158,6 +173,7 @@ def _omega_tables(
 def compute_conditional_coverage(
     samples: pd.DataFrame,
     *,
+    nominal_coverages: tuple[float, ...] = COVERAGE_LEVELS,
     bootstrap: int = 2000,
     seed: int = 123,
 ) -> pd.DataFrame:
@@ -202,11 +218,19 @@ def compute_conditional_coverage(
             f"found {heldout_counts.to_dict()}"
         )
 
+    nominal_coverages = tuple(float(value) for value in nominal_coverages)
+    if not nominal_coverages:
+        raise ValueError("at least one nominal coverage is required")
+    if any(value < 0.0 or value > 1.0 for value in nominal_coverages):
+        raise ValueError("nominal coverages must lie in [0, 1]")
+    if len(set(nominal_coverages)) != len(nominal_coverages):
+        raise ValueError("nominal coverages must be unique")
+
     interval_rows: list[dict[str, float | int | bool]] = []
     for (dataset_size, heldout_sim), group in omega.groupby(group_columns, sort=True):
         truth = float(group["theta_in"].iloc[0])
         draws = group["theta_rec"].to_numpy(float)
-        for nominal in COVERAGE_LEVELS:
+        for nominal in nominal_coverages:
             tail = (1.0 - nominal) / 2.0
             lower, upper = np.quantile(draws, [tail, 1.0 - tail])
             interval_rows.append(
@@ -254,55 +278,79 @@ def build_conditional_coverage_figure(
     bootstrap: int = 2000,
     seed: int = 123,
 ) -> tuple[plt.Figure, pd.DataFrame]:
-    """Plot empirical 68% and 95% coverage across the ten training sizes."""
+    """Plot full calibration curves for representative training-set sizes."""
 
     set_paper_style()
-    report = compute_conditional_coverage(samples, bootstrap=bootstrap, seed=seed)
-    figure, axis = plt.subplots(figsize=(FULL_W, 2.35))
-    figure.subplots_adjust(left=0.09, right=0.985, bottom=0.24, top=0.95)
+    report = compute_conditional_coverage(
+        samples,
+        nominal_coverages=COVERAGE_CURVE_LEVELS,
+        bootstrap=bootstrap,
+        seed=seed,
+    )
+    selected_sizes = {2**power for power in COVERAGE_POWERS}
+    report["plotted"] = report["dataset_size"].isin(selected_sizes)
+    figure, axis = plt.subplots(figsize=(FULL_W, 2.70))
+    figure.subplots_adjust(left=0.09, right=0.985, bottom=0.20, top=0.96)
 
-    for nominal in COVERAGE_LEVELS:
-        plot_style = COVERAGE_STYLES[nominal]
-        sub = report[np.isclose(report["nominal_coverage"], nominal)].sort_values(
-            "dataset_size"
+    axis.plot(
+        (0.0, 1.0),
+        (0.0, 1.0),
+        color="0.15",
+        ls="--",
+        lw=0.9,
+        label="_nolegend_",
+        zorder=0,
+    )
+    for power in COVERAGE_POWERS:
+        dataset_size = 2**power
+        plot_style = COVERAGE_STYLES[power]
+        sub = report[report["dataset_size"] == dataset_size].sort_values(
+            "nominal_coverage"
         )
-        x = np.log2(sub["dataset_size"].to_numpy(float))
-        y = sub["empirical_coverage"].to_numpy(float)
-        lower = np.maximum(y - sub["coverage_ci16"].to_numpy(float), 0.0)
-        upper = np.maximum(sub["coverage_ci84"].to_numpy(float) - y, 0.0)
-        axis.axhline(
-            nominal,
+        axis.plot(
+            sub["nominal_coverage"],
+            sub["empirical_coverage"],
             color=plot_style["color"],
-            ls="--",
-            lw=0.8,
-            alpha=0.55,
-            label="_nolegend_",
-            zorder=0,
-        )
-        axis.errorbar(
-            x,
-            y,
-            yerr=np.vstack((lower, upper)),
-            color=plot_style["color"],
-            ecolor=plot_style["color"],
-            marker=plot_style["marker"],
-            ms=4.2,
-            markeredgecolor="white",
-            markeredgewidth=0.45,
-            lw=1.2,
-            elinewidth=0.8,
-            capsize=2.0,
+            lw=1.45,
             label=plot_style["label"],
             zorder=2,
         )
+        focal = sub[sub["nominal_coverage"].isin(COVERAGE_LEVELS)]
+        axis.scatter(
+            focal["nominal_coverage"],
+            focal["empirical_coverage"],
+            s=20,
+            color=plot_style["color"],
+            edgecolor="0.15",
+            linewidth=0.45,
+            zorder=3,
+        )
 
-    style_training_size_axis(axis, label_every=2)
-    axis.set_xlabel(r"Training images $N_{2D}$")
+    axis.text(0.48, 0.88, "underconfident", color="0.42", fontsize=7.0)
+    axis.text(0.62, 0.34, "overconfident", color="0.42", fontsize=7.0)
+    axis.set_xlabel("Nominal coverage")
     axis.set_ylabel("Empirical coverage")
-    axis.set_ylim(0.0, 1.02)
+    axis.set_xlim(0.0, 1.0)
+    axis.set_ylim(0.0, 1.0)
+    axis.set_xticks(np.linspace(0.0, 1.0, 6))
     axis.set_yticks(np.linspace(0.0, 1.0, 6))
-    axis.legend(frameon=False, loc="lower right", ncol=2, handlelength=2.2)
+    style_axis(axis)
+    axis.legend(frameon=False, loc="upper left", ncol=1, handlelength=2.2)
     return figure, report
+
+
+def fourier_bin_to_physical_k(
+    fourier_bin: np.ndarray | float,
+    *,
+    side_length_hinv_mpc: float = CAMELS_MAP_SIDE_HINV_MPC,
+) -> np.ndarray:
+    """Convert radial Fourier-bin index to comoving ``h Mpc^-1``."""
+
+    if float(side_length_hinv_mpc) <= 0.0:
+        raise ValueError("map side length must be positive")
+    return 2.0 * np.pi * np.asarray(fourier_bin, dtype=float) / float(
+        side_length_hinv_mpc
+    )
 
 
 def build_conditional_recovery_figure(
@@ -697,10 +745,17 @@ def build_nearest_training_figure(panels: list[dict[str, Any]]) -> plt.Figure:
     figure, axes = plt.subplots(
         3,
         len(NEAREST_DATASET_SIZES),
-        figsize=(FULL_W, 3.25),
+        figsize=(FULL_W, 3.35),
         gridspec_kw={"height_ratios": (1.0, 1.0, 0.72)},
     )
-    figure.subplots_adjust(left=0.085, right=0.995, bottom=0.14, top=0.965, wspace=0.10, hspace=0.10)
+    figure.subplots_adjust(
+        left=0.085,
+        right=0.980,
+        bottom=0.16,
+        top=0.925,
+        wspace=0.17,
+        hspace=0.12,
+    )
 
     image_values = np.concatenate(
         [
@@ -777,19 +832,26 @@ def build_nearest_training_figure(panels: list[dict[str, Any]]) -> plt.Figure:
         if np.nanmax(k_bins) > 64.0 + 1.0e-9:
             raise ValueError(f"post-Nyquist k bin reached the paper figure: {np.nanmax(k_bins)}")
         spectrum_axis.axhline(1.0, color="0.42", ls="--", lw=0.7)
-        spectrum_axis.plot(k_bins, ratio, color="0.20", lw=0.9)
-        spectrum_axis.set_xlim(left=0.0, right=64.0)
+        physical_k = fourier_bin_to_physical_k(k_bins)
+        physical_k_max = float(fourier_bin_to_physical_k(64.0))
+        spectrum_axis.plot(physical_k, ratio, color="0.20", lw=0.9)
+        spectrum_axis.set_xlim(left=0.0, right=physical_k_max)
         spectrum_axis.set_ylim(shared_ratio_limits)
-        spectrum_axis.set_xticks((0, 32, 64))
+        spectrum_axis.set_xticks((0.0, 8.0, 16.0))
+        spectrum_axis.set_xticklabels(("0", "8", "16"))
+        spectrum_axis.set_xlabel(
+            r"$k\,[h\,\mathrm{Mpc}^{-1}]$",
+            labelpad=2.0,
+            fontsize=6.5,
+        )
         style_axis(spectrum_axis)
+        spectrum_axis.tick_params(axis="x", labelsize=7.0)
         if column:
             spectrum_axis.tick_params(labelleft=False)
-            spectrum_axis.set_xticklabels([])
 
     axes[0, 0].set_ylabel("Generated", labelpad=5.0)
     axes[1, 0].set_ylabel("Closest training", labelpad=5.0)
     axes[2, 0].set_ylabel(r"$R(k)=P_{\rm gen}/P_{\rm real}$", labelpad=5.0)
-    axes[2, 0].set_xlabel(r"$k$")
     return figure
 
 
@@ -896,6 +958,9 @@ def main() -> None:
     args = _parse_args()
     outputs = {
         "conditional": args.output_dir / "conditional_recovery_transition.pdf",
+        "conditional_coverage_table": (
+            args.output_dir / "conditional_recovery_coverage_curves.csv"
+        ),
         "generalization": args.output_dir / "generalization_transition.pdf",
         "nearest": args.output_dir / "nearest_training_u128.pdf",
         "nearest_preview": args.output_dir / "nearest_training_u128_preview.png",
@@ -905,6 +970,7 @@ def main() -> None:
     samples = pd.read_csv(args.samples)
     conditional, report = build_conditional_coverage_figure(samples)
     dimensions = {"conditional": save_figure(conditional, outputs["conditional"])}
+    report.to_csv(outputs["conditional_coverage_table"], index=False)
     plt.close(conditional)
     generalization = build_generalization_figure(pd.read_csv(args.generalization))
     dimensions["generalization"] = save_figure(generalization, outputs["generalization"])
@@ -930,6 +996,10 @@ def main() -> None:
         print(f"{name}: {output} ({dimensions[name][0]:.3f} x {dimensions[name][1]:.3f} in)")
     print(f"nearest_table: {outputs['nearest_table']} ({len(nearest_table)} rows)")
     print(f"nearest_preview: {outputs['nearest_preview']} (300 dpi)")
+    print(
+        "conditional_coverage_table: "
+        f"{outputs['conditional_coverage_table']} ({len(report)} rows)"
+    )
     print(
         report[
             [

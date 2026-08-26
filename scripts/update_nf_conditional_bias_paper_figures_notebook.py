@@ -30,9 +30,10 @@ def _cells() -> list[dict]:
 ## Paper-ready verification figures
 
 This cell exports the conditional-recovery result and its comparison figures at the exact paper width.
-The conditional figure reports empirical coverage of the central 68\% and 95\% recovered-$\Omega_m$
-intervals across all ten training-set sizes. Coverage is computed directly from the individual generated-map
-probe recoveries, with 16th--84th percentile bootstrap intervals over the 32 held-out cosmologies. It also
+The conditional figure reports full empirical calibration curves for representative memorizing,
+transitional, and generalizing training-set sizes. Coverage is computed directly from the individual generated-map
+probe recoveries over the 32 held-out cosmologies; the plotted markers identify the nominal 68\% and 95\%
+intervals. It also
 saves the frozen VGG16+MLP heldout-real slope/$R^2$ summary used to establish which conditional directions
 the probe can verify. The U-Net-128 audit uses $N_{2D}=2^6,2^8,2^{10},2^{12},2^{15}$
 to show copying, the intermediate degradation, and recovery at high data. The normalized SSCD Fréchet
@@ -40,7 +41,8 @@ annotation compares 512 generated maps with 512 held-out real maps and divides b
 independent 512-map held-out-real splits. The CSV records both raw distances and the ratio. This held-out-real
 reference tests whether generated maps remain in distribution. By contrast, the third-row Nyquist-limited
 power-spectrum ratio uses each model's exact configured training subset as its real reference, because that
-row tests whether the model reproduces the statistics of the distribution on which it was trained.
+row tests whether the model reproduces the statistics of the distribution on which it was trained. Its Fourier
+coordinate is converted to physical units with the CAMELS map width $L=25\,h^{-1}\mathrm{Mpc}$.
 """,
         ),
         _cell(
@@ -106,6 +108,9 @@ if missing_paper_inputs:
 
 paper_outputs = {
     'conditional': paper_figure_dir / 'conditional_recovery_transition.pdf',
+    'conditional_coverage_table': (
+        paper_figure_dir / 'conditional_recovery_coverage_curves.csv'
+    ),
     'generalization': paper_figure_dir / 'generalization_transition.pdf',
     'nearest': paper_figure_dir / 'nearest_training_u128.pdf',
     'nearest_preview': paper_figure_dir / 'nearest_training_u128_preview.png',
@@ -123,6 +128,9 @@ conditional_figure, conditional_coverage_report = build_conditional_coverage_fig
 paper_dimensions = {
     'conditional': save_figure(conditional_figure, paper_outputs['conditional'])
 }
+conditional_coverage_report.to_csv(
+    paper_outputs['conditional_coverage_table'], index=False
+)
 display(Markdown('### Conditional recovery coverage'))
 display(conditional_figure)
 plt.close(conditional_figure)
@@ -166,26 +174,32 @@ for paper_name in ('conditional', 'generalization', 'nearest', 'probe'):
     print(f'{paper_name}: {paper_path} ({width:.3f} x {height:.3f} in)')
 print(f"nearest_table: {paper_outputs['nearest_table']} ({len(nearest_training_report)} rows)")
 print(f"nearest_preview: {paper_outputs['nearest_preview']} (300 dpi)")
+print(
+    f"conditional_coverage_table: {paper_outputs['conditional_coverage_table']} "
+    f"({len(conditional_coverage_report)} rows)"
+)
 
 display(Markdown('### Exact saved $\\Omega_m$ coverage'))
 display(
     conditional_coverage_report[
+        conditional_coverage_report['plotted']
+        & conditional_coverage_report['nominal_coverage'].isin([0.68, 0.95])
+    ][
         [
             'dataset_size', 'nominal_coverage', 'empirical_coverage',
             'coverage_ci16', 'coverage_ci84', 'n_heldout',
             'draws_per_cosmology',
         ]
-    ].sort_values('dataset_size').reset_index(drop=True)
+    ].sort_values(['dataset_size', 'nominal_coverage']).reset_index(drop=True)
 )
 """,
         ),
         _cell(
             "markdown",
             r"""
-The PDFs above contain no figure-level titles; put the scientific description, nominal-coverage reference
-line definitions,
-and training protocol in the LaTeX captions. The conditional and generalization figures use the same
-$2^6$--$2^{15}$ horizontal axis so their transitions can be compared directly when stacked in the paper.
+The PDFs above contain no figure-level titles; put the scientific description, ideal-calibration diagonal,
+and training protocol in the LaTeX captions. The conditional coverage curve uses the measured recovered-$\Omega_m$
+draws at $N_{2D}=2^7,2^{10},2^{14}$; curves below the diagonal are overconfident.
 The U-Net-128 table records the exact-subset configuration, copying similarity, power-spectrum error,
 normalized SSCD Fr\'echet distance, and equal evaluation sample counts for every displayed column.
 """,
