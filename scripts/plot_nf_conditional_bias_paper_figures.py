@@ -48,6 +48,7 @@ COVERAGE_STYLES = {
     0.95: {"color": "#D55E00", "marker": "s", "label": "95% interval"},
 }
 EXPECTED_HELDOUT_COSMOLOGIES = 32
+EXPECTED_NEAREST_SAMPLES = 512
 REGIME_LABELS = {
     7: "memorization regime",
     14: "generalization regime",
@@ -66,16 +67,22 @@ ARCHITECTURES = (
     ("u128", "U-Net-128", "#D55E00", "o"),
     ("u256", "U-Net-256", "#0072B2", "s"),
 )
-NEAREST_POWERS = tuple(range(6, 12))
+NEAREST_POWERS = (6, 8, 10, 12, 15)
 NEAREST_DATASET_SIZES = tuple(2**power for power in NEAREST_POWERS)
 NEAREST_TABLE_COLUMNS = (
     "dataset_tag",
     "dataset_size",
     "cos_max",
     "pk_log10_mae",
+    "generated_to_heldout_real_frechet",
+    "heldout_real_split_frechet",
     "sscd_frechet_normalized",
     "n_generated",
     "n_real_split",
+    "n_heldout_real_available",
+    "sscd_reference_kind",
+    "generated_cache_path",
+    "heldout_real_cache_path",
     "config_path",
 )
 
@@ -561,11 +568,34 @@ def build_nearest_training_panels(
         for row in _load_manifest(manifest_path)
         if row.get("arch") == "u128" and int(row.get("dataset_size", -1)) in NEAREST_DATASET_SIZES
     ]
-    by_size = {int(row["dataset_size"]): row for row in selected}
-    if len(selected) != len(NEAREST_DATASET_SIZES) or set(by_size) != set(NEAREST_DATASET_SIZES):
-        raise ValueError(
-            "expected exactly one U-Net-128 manifest row for each of "
-            f"{list(NEAREST_DATASET_SIZES)}, found {[int(row['dataset_size']) for row in selected]}"
+    grouped: dict[int, list[dict[str, Any]]] = {}
+    for row in selected:
+        grouped.setdefault(int(row["dataset_size"]), []).append(row)
+    missing_sizes = sorted(set(NEAREST_DATASET_SIZES) - set(grouped))
+    if missing_sizes:
+        raise ValueError(f"missing U-Net-128 runs for dataset sizes: {missing_sizes}")
+    duplicate_sizes = sorted(size for size, rows in grouped.items() if len(rows) != 1)
+    if duplicate_sizes:
+        raise ValueError(f"duplicate U-Net-128 runs for dataset sizes: {duplicate_sizes}")
+    by_size = {size: rows[0] for size, rows in grouped.items()}
+
+    resolved_samples = {
+        size: _sample_path(
+            project_dir,
+            row,
+            seed=int(seed),
+            sample_label=sample_label,
+        )
+        for size, row in by_size.items()
+    }
+    missing_samples = [
+        f"dataset_size={size} run={by_size[size].get('run_name', '<unknown>')} path={path}"
+        for size, path in resolved_samples.items()
+        if not path.is_file()
+    ]
+    if missing_samples:
+        raise FileNotFoundError(
+            "missing requested U-Net-128 sample archives:\n" + "\n".join(missing_samples)
         )
 
     panels: list[dict[str, Any]] = []
@@ -573,13 +603,14 @@ def build_nearest_training_panels(
         row = by_size[dataset_size]
         run_name = str(row["run_name"])
         config_path = _project_path(project_dir, row["config"])
-        sample_path = _sample_path(
-            project_dir,
-            row,
-            seed=int(seed),
-            sample_label=sample_label,
-        )
+        sample_path = resolved_samples[dataset_size]
         generated = load_npz_samples(sample_path)
+        if len(generated) != EXPECTED_NEAREST_SAMPLES:
+            raise RuntimeError(
+                "paper Fréchet audit requires exactly "
+                f"{EXPECTED_NEAREST_SAMPLES} generated maps, found {len(generated)}: "
+                f"{sample_path}"
+            )
         reference = summarize_exact_training_reference(
             config_path,
             expected_slices=int(row.get("actual_2d", row["dataset_size"])),
@@ -610,11 +641,17 @@ def build_nearest_training_panels(
                 f"samples={len(generated)}, cache={len(generated_features)}, "
                 f"sample_path={sample_path}, cache_path={generated_cache}"
             )
-        frechet = normalized_sscd_frechet(
-            heldout_features,
-            generated_features,
-            seed=int(seed),
-        )
+        try:
+            frechet = normalized_sscd_frechet(
+                heldout_features,
+                generated_features,
+                seed=int(seed),
+            )
+        except ValueError as error:
+            raise ValueError(
+                f"{error}; heldout_real_cache={heldout_cache}; "
+                f"generated_cache={generated_cache}"
+            ) from error
         panels.append(
             {
                 "dataset_tag": str(row["dataset_tag"]),
@@ -625,9 +662,17 @@ def build_nearest_training_panels(
                 "k_bins": reference["k_bins"],
                 "pk_ratio": reference["pk_ratio"],
                 "pk_log10_mae": float(reference["pk_log10_mae"]),
+                "generated_to_heldout_real_frechet": float(
+                    frechet["generated_to_real_frechet"]
+                ),
+                "heldout_real_split_frechet": float(frechet["real_split_frechet"]),
                 "sscd_frechet_normalized": float(frechet["sscd_frechet_normalized"]),
                 "n_generated": int(frechet["n_generated"]),
                 "n_real_split": int(frechet["n_real_split"]),
+                "n_heldout_real_available": int(frechet["n_heldout_real_available"]),
+                "sscd_reference_kind": str(frechet["reference_kind"]),
+                "generated_cache_path": str(generated_cache),
+                "heldout_real_cache_path": str(heldout_cache),
                 "config_path": str(config_path),
             }
         )
@@ -638,15 +683,20 @@ def build_nearest_training_figure(panels: list[dict[str, Any]]) -> plt.Figure:
     """Build the generated/nearest/P(k) three-row U-Net-128 paper figure."""
 
     if len(panels) != len(NEAREST_DATASET_SIZES):
-        raise ValueError(f"expected six nearest-training panels, found {len(panels)}")
+        raise ValueError(
+            f"expected {len(NEAREST_DATASET_SIZES)} nearest-training panels, found {len(panels)}"
+        )
     ordered = sorted(panels, key=lambda row: int(row["dataset_size"]))
     if [int(row["dataset_size"]) for row in ordered] != list(NEAREST_DATASET_SIZES):
-        raise ValueError("nearest-training panels do not cover N_2D=2^6,...,2^11 exactly")
+        raise ValueError(
+            "nearest-training panels do not cover "
+            f"N_2D={list(NEAREST_DATASET_SIZES)} exactly"
+        )
 
     set_paper_style()
     figure, axes = plt.subplots(
         3,
-        6,
+        len(NEAREST_DATASET_SIZES),
         figsize=(FULL_W, 3.25),
         gridspec_kw={"height_ratios": (1.0, 1.0, 0.72)},
     )
