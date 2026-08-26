@@ -41,6 +41,7 @@ def set_paper_style() -> None:
             "ps.fonttype": 42,
             "savefig.transparent": False,
             "savefig.facecolor": "white",
+            "savefig.bbox": None,
         }
     )
 
