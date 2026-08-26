@@ -47,18 +47,19 @@ COVERAGE_CURVE_LEVELS = tuple(
     sorted(set(np.linspace(0.0, 1.0, 51).tolist()) | set(COVERAGE_LEVELS))
 )
 COVERAGE_POWERS = (7, 10, 14)
+COVERAGE_MARKERS = {0.68: "o", 0.95: "s"}
 COVERAGE_STYLES = {
     7: {
         "color": "#C23B2A",
-        "label": r"$N_{2D}=2^{7}$ memorizing",
+        "label": r"$N_{2D}=2^{7}$ memorization regime",
     },
     10: {
         "color": "#E67E22",
-        "label": r"$N_{2D}=2^{10}$ transitional",
+        "label": r"$N_{2D}=2^{10}$",
     },
     14: {
         "color": "#0072B2",
-        "label": r"$N_{2D}=2^{14}$ generalizing",
+        "label": r"$N_{2D}=2^{14}$ generalization regime",
     },
 }
 EXPECTED_HELDOUT_COSMOLOGIES = 32
@@ -289,8 +290,8 @@ def build_conditional_coverage_figure(
     )
     selected_sizes = {2**power for power in COVERAGE_POWERS}
     report["plotted"] = report["dataset_size"].isin(selected_sizes)
-    figure, axis = plt.subplots(figsize=(FULL_W, 2.70))
-    figure.subplots_adjust(left=0.09, right=0.985, bottom=0.20, top=0.96)
+    figure, axis = plt.subplots(figsize=(FULL_W, 3.25))
+    figure.subplots_adjust(left=0.09, right=0.985, bottom=0.17, top=0.97)
 
     axis.plot(
         (0.0, 1.0),
@@ -315,19 +316,21 @@ def build_conditional_coverage_figure(
             label=plot_style["label"],
             zorder=2,
         )
-        focal = sub[sub["nominal_coverage"].isin(COVERAGE_LEVELS)]
-        axis.scatter(
-            focal["nominal_coverage"],
-            focal["empirical_coverage"],
-            s=20,
-            color=plot_style["color"],
-            edgecolor="0.15",
-            linewidth=0.45,
-            zorder=3,
-        )
+        for nominal in COVERAGE_LEVELS:
+            focal = sub[np.isclose(sub["nominal_coverage"], nominal)]
+            axis.scatter(
+                focal["nominal_coverage"],
+                focal["empirical_coverage"],
+                s=22,
+                marker=COVERAGE_MARKERS[nominal],
+                color=plot_style["color"],
+                edgecolor="0.15",
+                linewidth=0.45,
+                zorder=3,
+            )
 
-    axis.text(0.48, 0.88, "underconfident", color="0.42", fontsize=7.0)
-    axis.text(0.62, 0.34, "overconfident", color="0.42", fontsize=7.0)
+    axis.text(0.45, 0.82, "underconfident", color="0.38", fontsize=8.5)
+    axis.text(0.72, 0.25, "overconfident", color="0.38", fontsize=8.5)
     axis.set_xlabel("Nominal coverage")
     axis.set_ylabel("Empirical coverage")
     axis.set_xlim(0.0, 1.0)
