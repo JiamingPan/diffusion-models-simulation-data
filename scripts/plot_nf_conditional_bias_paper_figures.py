@@ -31,6 +31,12 @@ REGIME_COLORS = {
     "generalization": "#0072B2",
 }
 TRANSITION_COLOR = "#4D4D4D"
+COVERAGE_LEVELS = (0.68, 0.95)
+COVERAGE_STYLES = {
+    0.68: {"color": "#0072B2", "marker": "o", "label": "68% interval"},
+    0.95: {"color": "#D55E00", "marker": "s", "label": "95% interval"},
+}
+EXPECTED_HELDOUT_COSMOLOGIES = 32
 REGIME_LABELS = {
     7: "memorization regime",
     14: "generalization regime",
@@ -109,6 +115,157 @@ def _omega_tables(
     if not invalid.empty:
         raise ValueError(f"expected one Omega_m fit per size, found {invalid.to_dict()}")
     return omega_points, omega_slopes.sort_values("dataset_size").reset_index(drop=True)
+
+
+def compute_conditional_coverage(
+    samples: pd.DataFrame,
+    *,
+    bootstrap: int = 2000,
+    seed: int = 123,
+) -> pd.DataFrame:
+    """Compute central-interval coverage from individual generated-map recoveries."""
+
+    samples = _single_protocol(samples)
+    required = {
+        "dataset_size",
+        "parameter",
+        "heldout_sim",
+        "seed_index",
+        "theta_in",
+        "theta_rec",
+    }
+    missing = sorted(required - set(samples.columns))
+    if missing:
+        raise ValueError(f"per-sample recovery table is missing columns: {missing}")
+    omega = samples[samples["parameter"] == "Omega_m"].copy()
+    _require_sizes(omega)
+    if omega.empty:
+        raise ValueError("per-sample recovery table has no Omega_m rows")
+
+    group_columns = ["dataset_size", "heldout_sim"]
+    draw_counts = omega.groupby(group_columns, observed=True).size()
+    if draw_counts.nunique() != 1:
+        detail = draw_counts.groupby(level=0).agg(["min", "max"]).to_dict("index")
+        raise ValueError(f"inconsistent posterior-draw counts: {detail}")
+    draws_per_cosmology = int(draw_counts.iloc[0])
+    if draws_per_cosmology < 2:
+        raise ValueError("at least two posterior draws are required per held-out cosmology")
+    duplicate_draws = omega.duplicated(group_columns + ["seed_index"]).any()
+    if duplicate_draws:
+        raise ValueError("duplicate seed_index values found within a held-out cosmology")
+
+    truth_counts = omega.groupby(group_columns, observed=True)["theta_in"].nunique()
+    if not bool((truth_counts == 1).all()):
+        raise ValueError("theta_in is not constant within a held-out cosmology")
+    heldout_counts = omega.groupby("dataset_size", observed=True)["heldout_sim"].nunique()
+    if not bool((heldout_counts == EXPECTED_HELDOUT_COSMOLOGIES).all()):
+        raise ValueError(
+            "expected exactly "
+            f"{EXPECTED_HELDOUT_COSMOLOGIES} held-out cosmologies per training size; "
+            f"found {heldout_counts.to_dict()}"
+        )
+
+    interval_rows: list[dict[str, float | int | bool]] = []
+    for (dataset_size, heldout_sim), group in omega.groupby(group_columns, sort=True):
+        truth = float(group["theta_in"].iloc[0])
+        draws = group["theta_rec"].to_numpy(float)
+        for nominal in COVERAGE_LEVELS:
+            tail = (1.0 - nominal) / 2.0
+            lower, upper = np.quantile(draws, [tail, 1.0 - tail])
+            interval_rows.append(
+                {
+                    "dataset_size": int(dataset_size),
+                    "heldout_sim": int(heldout_sim),
+                    "nominal_coverage": float(nominal),
+                    "covered": bool(lower <= truth <= upper),
+                }
+            )
+    indicators = pd.DataFrame(interval_rows)
+
+    rng = np.random.default_rng(seed)
+    report_rows: list[dict[str, float | int]] = []
+    for (dataset_size, nominal), group in indicators.groupby(
+        ["dataset_size", "nominal_coverage"], sort=True
+    ):
+        covered = group["covered"].to_numpy(float)
+        empirical = float(covered.mean())
+        if bootstrap > 0:
+            indices = rng.integers(0, len(covered), size=(int(bootstrap), len(covered)))
+            bootstrap_values = covered[indices].mean(axis=1)
+            ci16, ci84 = np.quantile(bootstrap_values, [0.16, 0.84])
+        else:
+            ci16 = ci84 = empirical
+        report_rows.append(
+            {
+                "dataset_size": int(dataset_size),
+                "nominal_coverage": float(nominal),
+                "empirical_coverage": empirical,
+                "coverage_ci16": float(ci16),
+                "coverage_ci84": float(ci84),
+                "n_heldout": int(len(covered)),
+                "draws_per_cosmology": draws_per_cosmology,
+            }
+        )
+    return pd.DataFrame(report_rows).sort_values(
+        ["dataset_size", "nominal_coverage"]
+    ).reset_index(drop=True)
+
+
+def build_conditional_coverage_figure(
+    samples: pd.DataFrame,
+    *,
+    bootstrap: int = 2000,
+    seed: int = 123,
+) -> tuple[plt.Figure, pd.DataFrame]:
+    """Plot empirical 68% and 95% coverage across the ten training sizes."""
+
+    set_paper_style()
+    report = compute_conditional_coverage(samples, bootstrap=bootstrap, seed=seed)
+    figure, axis = plt.subplots(figsize=(FULL_W, 2.35))
+    figure.subplots_adjust(left=0.09, right=0.985, bottom=0.24, top=0.95)
+
+    for nominal in COVERAGE_LEVELS:
+        style = COVERAGE_STYLES[nominal]
+        sub = report[np.isclose(report["nominal_coverage"], nominal)].sort_values(
+            "dataset_size"
+        )
+        x = np.log2(sub["dataset_size"].to_numpy(float))
+        y = sub["empirical_coverage"].to_numpy(float)
+        lower = np.maximum(y - sub["coverage_ci16"].to_numpy(float), 0.0)
+        upper = np.maximum(sub["coverage_ci84"].to_numpy(float) - y, 0.0)
+        axis.axhline(
+            nominal,
+            color=style["color"],
+            ls="--",
+            lw=0.8,
+            alpha=0.55,
+            label="_nolegend_",
+            zorder=0,
+        )
+        axis.errorbar(
+            x,
+            y,
+            yerr=np.vstack((lower, upper)),
+            color=style["color"],
+            ecolor=style["color"],
+            marker=style["marker"],
+            ms=4.2,
+            markeredgecolor="white",
+            markeredgewidth=0.45,
+            lw=1.2,
+            elinewidth=0.8,
+            capsize=2.0,
+            label=style["label"],
+            zorder=2,
+        )
+
+    style_training_size_axis(axis, label_every=2)
+    axis.set_xlabel(r"Training images $N_{2D}$")
+    axis.set_ylabel("Empirical coverage")
+    axis.set_ylim(0.0, 1.02)
+    axis.set_yticks(np.linspace(0.0, 1.0, 6))
+    axis.legend(frameon=False, loc="lower right", ncol=2, handlelength=2.2)
+    return figure, report
 
 
 def build_conditional_recovery_figure(
@@ -373,8 +530,7 @@ def save_figure(figure: plt.Figure, output: Path) -> tuple[float, float]:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--points", type=Path, required=True)
-    parser.add_argument("--slopes", type=Path, required=True)
+    parser.add_argument("--samples", type=Path, required=True)
     parser.add_argument("--generalization", type=Path, required=True)
     parser.add_argument("--nearest", type=Path, required=True)
     parser.add_argument("--probe-summary", type=Path, required=True)
@@ -390,9 +546,8 @@ def main() -> None:
         "nearest": args.output_dir / "nearest_training_unet128.pdf",
         "probe": args.output_dir / "vgg_probe_heldout_real.pdf",
     }
-    points = pd.read_csv(args.points)
-    slopes = pd.read_csv(args.slopes)
-    conditional, report = build_conditional_recovery_figure(points, slopes)
+    samples = pd.read_csv(args.samples)
+    conditional, report = build_conditional_coverage_figure(samples)
     dimensions = {"conditional": save_figure(conditional, outputs["conditional"])}
     plt.close(conditional)
     generalization = build_generalization_figure(pd.read_csv(args.generalization))
@@ -404,7 +559,19 @@ def main() -> None:
     plt.close(probe)
     for name, output in outputs.items():
         print(f"{name}: {output} ({dimensions[name][0]:.3f} x {dimensions[name][1]:.3f} in)")
-    print(report[["dataset_size", "slope", "slope_ci16", "slope_ci84"]].to_string(index=False))
+    print(
+        report[
+            [
+                "dataset_size",
+                "nominal_coverage",
+                "empirical_coverage",
+                "coverage_ci16",
+                "coverage_ci84",
+                "n_heldout",
+                "draws_per_cosmology",
+            ]
+        ].to_string(index=False)
+    )
 
 
 if __name__ == "__main__":

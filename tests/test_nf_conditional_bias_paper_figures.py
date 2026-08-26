@@ -55,6 +55,37 @@ def _conditional_tables() -> tuple[pd.DataFrame, pd.DataFrame]:
     return pd.DataFrame(point_rows), pd.DataFrame(slope_rows)
 
 
+def _posterior_sample_table(*, draws_per_cosmology: int = 64) -> pd.DataFrame:
+    """Build nested synthetic intervals with 68% coverage=.5 and 95%=.75."""
+
+    rows: list[dict[str, float | int | str]] = []
+    base_draws = np.linspace(-3.0, 3.0, draws_per_cosmology)
+    for power in range(6, 16):
+        dataset_size = 2**power
+        for heldout_sim in range(900, 932):
+            if heldout_sim < 916:
+                shift = 0.0
+            elif heldout_sim < 924:
+                shift = 2.2
+            else:
+                shift = 4.0
+            truth = 0.3
+            for seed_index, draw in enumerate(base_draws + shift + truth):
+                rows.append(
+                    {
+                        "dataset_size": dataset_size,
+                        "parameter": "Omega_m",
+                        "heldout_sim": heldout_sim,
+                        "seed_index": seed_index,
+                        "theta_in": truth,
+                        "theta_rec": float(draw),
+                        "guidance_label": "noguidance",
+                        "cfg_dropout": 0.0,
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
 def _generalization_table() -> pd.DataFrame:
     rows = []
     offsets = {"u64": -2, "u128": 0, "u256": 1}
@@ -196,6 +227,75 @@ def test_conditional_figure_fails_closed_if_any_training_size_is_missing():
         )
 
 
+def test_coverage_summary_uses_central_intervals_for_each_heldout_cosmology():
+    plotting = _module()
+    report = plotting.compute_conditional_coverage(
+        _posterior_sample_table(),
+        bootstrap=200,
+        seed=17,
+    )
+
+    assert report["dataset_size"].drop_duplicates().tolist() == [2**power for power in range(6, 16)]
+    assert set(report["nominal_coverage"]) == {0.68, 0.95}
+    assert set(report["n_heldout"]) == {32}
+    assert set(report["draws_per_cosmology"]) == {64}
+    first = report[report["dataset_size"] == 2**6].set_index("nominal_coverage")
+    assert first.loc[0.68, "empirical_coverage"] == pytest.approx(0.50)
+    assert first.loc[0.95, "empirical_coverage"] == pytest.approx(0.75)
+    assert np.all(report["coverage_ci16"] <= report["empirical_coverage"])
+    assert np.all(report["empirical_coverage"] <= report["coverage_ci84"])
+
+
+def test_coverage_summary_fails_closed_on_inconsistent_draw_counts():
+    plotting = _module()
+    samples = _posterior_sample_table()
+    bad_row = samples.index[
+        (samples["dataset_size"] == 2**6)
+        & (samples["heldout_sim"] == 900)
+        & (samples["seed_index"] == 0)
+    ][0]
+    samples = samples.drop(index=bad_row)
+    with pytest.raises(ValueError, match="inconsistent posterior-draw counts"):
+        plotting.compute_conditional_coverage(samples, bootstrap=20, seed=2)
+
+
+def test_conditional_coverage_figure_is_single_panel_and_paper_ready(tmp_path):
+    plotting = _module()
+    figure, report = plotting.build_conditional_coverage_figure(
+        _posterior_sample_table(),
+        bootstrap=200,
+        seed=17,
+    )
+    try:
+        assert figure.get_size_inches() == pytest.approx((6.75, 2.35))
+        assert figure._suptitle is None
+        assert len(figure.axes) == 1
+        axis = figure.axes[0]
+        _assert_paper_axis(axis)
+        assert axis.get_xlabel() == r"Training images $N_{2D}$"
+        assert axis.get_ylabel() == "Empirical coverage"
+        assert axis.get_xlim() == pytest.approx((5.65, 15.35))
+        assert axis.get_ylim() == pytest.approx((0.0, 1.02))
+        assert [tick.get_text() for tick in axis.get_xticklabels()] == [
+            rf"$2^{{{power}}}$" if power % 2 == 0 else "" for power in range(6, 16)
+        ]
+        labels = axis.get_legend_handles_labels()[1]
+        assert labels == ["68% interval", "95% interval"]
+        horizontal_targets = {
+            float(line.get_ydata()[0])
+            for line in axis.lines
+            if len(np.atleast_1d(line.get_ydata())) == 2
+            and np.allclose(line.get_ydata()[0], line.get_ydata()[1])
+        }
+        assert {0.68, 0.95}.issubset(horizontal_targets)
+        output = tmp_path / "conditional_recovery_transition.pdf"
+        plotting.save_figure(figure, output)
+    finally:
+        plt.close(figure)
+    assert output.read_bytes().startswith(b"%PDF")
+    assert len(report) == 20
+
+
 def test_generalization_figure_uses_the_identical_training_axis(tmp_path):
     plotting = _module()
     figure = plotting.build_generalization_figure(_generalization_table())
@@ -279,12 +379,13 @@ def test_results_notebook_contains_idempotent_paper_figure_section(tmp_path):
     assert "generalization_transition.pdf" in source_text
     assert "nearest_training_unet128.pdf" in source_text
     assert "vgg_probe_heldout_real.pdf" in source_text
-    assert "slope_ci16" in source_text and "slope_ci84" in source_text
+    assert "bias_probe_per_sample_predictions.csv" in source_text
+    assert "build_conditional_coverage_figure" in source_text
+    assert "nominal_coverage" in source_text and "empirical_coverage" in source_text
     assert "paper_dimensions" in source_text
     assert "plot_nf_conditional_bias_paper_figures" in source_text
     assert "paper_generalization" in source_text
-    assert "paper_points,\n    paper_slopes,\n)" in source_text
-    assert "paper_points,\n    paper_slopes,\n    paper_generalization" not in source_text
+    assert "paper_samples" in source_text
 
 
 def test_results_notebook_displays_every_paper_figure_inline_before_closing(tmp_path):
