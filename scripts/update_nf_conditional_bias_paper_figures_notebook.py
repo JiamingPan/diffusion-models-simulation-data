@@ -36,9 +36,10 @@ probe recoveries over the 32 held-out cosmologies; the plotted markers identify 
 intervals. It also
 saves the frozen VGG16+MLP heldout-real slope/$R^2$ summary used to establish which conditional directions
 the probe can verify. The U-Net-128 audit uses $N_{2D}=2^6,2^8,2^{10},2^{12},2^{15}$
-to show copying, the intermediate degradation, and recovery at high data. The normalized SSCD Fréchet
-annotation compares 512 generated maps with 512 held-out real maps and divides by the distance between two
-independent 512-map held-out-real splits. The CSV records both raw distances and the ratio. This held-out-real
+to show copying, the intermediate degradation, and recovery at high data. The $\mathrm{FD}_{\mathrm{SSCD}}$
+annotation compares 512 generated maps with 512 held-out real maps and divides by the Fréchet distance between
+two disjoint 512-map halves of the held-out real set. The compact CSV records this normalized distance and its
+raw real-real baseline. This held-out-real
 reference tests whether generated maps remain in distribution. By contrast, the third-row Nyquist-limited
 power-spectrum ratio uses each model's exact configured training subset as its real reference, because that
 row tests whether the model reproduces the statistics of the distribution on which it was trained. Its Fourier
@@ -115,6 +116,7 @@ paper_outputs = {
     'nearest': paper_figure_dir / 'nearest_training_u128.pdf',
     'nearest_preview': paper_figure_dir / 'nearest_training_u128_preview.png',
     'nearest_table': paper_figure_dir / 'nearest_training_u128.csv',
+    'nearest_caption': paper_figure_dir / 'nearest_training_u128_caption.tex',
     'probe': paper_figure_dir / 'vgg_probe_heldout_real.pdf',
 }
 
@@ -156,6 +158,7 @@ paper_dimensions['nearest'], nearest_training_report = export_nearest_training_o
     paper_outputs['nearest'],
     paper_outputs['nearest_table'],
     preview_path=paper_outputs['nearest_preview'],
+    caption_path=paper_outputs['nearest_caption'],
 )
 display(Markdown('### Generated samples, nearest training slices, and in-distribution check'))
 display(Image(filename=str(paper_outputs['nearest_preview']), width=1100))
@@ -173,6 +176,7 @@ for paper_name in ('conditional', 'generalization', 'nearest', 'probe'):
     width, height = paper_dimensions[paper_name]
     print(f'{paper_name}: {paper_path} ({width:.3f} x {height:.3f} in)')
 print(f"nearest_table: {paper_outputs['nearest_table']} ({len(nearest_training_report)} rows)")
+print(f"nearest_caption: {paper_outputs['nearest_caption']}")
 print(f"nearest_preview: {paper_outputs['nearest_preview']} (300 dpi)")
 print(
     f"conditional_coverage_table: {paper_outputs['conditional_coverage_table']} "
@@ -200,8 +204,10 @@ display(
 The PDFs above contain no figure-level titles; put the scientific description, ideal-calibration diagonal,
 and training protocol in the LaTeX captions. The conditional coverage curve uses the measured recovered-$\Omega_m$
 draws at $N_{2D}=2^7,2^{10},2^{14}$; curves below the diagonal are overconfident.
-The U-Net-128 table records the exact-subset configuration, copying similarity, power-spectrum error,
-normalized SSCD Fr\'echet distance, and equal evaluation sample counts for every displayed column.
+The U-Net-128 table records the copying similarity, normalized SSCD Fr\'echet distance and real-real
+baseline, matched evaluation counts, and exact-subset configuration for every displayed column. The generated
+caption file states explicitly that $\mathrm{FD}_{\mathrm{SSCD}}$ uses held-out real fields, whereas the
+power-spectrum ratio uses each model's exact training subset.
 """,
         ),
     ]

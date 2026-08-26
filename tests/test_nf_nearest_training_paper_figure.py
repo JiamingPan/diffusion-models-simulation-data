@@ -189,7 +189,11 @@ def test_three_row_figure_and_csv_contract(tmp_path):
         assert spectrum_axes[0].get_ylim()[1] >= max(
             float(np.max(panel["pk_ratio"])) for panel in panels
         )
-        assert "F=0.90" in "\n".join(text.get_text() for text in image_axes[0, 0].texts)
+        generated_annotation = "\n".join(
+            text.get_text() for text in image_axes[0, 0].texts
+        )
+        assert "FD_SSCD=0.90" in generated_annotation
+        assert "F=0.90" not in generated_annotation
         assert "cos=0.97" in "\n".join(text.get_text() for text in image_axes[1, 0].texts)
         assert all(
             image.get_interpolation() == "none"
@@ -206,11 +210,13 @@ def test_three_row_figure_and_csv_contract(tmp_path):
         pdf_path = tmp_path / "nearest_training_u128.pdf"
         preview_path = tmp_path / "nearest_training_u128_preview.png"
         csv_path = tmp_path / "nearest_training_u128.csv"
+        caption_path = tmp_path / "nearest_training_u128_caption.tex"
         dimensions, table = plotting.export_nearest_training_outputs(
             panels,
             pdf_path,
             csv_path,
             preview_path=preview_path,
+            caption_path=caption_path,
         )
     finally:
         plt.close(figure)
@@ -222,24 +228,35 @@ def test_three_row_figure_and_csv_contract(tmp_path):
     assert preview.shape[0] >= 900
     saved = pd.read_csv(csv_path)
     expected_columns = [
-        "dataset_tag",
         "dataset_size",
         "cos_max",
-        "pk_log10_mae",
-        "generated_to_heldout_real_frechet",
-        "heldout_real_split_frechet",
-        "sscd_frechet_normalized",
+        "fd_sscd",
+        "fd_sscd_real_real_baseline",
         "n_generated",
-        "n_real_split",
-        "n_heldout_real_available",
-        "sscd_reference_kind",
-        "generated_cache_path",
-        "heldout_real_cache_path",
+        "n_reference",
         "config_path",
     ]
     assert list(saved.columns) == expected_columns
     assert len(saved) == 5
     pd.testing.assert_frame_equal(saved, table, check_dtype=False)
+    caption = caption_path.read_text()
+    assert r"$\mathrm{FD}_{\mathrm{SSCD}}$" in caption
+    assert "lower is better" in caption
+    assert "2.000" in caption
+    assert "two disjoint halves of the held-out real set" in caption
+    assert "512 fields per half" in caption
+    assert "exact training subset" in caption
+    assert r"$R(k)\simeq1$" in caption
+    assert "is not evidence of generative quality" in caption
+    assert "held-out real fields" in caption
+
+
+def test_caption_fails_closed_when_real_real_baselines_differ():
+    plotting = _plotting_module()
+    table = plotting.nearest_training_table(_figure_panels())
+    table.loc[table.index[-1], "fd_sscd_real_real_baseline"] = 2.2
+    with pytest.raises(ValueError, match="one shared real-real baseline"):
+        plotting.nearest_training_caption(table)
 
 
 def test_requested_unet128_columns_fail_closed_when_manifest_run_is_missing(tmp_path):

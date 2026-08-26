@@ -391,6 +391,7 @@ def test_results_notebook_contains_idempotent_paper_figure_section(tmp_path):
     assert "nearest_training_u128.pdf" in source_text
     assert "nearest_training_u128_preview.png" in source_text
     assert "nearest_training_u128.csv" in source_text
+    assert "nearest_training_u128_caption.tex" in source_text
     assert "vgg_probe_heldout_real.pdf" in source_text
     assert "bias_probe_per_sample_predictions.csv" in source_text
     assert "build_conditional_coverage_figure" in source_text

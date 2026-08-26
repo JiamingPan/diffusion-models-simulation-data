@@ -86,19 +86,12 @@ ARCHITECTURES = (
 NEAREST_POWERS = (6, 8, 10, 12, 15)
 NEAREST_DATASET_SIZES = tuple(2**power for power in NEAREST_POWERS)
 NEAREST_TABLE_COLUMNS = (
-    "dataset_tag",
     "dataset_size",
     "cos_max",
-    "pk_log10_mae",
-    "generated_to_heldout_real_frechet",
-    "heldout_real_split_frechet",
-    "sscd_frechet_normalized",
+    "fd_sscd",
+    "fd_sscd_real_real_baseline",
     "n_generated",
-    "n_real_split",
-    "n_heldout_real_available",
-    "sscd_reference_kind",
-    "generated_cache_path",
-    "heldout_real_cache_path",
+    "n_reference",
     "config_path",
 )
 
@@ -804,7 +797,7 @@ def build_nearest_training_figure(panels: list[dict[str, Any]]) -> plt.Figure:
         generated_axis.text(
             0.04,
             0.04,
-            f"F={float(row['sscd_frechet_normalized']):.2f}",
+            f"FD_SSCD={float(row['sscd_frechet_normalized']):.2f}",
             transform=generated_axis.transAxes,
             fontsize=6.3,
             color="white",
@@ -860,9 +853,61 @@ def build_nearest_training_figure(panels: list[dict[str, Any]]) -> plt.Figure:
 
 def nearest_training_table(panels: list[dict[str, Any]]) -> pd.DataFrame:
     table = pd.DataFrame(
-        [{column: row[column] for column in NEAREST_TABLE_COLUMNS} for row in panels]
+        [
+            {
+                "dataset_size": int(row["dataset_size"]),
+                "cos_max": float(row["cos_max"]),
+                "fd_sscd": float(row["sscd_frechet_normalized"]),
+                "fd_sscd_real_real_baseline": float(
+                    row["heldout_real_split_frechet"]
+                ),
+                "n_generated": int(row["n_generated"]),
+                "n_reference": int(row["n_real_split"]),
+                "config_path": str(row["config_path"]),
+            }
+            for row in panels
+        ]
     )
     return table.loc[:, list(NEAREST_TABLE_COLUMNS)].sort_values("dataset_size").reset_index(drop=True)
+
+
+def nearest_training_caption(table: pd.DataFrame) -> str:
+    """Return the checked LaTeX caption paired with the Fig. 2 audit table."""
+
+    missing = sorted(set(NEAREST_TABLE_COLUMNS) - set(table.columns))
+    if missing:
+        raise ValueError(f"nearest-training caption table is missing columns: {missing}")
+    baselines = table["fd_sscd_real_real_baseline"].to_numpy(float)
+    if len(baselines) == 0 or not np.all(np.isfinite(baselines)):
+        raise ValueError("nearest-training caption requires finite real-real baselines")
+    if not np.allclose(baselines, baselines[0], rtol=1.0e-6, atol=1.0e-9):
+        raise ValueError(
+            "nearest-training caption requires one shared real-real baseline; "
+            f"found {baselines.tolist()}"
+        )
+    n_generated = sorted(set(table["n_generated"].astype(int)))
+    n_reference = sorted(set(table["n_reference"].astype(int)))
+    if n_generated != [EXPECTED_NEAREST_SAMPLES] or n_reference != [EXPECTED_NEAREST_SAMPLES]:
+        raise ValueError(
+            "nearest-training caption requires matched 512-map generated and "
+            f"reference sets; n_generated={n_generated}, n_reference={n_reference}"
+        )
+    baseline = float(baselines[0])
+    return (
+        r"\caption{Generated U-Net-128 fields (top), their closest training "
+        r"slices under SSCD cosine similarity (middle), and Nyquist-limited "
+        r"power-spectrum ratios (bottom). The panel annotation "
+        r"$\mathrm{FD}_{\mathrm{SSCD}}$ is the generated-to-held-out-real "
+        r"Fr\'echet distance in SSCD feature space normalized by the matched-sample "
+        rf"real-real reference; lower is better. The real-real reference value is {baseline:.3f}, "
+        r"computed between two disjoint halves of the held-out real set with 512 fields "
+        r"per half. Thus $\mathrm{FD}_{\mathrm{SSCD}}$ uses held-out real fields as "
+        r"its reference. In contrast, $P_{\rm real}$ in the bottom row is computed "
+        r"from each model's exact training subset; consequently, $R(k)\simeq1$ at "
+        r"$N_{2D}=2^6$ is expected when the model copies training fields and is not "
+        r"evidence of generative quality.}"
+        "\n"
+    )
 
 
 def export_nearest_training_outputs(
@@ -871,6 +916,7 @@ def export_nearest_training_outputs(
     csv_path: str | Path,
     *,
     preview_path: str | Path | None = None,
+    caption_path: str | Path | None = None,
 ) -> tuple[tuple[float, float], pd.DataFrame]:
     figure = build_nearest_training_figure(panels)
     try:
@@ -885,6 +931,10 @@ def export_nearest_training_outputs(
     csv_path = Path(csv_path)
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     table.to_csv(csv_path, index=False)
+    if caption_path is not None:
+        caption_path = Path(caption_path)
+        caption_path.parent.mkdir(parents=True, exist_ok=True)
+        caption_path.write_text(nearest_training_caption(table))
     return dimensions, table
 
 
@@ -968,6 +1018,7 @@ def main() -> None:
         "nearest": args.output_dir / "nearest_training_u128.pdf",
         "nearest_preview": args.output_dir / "nearest_training_u128_preview.png",
         "nearest_table": args.output_dir / "nearest_training_u128.csv",
+        "nearest_caption": args.output_dir / "nearest_training_u128_caption.tex",
         "probe": args.output_dir / "vgg_probe_heldout_real.pdf",
     }
     samples = pd.read_csv(args.samples)
@@ -990,6 +1041,7 @@ def main() -> None:
         outputs["nearest"],
         outputs["nearest_table"],
         preview_path=outputs["nearest_preview"],
+        caption_path=outputs["nearest_caption"],
     )
     probe = build_probe_summary_figure(pd.read_csv(args.probe_summary))
     dimensions["probe"] = save_figure(probe, outputs["probe"])
@@ -998,6 +1050,7 @@ def main() -> None:
         output = outputs[name]
         print(f"{name}: {output} ({dimensions[name][0]:.3f} x {dimensions[name][1]:.3f} in)")
     print(f"nearest_table: {outputs['nearest_table']} ({len(nearest_table)} rows)")
+    print(f"nearest_caption: {outputs['nearest_caption']}")
     print(f"nearest_preview: {outputs['nearest_preview']} (300 dpi)")
     print(
         "conditional_coverage_table: "
