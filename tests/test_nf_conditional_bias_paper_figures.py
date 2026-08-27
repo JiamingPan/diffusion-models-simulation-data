@@ -338,7 +338,7 @@ def test_generalization_figure_uses_the_identical_training_axis(tmp_path):
     figure = plotting.build_generalization_figure(_generalization_table())
     try:
         axis = figure.axes[0]
-        assert figure.get_size_inches() == pytest.approx((6.75, 2.75))
+        assert figure.get_size_inches() == pytest.approx((6.75, 3.15))
         assert figure._suptitle is None
         assert axis.get_title() == ""
         assert axis.get_xlim() == pytest.approx((5.65, 15.35))
@@ -347,12 +347,24 @@ def test_generalization_figure_uses_the_identical_training_axis(tmp_path):
             rf"$2^{{{power}}}$" for power in range(6, 16)
         ]
         assert axis.get_ylabel() == "Generalization score"
+        assert axis.get_xlabel() == "Training set size"
+        assert {text.get_text() for text in axis.texts} == {
+            "memorization\nregime",
+            "generalization\nregime",
+        }
         assert axis.xaxis.label.get_fontsize() >= 11.0
         assert axis.yaxis.label.get_fontsize() >= 11.0
         assert all(label.get_fontsize() >= 9.5 for label in axis.get_xticklabels())
         assert all(label.get_fontsize() >= 9.5 for label in axis.get_yticklabels())
-        assert all(text.get_fontsize() >= 9.0 for text in axis.get_legend().get_texts())
-        assert all(line.get_markersize() >= 4.0 for line in axis.lines if line.get_marker())
+        legend = axis.get_legend()
+        assert all(text.get_fontsize() >= 10.0 for text in legend.get_texts())
+        assert legend._loc == 9  # upper center
+        assert all(line.get_markersize() >= 6.0 for line in axis.lines if line.get_marker())
+        assert all(line.get_linewidth() >= 2.0 for line in axis.lines)
+        assert not any(
+            len(line.get_ydata()) == 2 and np.allclose(line.get_ydata(), 0.5)
+            for line in axis.lines
+        )
         _assert_paper_axis(axis)
         output = tmp_path / "generalization_transition.pdf"
         plotting.save_figure(figure, output)
