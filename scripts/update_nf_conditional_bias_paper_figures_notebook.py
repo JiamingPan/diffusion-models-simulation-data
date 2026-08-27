@@ -51,6 +51,7 @@ $L=25\,h^{-1}\mathrm{Mpc}$.
             "code",
             r"""
 from pathlib import Path
+import importlib
 import sys
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -66,14 +67,15 @@ paper_scripts = PAPER_PROJECT_DIR / 'scripts'
 if str(paper_scripts) not in sys.path:
     sys.path.insert(0, str(paper_scripts))
 
-from plot_nf_conditional_bias_paper_figures import (
-    build_conditional_coverage_figure,
-    build_generalization_figure,
-    build_nearest_training_panels,
-    build_probe_summary_figure,
-    export_nearest_training_outputs,
-    save_figure,
-)
+import plot_nf_conditional_bias_paper_figures as paper_plotting
+
+paper_plotting = importlib.reload(paper_plotting)
+build_conditional_coverage_figure = paper_plotting.build_conditional_coverage_figure
+build_generalization_figure = paper_plotting.build_generalization_figure
+build_nearest_training_panels = paper_plotting.build_nearest_training_panels
+build_probe_summary_figure = paper_plotting.build_probe_summary_figure
+export_nearest_training_outputs = paper_plotting.export_nearest_training_outputs
+save_figure = paper_plotting.save_figure
 
 paper_figure_dir = PAPER_PROJECT_DIR / 'paper' / 'ai4science_verification' / 'figures'
 paper_figure_dir.mkdir(parents=True, exist_ok=True)
