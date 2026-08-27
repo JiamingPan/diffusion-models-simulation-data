@@ -720,6 +720,10 @@ def build_nearest_training_panels(
                 "k_bins": reference["k_bins"],
                 "pk_ratio": reference["pk_ratio"],
                 "pk_log10_mae": float(reference["pk_log10_mae"]),
+                "generated_pk_mean": reference["generated_pk_mean"],
+                "real_pk_mean": reference["real_pk_mean"],
+                "real_pk_median": reference["real_pk_median"],
+                "real_pk_percentiles": reference["real_pk_percentiles"],
                 "generated_to_heldout_real_frechet": float(
                     frechet["generated_to_real_frechet"]
                 ),
@@ -738,7 +742,7 @@ def build_nearest_training_panels(
 
 
 def build_nearest_training_figure(panels: list[dict[str, Any]]) -> plt.Figure:
-    """Build the generated/nearest/P(k) three-row U-Net-128 paper figure."""
+    """Build generated/nearest fields and absolute power-spectrum distributions."""
 
     if len(panels) != len(NEAREST_DATASET_SIZES):
         raise ValueError(
@@ -779,14 +783,20 @@ def build_nearest_training_figure(panels: list[dict[str, Any]]) -> plt.Figure:
         raise ValueError("nearest-training panels contain no finite image values")
     image_limits = tuple(np.quantile(finite_images, (0.005, 0.995)))
 
-    ratio_values = np.concatenate([np.asarray(row["pk_ratio"], dtype=float) for row in ordered])
-    finite_ratios = ratio_values[np.isfinite(ratio_values)]
-    if not len(finite_ratios):
-        raise ValueError("nearest-training panels contain no finite power-spectrum ratios")
-    ratio_low = min(1.0, float(finite_ratios.min()))
-    ratio_high = max(1.0, float(finite_ratios.max()))
-    ratio_pad = 0.07 * max(ratio_high - ratio_low, 0.1)
-    shared_ratio_limits = (max(0.0, ratio_low - ratio_pad), ratio_high + ratio_pad)
+    spectrum_values = np.concatenate(
+        [
+            np.asarray(row[key], dtype=float).reshape(-1)
+            for row in ordered
+            for key in ("generated_pk_mean", "real_pk_median", "real_pk_percentiles")
+        ]
+    )
+    finite_spectra = spectrum_values[np.isfinite(spectrum_values) & (spectrum_values > 0.0)]
+    if not len(finite_spectra):
+        raise ValueError("nearest-training panels contain no finite positive power spectra")
+    shared_spectrum_limits = (
+        float(finite_spectra.min()) / 1.35,
+        float(finite_spectra.max()) * 1.35,
+    )
 
     for column, row in enumerate(ordered):
         power = int(round(np.log2(int(row["dataset_size"]))))
@@ -838,15 +848,55 @@ def build_nearest_training_figure(panels: list[dict[str, Any]]) -> plt.Figure:
                 spine.set_color(INK)
 
         k_bins = np.asarray(row["k_bins"], dtype=float)
-        ratio = np.asarray(row["pk_ratio"], dtype=float)
         if np.nanmax(k_bins) > 64.0 + 1.0e-9:
             raise ValueError(f"post-Nyquist k bin reached the paper figure: {np.nanmax(k_bins)}")
-        spectrum_axis.axhline(1.0, color="0.42", ls="--", lw=0.7)
         physical_k = fourier_bin_to_physical_k(k_bins)
         physical_k_max = float(fourier_bin_to_physical_k(64.0))
-        spectrum_axis.plot(physical_k, ratio, color="0.20", lw=0.9)
+        generated_mean = np.asarray(row["generated_pk_mean"], dtype=float)
+        real_median = np.asarray(row["real_pk_median"], dtype=float)
+        real_percentiles = np.asarray(row["real_pk_percentiles"], dtype=float)
+        if real_percentiles.shape != (4, len(k_bins)):
+            raise ValueError(
+                "real power-spectrum percentiles must have shape "
+                f"(4, {len(k_bins)}), found {real_percentiles.shape}"
+            )
+        q025, q16, q84, q975 = real_percentiles
+        spectrum_axis.fill_between(
+            physical_k,
+            q025,
+            q975,
+            color="0.84",
+            alpha=0.75,
+            linewidth=0.0,
+            label="Real 95%",
+        )
+        spectrum_axis.fill_between(
+            physical_k,
+            q16,
+            q84,
+            color="0.64",
+            alpha=0.75,
+            linewidth=0.0,
+            label="Real 68%",
+        )
+        spectrum_axis.plot(
+            physical_k,
+            real_median,
+            color="0.22",
+            ls="--",
+            lw=0.8,
+            label="Real median",
+        )
+        spectrum_axis.plot(
+            physical_k,
+            generated_mean,
+            color="#0878B8",
+            lw=1.05,
+            label="Generated mean",
+        )
         spectrum_axis.set_xlim(left=0.0, right=physical_k_max)
-        spectrum_axis.set_ylim(shared_ratio_limits)
+        spectrum_axis.set_yscale("log")
+        spectrum_axis.set_ylim(shared_spectrum_limits)
         spectrum_axis.set_xticks((0.0, 8.0, 16.0))
         spectrum_axis.set_xticklabels(("0", "8", "16"))
         spectrum_axis.set_xlabel(
@@ -858,10 +908,19 @@ def build_nearest_training_figure(panels: list[dict[str, Any]]) -> plt.Figure:
         spectrum_axis.tick_params(axis="x", labelsize=7.0)
         if column:
             spectrum_axis.tick_params(labelleft=False)
+        else:
+            spectrum_axis.legend(
+                loc="lower left",
+                fontsize=5.0,
+                frameon=False,
+                handlelength=1.5,
+                borderaxespad=0.25,
+                labelspacing=0.15,
+            )
 
     axes[0, 0].set_ylabel("Generated", labelpad=5.0)
     axes[1, 0].set_ylabel("Closest training", labelpad=5.0)
-    axes[2, 0].set_ylabel(r"$R(k)=P_{\rm gen}/P_{\rm real}$", labelpad=5.0)
+    axes[2, 0].set_ylabel(r"$P(k)$", labelpad=5.0)
     return figure
 
 
@@ -910,16 +969,17 @@ def nearest_training_caption(table: pd.DataFrame) -> str:
     return (
         r"\caption{Generated U-Net-128 fields (top), their closest training "
         r"slices under SSCD cosine similarity (middle), and Nyquist-limited "
-        r"power-spectrum ratios (bottom). The panel annotation "
+        r"power spectra (bottom). The bottom row compares the mean generated spectrum "
+        r"with the median and percentile bands of spectra measured field by field in "
+        r"each model's exact training subset; dark and light bands show the "
+        r"16th--84th and 2.5th--97.5th percentile ranges, respectively. The panel annotation "
         r"$\mathrm{FD}_{\mathrm{SSCD}}$ is the generated-to-held-out-real "
         r"Fr\'echet distance in SSCD feature space normalized by the matched-sample "
         rf"real-real reference; lower is better. The real-real reference value is {baseline:.3f}, "
         r"computed between two disjoint halves of the held-out real set with 512 fields "
         r"per half. Thus $\mathrm{FD}_{\mathrm{SSCD}}$ uses held-out real fields as "
-        r"its reference. In contrast, $P_{\rm real}$ in the bottom row is computed "
-        r"from each model's exact training subset; consequently, $R(k)\simeq1$ at "
-        r"$N_{2D}=2^6$ is expected when the model copies training fields and is not "
-        r"evidence of generative quality.}"
+        r"its reference. In contrast, the real power-spectrum distribution in the "
+        r"bottom row is computed from each model's exact training subset.}"
         "\n"
     )
 

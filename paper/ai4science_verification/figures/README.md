@@ -23,10 +23,11 @@ unequal training budgets or incomplete controls explicit.
 paper-export section of `notebooks/nf_conditional_bias_vgg_results.ipynb`.
 The figure uses generated sample index 0 for the $N_{2D}=2^6,2^8,2^{10},
 2^{12},2^{15}$ runs, searches the complete configured training subset for its
-closest slice, and plots $P_{\rm gen}(k)/P_{\rm real}(k)$ only through the
-$128\times128$ Nyquist limit $k=64$. This power-spectrum reference is the exact
-training subset because the row tests agreement with the distribution available
-to that model.
+closest slice. The bottom row plots the mean generated $P(k)$ against the median,
+16th--84th percentile band, and 2.5th--97.5th percentile band of the per-field
+real spectra, only through the $128\times128$ Nyquist limit $k=64$. The real
+power-spectrum distribution is computed from the exact training subset because
+the row tests agreement with the distribution available to that model.
 
 The $\mathrm{FD}_{\mathrm{SSCD}}$ annotation answers a different question: whether generated
 maps remain in distribution relative to held-out real maps. It is the raw

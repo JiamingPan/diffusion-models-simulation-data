@@ -74,6 +74,18 @@ def test_exact_reference_summary_checks_manifest_count_and_nyquist(tmp_path):
     assert summary["nearest_training_index"] in range(4)
     assert np.max(summary["k_bins"]) <= 4.0
     assert len(summary["pk_ratio"]) == len(summary["k_bins"])
+    assert len(summary["generated_pk_mean"]) == len(summary["k_bins"])
+    assert len(summary["real_pk_median"]) == len(summary["k_bins"])
+    assert summary["real_pk_percentiles"].shape == (4, len(summary["k_bins"]))
+    q025, q16, q84, q975 = summary["real_pk_percentiles"]
+    assert np.all(q025 <= q16)
+    assert np.all(q16 <= summary["real_pk_median"])
+    assert np.all(summary["real_pk_median"] <= q84)
+    assert np.all(q84 <= q975)
+    np.testing.assert_allclose(
+        summary["pk_ratio"],
+        summary["generated_pk_mean"] / summary["real_pk_mean"],
+    )
     expected_mae = np.mean(np.abs(np.log10(np.clip(summary["pk_ratio"], 1e-30, None))))
     assert summary["pk_log10_mae"] == pytest.approx(expected_mae)
 
@@ -144,6 +156,18 @@ def _figure_panels() -> list[dict[str, object]]:
                 "cos_max": 0.97 - 0.02 * (power - 6),
                 "k_bins": np.linspace(2.0, 64.0, 20),
                 "pk_ratio": np.linspace(0.82, 1.15 + 0.03 * (power - 6), 20),
+                "generated_pk_mean": np.geomspace(4.0, 0.05, 20)
+                * (1.0 + 0.015 * (power - 6)),
+                "real_pk_mean": np.geomspace(4.1, 0.052, 20),
+                "real_pk_median": np.geomspace(4.0, 0.05, 20),
+                "real_pk_percentiles": np.stack(
+                    (
+                        np.geomspace(2.0, 0.025, 20),
+                        np.geomspace(3.0, 0.0375, 20),
+                        np.geomspace(5.0, 0.0625, 20),
+                        np.geomspace(6.5, 0.08125, 20),
+                    )
+                ),
                 "pk_log10_mae": 0.05 + 0.01 * (power - 6),
                 "sscd_frechet_normalized": 0.9 + 0.1 * (power - 6),
                 "generated_to_heldout_real_frechet": 1.8 + 0.2 * (power - 6),
@@ -174,8 +198,9 @@ def test_three_row_figure_and_csv_contract(tmp_path):
         ]
         assert "Generated" in image_axes[0, 0].get_ylabel()
         assert "Closest training" in image_axes[1, 0].get_ylabel()
-        assert spectrum_axes[0].get_ylabel() == r"$R(k)=P_{\rm gen}/P_{\rm real}$"
+        assert spectrum_axes[0].get_ylabel() == r"$P(k)$"
         assert all(axis.get_ylim() == pytest.approx(spectrum_axes[0].get_ylim()) for axis in spectrum_axes)
+        assert all(axis.get_yscale() == "log" for axis in spectrum_axes)
         expected_k_max = 2.0 * np.pi * 64.0 / 25.0
         assert all(max(line.get_xdata()) <= expected_k_max + 1.0e-9 for axis in spectrum_axes for line in axis.lines)
         assert all(
@@ -186,8 +211,16 @@ def test_three_row_figure_and_csv_contract(tmp_path):
             [tick.get_text() for tick in axis.get_xticklabels()] == ["0", "8", "16"]
             for axis in spectrum_axes
         )
-        assert spectrum_axes[0].get_ylim()[1] >= max(
-            float(np.max(panel["pk_ratio"])) for panel in panels
+        assert all(len(axis.collections) == 2 for axis in spectrum_axes)
+        assert all(len(axis.lines) == 2 for axis in spectrum_axes)
+        assert all(
+            {line.get_label() for line in axis.lines}
+            == {"Generated mean", "Real median"}
+            for axis in spectrum_axes
+        )
+        assert all(
+            not any(np.allclose(line.get_ydata(), 1.0) for line in axis.lines)
+            for axis in spectrum_axes
         )
         generated_annotation = "\n".join(
             text.get_text() for text in image_axes[0, 0].texts
@@ -246,8 +279,12 @@ def test_three_row_figure_and_csv_contract(tmp_path):
     assert "two disjoint halves of the held-out real set" in caption
     assert "512 fields per half" in caption
     assert "exact training subset" in caption
-    assert r"$R(k)\simeq1$" in caption
-    assert "is not evidence of generative quality" in caption
+    assert "16th--84th" in caption
+    assert "2.5th--97.5th" in caption
+    assert "mean generated spectrum" in caption
+    assert "median and percentile bands" in caption
+    assert "exact training subset" in caption
+    assert r"$R(k)\simeq1$" not in caption
     assert "held-out real fields" in caption
 
 
