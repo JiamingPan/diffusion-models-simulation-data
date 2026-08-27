@@ -428,8 +428,8 @@ def build_conditional_coverage_figure(
         ha="center",
     )
     coverage_axis.text(
-        0.68,
-        0.28,
+        0.70,
+        0.24,
         "overconfident",
         color="0.38",
         fontsize=8.5,
