@@ -290,10 +290,18 @@ def test_conditional_coverage_figure_pairs_recovery_scatter_with_coverage(tmp_pa
         assert coverage_axis.get_xlabel() == "Nominal coverage"
         assert coverage_axis.get_ylabel() == "Empirical coverage"
         for axis in (recovery_axis, coverage_axis):
-            assert axis.xaxis.label.get_fontsize() >= 12.5
-            assert axis.yaxis.label.get_fontsize() >= 12.5
-            assert all(label.get_fontsize() >= 10.5 for label in axis.get_xticklabels())
-            assert all(label.get_fontsize() >= 10.5 for label in axis.get_yticklabels())
+            assert axis.xaxis.label.get_fontsize() == pytest.approx(10.5)
+            assert axis.yaxis.label.get_fontsize() == pytest.approx(10.5)
+            assert all(
+                label.get_fontsize() == pytest.approx(9.0)
+                for label in axis.get_xticklabels()
+            )
+            assert all(
+                label.get_fontsize() == pytest.approx(9.0)
+                for label in axis.get_yticklabels()
+            )
+        assert recovery_axis.get_position().x0 >= 0.095
+        assert coverage_axis.get_position().x1 <= 0.965
         assert coverage_axis.get_xlim() == pytest.approx((0.0, 1.0))
         assert coverage_axis.get_ylim() == pytest.approx((0.0, 1.0))
         labels = [text.get_text() for text in figure.legends[0].get_texts()]
@@ -313,12 +321,20 @@ def test_conditional_coverage_figure_pairs_recovery_scatter_with_coverage(tmp_pa
             "underconfident",
             "overconfident",
         }
-        assert all(text.get_fontsize() >= 10.5 for text in region_labels.values())
+        assert all(
+            text.get_fontsize() == pytest.approx(8.5)
+            for text in region_labels.values()
+        )
         assert all(text.get_ha() == "center" for text in region_labels.values())
-        assert region_labels["overconfident"].get_position()[0] <= 0.68
+        assert region_labels["underconfident"].get_position() == pytest.approx(
+            (0.40, 0.90)
+        )
+        assert region_labels["overconfident"].get_position() == pytest.approx(
+            (0.68, 0.28)
+        )
         assert figure.legends[0].get_texts()
         assert all(
-            text.get_fontsize() >= 10.0
+            text.get_fontsize() == pytest.approx(8.5)
             for text in figure.legends[0].get_texts()
         )
         assert plotting.COVERAGE_MARKERS == {0.68: "o", 0.95: "s"}
