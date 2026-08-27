@@ -625,8 +625,8 @@ def build_generalization_figure(metrics: pd.DataFrame) -> plt.Figure:
     missing = sorted(required - set(metrics.columns))
     if missing:
         raise ValueError(f"generalization table is missing columns: {missing}")
-    figure, axis = plt.subplots(figsize=(FULL_W, 2.75))
-    figure.subplots_adjust(left=0.10, right=0.985, bottom=0.21, top=0.965)
+    figure, axis = plt.subplots(figsize=(FULL_W, 3.15))
+    figure.subplots_adjust(left=0.16, right=0.84, bottom=0.18, top=0.80)
     for arch, label, color, marker in ARCHITECTURES:
         sub = metrics[metrics["arch"] == arch].copy()
         _require_sizes(sub)
@@ -637,23 +637,45 @@ def build_generalization_figure(metrics: pd.DataFrame) -> plt.Figure:
             sub["gen_gl_q95"],
             color=color,
             marker=marker,
-            ms=4.2,
-            lw=1.25,
+            ms=6.2,
+            lw=2.2,
+            markeredgecolor="white",
+            markeredgewidth=0.45,
             label=label,
         )
     style_training_size_axis(axis)
-    axis.axhline(0.5, color="0.50", ls=":", lw=0.8, label="_nolegend_")
-    axis.set_ylim(-0.03, 1.04)
-    axis.set_xlabel(r"Training images $N_{2D}$", fontsize=11.0)
-    axis.set_ylabel("Generalization score", fontsize=11.0)
-    axis.tick_params(axis="both", labelsize=9.5)
+    axis.set_ylim(-0.03, 1.06)
+    axis.set_xlabel("Training set size", fontsize=12.0)
+    axis.set_ylabel("Generalization score", fontsize=12.0)
+    axis.tick_params(axis="both", labelsize=10.5)
+    axis.text(
+        7.0,
+        0.22,
+        "memorization\nregime",
+        color="0.25",
+        fontsize=11.0,
+        ha="center",
+        va="center",
+        linespacing=0.9,
+    )
+    axis.text(
+        13.5,
+        0.22,
+        "generalization\nregime",
+        color="0.25",
+        fontsize=11.0,
+        ha="center",
+        va="center",
+        linespacing=0.9,
+    )
     axis.legend(
         frameon=False,
         ncol=3,
-        loc="lower right",
-        fontsize=9.0,
-        handlelength=1.8,
-        columnspacing=1.1,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 1.19),
+        fontsize=10.5,
+        handlelength=2.2,
+        columnspacing=1.4,
     )
     return figure
 
