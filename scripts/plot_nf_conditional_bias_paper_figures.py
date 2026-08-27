@@ -625,8 +625,8 @@ def build_generalization_figure(metrics: pd.DataFrame) -> plt.Figure:
     missing = sorted(required - set(metrics.columns))
     if missing:
         raise ValueError(f"generalization table is missing columns: {missing}")
-    figure, axis = plt.subplots(figsize=(FULL_W, 2.35))
-    figure.subplots_adjust(left=0.09, right=0.985, bottom=0.23, top=0.94)
+    figure, axis = plt.subplots(figsize=(FULL_W, 2.75))
+    figure.subplots_adjust(left=0.10, right=0.985, bottom=0.21, top=0.965)
     for arch, label, color, marker in ARCHITECTURES:
         sub = metrics[metrics["arch"] == arch].copy()
         _require_sizes(sub)
@@ -637,16 +637,24 @@ def build_generalization_figure(metrics: pd.DataFrame) -> plt.Figure:
             sub["gen_gl_q95"],
             color=color,
             marker=marker,
-            ms=3.5,
+            ms=4.2,
             lw=1.25,
             label=label,
         )
     style_training_size_axis(axis)
     axis.axhline(0.5, color="0.50", ls=":", lw=0.8, label="_nolegend_")
     axis.set_ylim(-0.03, 1.04)
-    axis.set_xlabel(r"Training images $N_{2D}$")
-    axis.set_ylabel("PCA q95 novelty score")
-    axis.legend(frameon=False, ncol=3, loc="lower right", handlelength=1.8, columnspacing=1.1)
+    axis.set_xlabel(r"Training images $N_{2D}$", fontsize=11.0)
+    axis.set_ylabel("Generalization score", fontsize=11.0)
+    axis.tick_params(axis="both", labelsize=9.5)
+    axis.legend(
+        frameon=False,
+        ncol=3,
+        loc="lower right",
+        fontsize=9.0,
+        handlelength=1.8,
+        columnspacing=1.1,
+    )
     return figure
 
 

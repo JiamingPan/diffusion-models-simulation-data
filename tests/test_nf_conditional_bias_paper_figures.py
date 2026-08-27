@@ -338,7 +338,7 @@ def test_generalization_figure_uses_the_identical_training_axis(tmp_path):
     figure = plotting.build_generalization_figure(_generalization_table())
     try:
         axis = figure.axes[0]
-        assert figure.get_size_inches()[0] == pytest.approx(6.75)
+        assert figure.get_size_inches() == pytest.approx((6.75, 2.75))
         assert figure._suptitle is None
         assert axis.get_title() == ""
         assert axis.get_xlim() == pytest.approx((5.65, 15.35))
@@ -346,6 +346,13 @@ def test_generalization_figure_uses_the_identical_training_axis(tmp_path):
         assert [tick.get_text() for tick in axis.get_xticklabels()] == [
             rf"$2^{{{power}}}$" for power in range(6, 16)
         ]
+        assert axis.get_ylabel() == "Generalization score"
+        assert axis.xaxis.label.get_fontsize() >= 11.0
+        assert axis.yaxis.label.get_fontsize() >= 11.0
+        assert all(label.get_fontsize() >= 9.5 for label in axis.get_xticklabels())
+        assert all(label.get_fontsize() >= 9.5 for label in axis.get_yticklabels())
+        assert all(text.get_fontsize() >= 9.0 for text in axis.get_legend().get_texts())
+        assert all(line.get_markersize() >= 4.0 for line in axis.lines if line.get_marker())
         _assert_paper_axis(axis)
         output = tmp_path / "generalization_transition.pdf"
         plotting.save_figure(figure, output)
