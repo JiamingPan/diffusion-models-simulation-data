@@ -81,6 +81,7 @@ def summarize_exact_training_reference(
     nearest_image: np.ndarray | None = None
     real_pk_sum: np.ndarray | None = None
     real_pk_count = np.zeros_like(generated_mean, dtype=np.int64)
+    real_pk_batches: list[np.ndarray] = []
     loaded_slices = 0
     for batch in iter_real_reference_batches_from_config(config_path):
         reference = as_nchw(np.asarray(batch, dtype=np.float32))
@@ -91,6 +92,7 @@ def summarize_exact_training_reference(
         batch_sum = np.nansum(batch_pk, axis=0)
         real_pk_sum = batch_sum if real_pk_sum is None else real_pk_sum + batch_sum
         real_pk_count += finite.sum(axis=0)
+        real_pk_batches.append(np.asarray(batch_pk, dtype=np.float64))
 
         flat = reference.reshape(len(reference), -1)
         difference = flat - query[None, :]
@@ -115,15 +117,42 @@ def summarize_exact_training_reference(
         raise RuntimeError(f"no exact-subset reference fields were loaded from {config_path}")
 
     real_mean = real_pk_sum / np.maximum(real_pk_count, 1)
-    valid = (
+    real_pk = np.concatenate(real_pk_batches, axis=0)
+    if len(real_pk) != loaded_slices:
+        raise RuntimeError(
+            "power-spectrum/reference slice-count mismatch: "
+            f"spectra={len(real_pk)}, slices={loaded_slices}, config_path={config_path}"
+        )
+    candidate = (
         np.isfinite(generated_k)
         & (generated_k <= float(k_max))
         & np.isfinite(generated_mean)
         & np.isfinite(real_mean)
+        & (generated_mean > 0.0)
         & (real_mean > 0.0)
+        & np.any(np.isfinite(real_pk), axis=0)
     )
-    if not np.any(valid):
+    if not np.any(candidate):
         raise RuntimeError(f"no finite power-spectrum bins at k <= {k_max:g} for {config_path}")
+    candidate_indices = np.flatnonzero(candidate)
+    candidate_real_pk = real_pk[:, candidate]
+    real_median = np.nanmedian(candidate_real_pk, axis=0)
+    real_percentiles = np.nanpercentile(
+        candidate_real_pk,
+        (2.5, 16.0, 84.0, 97.5),
+        axis=0,
+    )
+    retained = (
+        np.isfinite(real_median)
+        & np.all(np.isfinite(real_percentiles), axis=0)
+        & (real_median > 0.0)
+        & np.all(real_percentiles > 0.0, axis=0)
+    )
+    if not np.any(retained):
+        raise RuntimeError(f"no finite power-spectrum bins at k <= {k_max:g} for {config_path}")
+    valid_indices = candidate_indices[retained]
+    valid = np.zeros_like(candidate, dtype=bool)
+    valid[valid_indices] = True
     k_bins = generated_k[valid]
     ratio = generated_mean[valid] / real_mean[valid]
     pk_log10_mae = float(np.mean(np.abs(np.log10(np.clip(ratio, 1e-30, None)))))
@@ -137,6 +166,10 @@ def summarize_exact_training_reference(
         "k_bins": k_bins,
         "pk_ratio": ratio,
         "pk_log10_mae": pk_log10_mae,
+        "generated_pk_mean": generated_mean[valid],
+        "real_pk_mean": real_mean[valid],
+        "real_pk_median": real_median[retained],
+        "real_pk_percentiles": real_percentiles[:, retained],
         "k_max": float(k_max),
         "reference_info": reference_info,
     }
