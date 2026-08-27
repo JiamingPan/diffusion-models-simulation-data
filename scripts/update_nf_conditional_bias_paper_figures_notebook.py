@@ -30,10 +30,10 @@ def _cells() -> list[dict]:
 ## Paper-ready verification figures
 
 This cell exports the conditional-recovery result and its comparison figures at the exact paper width.
-The conditional figure reports full empirical calibration curves for three representative training-set sizes,
-including examples from the memorization and generalization regimes. Coverage is computed directly from the individual generated-map
-probe recoveries over the 32 held-out cosmologies; the plotted markers identify the nominal 68\% and 95\%
-intervals. It also
+The conditional figure places recovered-versus-requested $\Omega_m$ on the left panel and full empirical
+coverage curves on the right panel for $N_{2D}=2^7,2^{10},2^{14}$. Both panels use the same individual
+generated-map probe recoveries over the 32 held-out cosmologies. The left-panel points are medians with
+16th--84th percentile error bars; the right-panel markers identify the nominal 68\% and 95\% intervals. It also
 saves the frozen VGG16+MLP heldout-real slope/$R^2$ summary used to establish which conditional directions
 the probe can verify. The U-Net-128 audit uses $N_{2D}=2^6,2^8,2^{10},2^{12},2^{15}$
 to show copying, the intermediate degradation, and recovery at high data. The $\mathrm{FD}_{\mathrm{SSCD}}$
@@ -41,9 +41,10 @@ annotation compares 512 generated maps with 512 held-out real maps and divides b
 two disjoint 512-map halves of the held-out real set. The compact CSV records this normalized distance and its
 raw real-real baseline. This held-out-real
 reference tests whether generated maps remain in distribution. By contrast, the third-row Nyquist-limited
-power-spectrum ratio uses each model's exact configured training subset as its real reference, because that
-row tests whether the model reproduces the statistics of the distribution on which it was trained. Its Fourier
-coordinate is converted to physical units with the CAMELS map width $L=25\,h^{-1}\mathrm{Mpc}$.
+power spectra compare the generated mean with the per-field distribution from each model's exact configured
+training subset. That row tests whether the model reproduces the statistics of the distribution on which it
+was trained. Its Fourier coordinate is converted to physical units with the CAMELS map width
+$L=25\,h^{-1}\mathrm{Mpc}$.
 """,
         ),
         _cell(
@@ -202,12 +203,13 @@ display(
             "markdown",
             r"""
 The PDFs above contain no figure-level titles; put the scientific description, ideal-calibration diagonal,
-and training protocol in the LaTeX captions. The conditional coverage curve uses the measured recovered-$\Omega_m$
-draws at $N_{2D}=2^7,2^{10},2^{14}$; curves below the diagonal are overconfident.
+and training protocol in the LaTeX captions. In the conditional figure, the left panel shows the measured
+recovered-versus-requested $\Omega_m$ relation and the right panel shows coverage at
+$N_{2D}=2^7,2^{10},2^{14}$; curves below the diagonal are overconfident.
 The U-Net-128 table records the copying similarity, normalized SSCD Fr\'echet distance and real-real
 baseline, matched evaluation counts, and exact-subset configuration for every displayed column. The generated
 caption file states explicitly that $\mathrm{FD}_{\mathrm{SSCD}}$ uses held-out real fields, whereas the
-power-spectrum ratio uses each model's exact training subset.
+power-spectrum distribution uses each model's exact training subset.
 """,
         ),
     ]

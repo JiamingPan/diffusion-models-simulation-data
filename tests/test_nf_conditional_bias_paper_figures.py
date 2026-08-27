@@ -259,7 +259,7 @@ def test_coverage_summary_fails_closed_on_inconsistent_draw_counts():
         plotting.compute_conditional_coverage(samples, bootstrap=20, seed=2)
 
 
-def test_conditional_coverage_figure_shows_three_training_regimes_against_calibration(tmp_path):
+def test_conditional_coverage_figure_pairs_recovery_scatter_with_coverage(tmp_path):
     plotting = _module()
     figure, report = plotting.build_conditional_coverage_figure(
         _posterior_sample_table(),
@@ -267,20 +267,35 @@ def test_conditional_coverage_figure_shows_three_training_regimes_against_calibr
         seed=17,
     )
     try:
-        assert figure.get_size_inches() == pytest.approx((5.25, 3.70))
+        assert figure.get_size_inches() == pytest.approx((6.75, 3.05))
         assert figure._suptitle is None
-        assert len(figure.axes) == 1
-        axis = figure.axes[0]
-        _assert_paper_axis(axis)
-        assert axis.get_xlabel() == "Nominal coverage"
-        assert axis.get_ylabel() == "Empirical coverage"
-        assert axis.xaxis.label.get_fontsize() >= 11.0
-        assert axis.yaxis.label.get_fontsize() >= 11.0
-        assert all(label.get_fontsize() >= 9.5 for label in axis.get_xticklabels())
-        assert all(label.get_fontsize() >= 9.5 for label in axis.get_yticklabels())
-        assert axis.get_xlim() == pytest.approx((0.0, 1.0))
-        assert axis.get_ylim() == pytest.approx((0.0, 1.0))
-        labels = axis.get_legend_handles_labels()[1]
+        assert len(figure.axes) == 2
+        recovery_axis, coverage_axis = figure.axes
+        for axis in figure.axes:
+            _assert_paper_axis(axis)
+
+        assert recovery_axis.get_xlabel() == r"Requested $\Omega_m$"
+        assert recovery_axis.get_ylabel() == r"Recovered $\Omega_m$"
+        assert recovery_axis.get_xlim() == pytest.approx(recovery_axis.get_ylim())
+        assert recovery_axis.get_aspect() == pytest.approx(1.0)
+        assert len(recovery_axis.collections) == 3
+        recovery_reference = [
+            line
+            for line in recovery_axis.lines
+            if line.get_linestyle() == "--"
+            and np.allclose(line.get_xdata(), line.get_ydata())
+        ]
+        assert len(recovery_reference) == 1
+
+        assert coverage_axis.get_xlabel() == "Nominal coverage"
+        assert coverage_axis.get_ylabel() == "Empirical coverage"
+        assert coverage_axis.xaxis.label.get_fontsize() >= 10.0
+        assert coverage_axis.yaxis.label.get_fontsize() >= 10.0
+        assert all(label.get_fontsize() >= 8.0 for label in coverage_axis.get_xticklabels())
+        assert all(label.get_fontsize() >= 8.0 for label in coverage_axis.get_yticklabels())
+        assert coverage_axis.get_xlim() == pytest.approx((0.0, 1.0))
+        assert coverage_axis.get_ylim() == pytest.approx((0.0, 1.0))
+        labels = [text.get_text() for text in figure.legends[0].get_texts()]
         assert labels == [
             r"$N_{2D}=2^{7}$ memorization regime",
             r"$N_{2D}=2^{10}$",
@@ -288,20 +303,20 @@ def test_conditional_coverage_figure_shows_three_training_regimes_against_calibr
         ]
         calibration_lines = [
             line
-            for line in axis.lines
+            for line in coverage_axis.lines
             if np.allclose(line.get_xdata(), line.get_ydata())
         ]
         assert len(calibration_lines) == 1
-        region_labels = {text.get_text(): text for text in axis.texts}
+        region_labels = {text.get_text(): text for text in coverage_axis.texts}
         assert set(region_labels) == {
             "underconfident",
             "overconfident",
         }
-        assert all(text.get_fontsize() >= 10.0 for text in region_labels.values())
-        assert axis.get_legend().get_texts()
+        assert all(text.get_fontsize() >= 8.5 for text in region_labels.values())
+        assert figure.legends[0].get_texts()
         assert all(
-            text.get_fontsize() >= 9.5
-            for text in axis.get_legend().get_texts()
+            text.get_fontsize() >= 8.0
+            for text in figure.legends[0].get_texts()
         )
         assert plotting.COVERAGE_MARKERS == {0.68: "o", 0.95: "s"}
         plotted_sizes = set(report.loc[report["plotted"], "dataset_size"])
@@ -396,6 +411,9 @@ def test_results_notebook_contains_idempotent_paper_figure_section(tmp_path):
     source_text = "\n".join("".join(cell.get("source", [])) for cell in tagged)
     assert "conditional_recovery_transition.pdf" in source_text
     assert "conditional_recovery_coverage_curves.csv" in source_text
+    assert "recovered-versus-requested" in source_text
+    assert "left panel" in source_text
+    assert "right panel" in source_text
     assert "generalization_transition.pdf" in source_text
     assert "nearest_training_u128.pdf" in source_text
     assert "nearest_training_u128_preview.png" in source_text
