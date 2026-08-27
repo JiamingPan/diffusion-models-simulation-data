@@ -316,11 +316,11 @@ def build_conditional_coverage_figure(
         1,
         2,
         width_ratios=(1.0, 1.06),
-        left=0.085,
-        right=0.985,
-        bottom=0.16,
-        top=0.85,
-        wspace=0.30,
+        left=0.10,
+        right=0.96,
+        bottom=0.18,
+        top=0.84,
+        wspace=0.32,
     )
     recovery_axis = figure.add_subplot(grid[0, 0])
     coverage_axis = figure.add_subplot(grid[0, 1])
@@ -378,10 +378,10 @@ def build_conditional_coverage_figure(
     recovery_axis.set_xlim(limits)
     recovery_axis.set_ylim(limits)
     recovery_axis.set_aspect("equal", adjustable="box")
-    recovery_axis.set_xlabel(r"Requested $\Omega_m$", fontsize=12.5)
-    recovery_axis.set_ylabel(r"Recovered $\Omega_m$", fontsize=12.5)
+    recovery_axis.set_xlabel(r"Requested $\Omega_m$", fontsize=10.5)
+    recovery_axis.set_ylabel(r"Recovered $\Omega_m$", fontsize=10.5)
     style_axis(recovery_axis)
-    recovery_axis.tick_params(axis="both", labelsize=10.5)
+    recovery_axis.tick_params(axis="both", labelsize=9.0)
 
     coverage_axis.plot(
         (0.0, 1.0),
@@ -420,39 +420,39 @@ def build_conditional_coverage_figure(
             )
 
     coverage_axis.text(
-        0.58,
-        0.87,
+        0.40,
+        0.90,
         "underconfident",
         color="0.38",
-        fontsize=10.5,
+        fontsize=8.5,
         ha="center",
     )
     coverage_axis.text(
         0.68,
-        0.24,
+        0.28,
         "overconfident",
         color="0.38",
-        fontsize=10.5,
+        fontsize=8.5,
         ha="center",
     )
-    coverage_axis.set_xlabel("Nominal coverage", fontsize=12.5)
-    coverage_axis.set_ylabel("Empirical coverage", fontsize=12.5)
+    coverage_axis.set_xlabel("Nominal coverage", fontsize=10.5)
+    coverage_axis.set_ylabel("Empirical coverage", fontsize=10.5)
     coverage_axis.set_xlim(0.0, 1.0)
     coverage_axis.set_ylim(0.0, 1.0)
     coverage_axis.set_xticks(np.linspace(0.0, 1.0, 6))
     coverage_axis.set_yticks(np.linspace(0.0, 1.0, 6))
     style_axis(coverage_axis)
-    coverage_axis.tick_params(axis="both", labelsize=10.5)
+    coverage_axis.tick_params(axis="both", labelsize=9.0)
     figure.legend(
         legend_handles,
         legend_labels,
         frameon=False,
         loc="upper center",
-        bbox_to_anchor=(0.53, 0.985),
+        bbox_to_anchor=(0.53, 0.98),
         ncol=3,
         handlelength=1.6,
         columnspacing=1.1,
-        fontsize=10.0,
+        fontsize=8.5,
     )
     return figure, report
 
