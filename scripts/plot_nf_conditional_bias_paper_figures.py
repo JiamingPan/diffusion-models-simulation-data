@@ -969,7 +969,7 @@ def build_nearest_training_figure(panels: list[dict[str, Any]]) -> plt.Figure:
             color="0.84",
             alpha=0.75,
             linewidth=0.0,
-            label="Real 95%",
+            label="_nolegend_",
         )
         spectrum_axis.fill_between(
             physical_k,
@@ -978,7 +978,7 @@ def build_nearest_training_figure(panels: list[dict[str, Any]]) -> plt.Figure:
             color="0.64",
             alpha=0.75,
             linewidth=0.0,
-            label="Real 68%",
+            label="_nolegend_",
         )
         spectrum_axis.plot(
             physical_k,

@@ -218,6 +218,10 @@ def test_three_row_figure_and_csv_contract(tmp_path):
             == {"Generated mean", "Real median"}
             for axis in spectrum_axes
         )
+        assert spectrum_axes[0].get_legend_handles_labels()[1] == [
+            "Real median",
+            "Generated mean",
+        ]
         assert all(
             not any(np.allclose(line.get_ydata(), 1.0) for line in axis.lines)
             for axis in spectrum_axes
