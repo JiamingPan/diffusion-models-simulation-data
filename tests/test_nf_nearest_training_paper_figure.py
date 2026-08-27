@@ -292,12 +292,16 @@ def test_three_row_figure_and_csv_contract(tmp_path):
     assert "held-out real fields" in caption
 
 
-def test_caption_fails_closed_when_real_real_baselines_differ():
+def test_caption_reports_column_specific_real_real_baselines():
     plotting = _plotting_module()
     table = plotting.nearest_training_table(_figure_panels())
     table.loc[table.index[-1], "fd_sscd_real_real_baseline"] = 2.2
-    with pytest.raises(ValueError, match="one shared real-real baseline"):
-        plotting.nearest_training_caption(table)
+    caption = plotting.nearest_training_caption(table)
+
+    assert "column-specific" in caption
+    assert r"$N_{2D}=2^{6}$: 2.000" in caption
+    assert r"$N_{2D}=2^{15}$: 2.200" in caption
+    assert "corresponding run's training normalization" in caption
 
 
 def test_requested_unet128_columns_fail_closed_when_manifest_run_is_missing(tmp_path):

@@ -267,7 +267,7 @@ def test_conditional_coverage_figure_pairs_recovery_scatter_with_coverage(tmp_pa
         seed=17,
     )
     try:
-        assert figure.get_size_inches() == pytest.approx((6.75, 3.20))
+        assert figure.get_size_inches() == pytest.approx((6.75, 3.35))
         assert figure._suptitle is None
         assert len(figure.axes) == 2
         recovery_axis, coverage_axis = figure.axes
@@ -290,10 +290,10 @@ def test_conditional_coverage_figure_pairs_recovery_scatter_with_coverage(tmp_pa
         assert coverage_axis.get_xlabel() == "Nominal coverage"
         assert coverage_axis.get_ylabel() == "Empirical coverage"
         for axis in (recovery_axis, coverage_axis):
-            assert axis.xaxis.label.get_fontsize() >= 11.0
-            assert axis.yaxis.label.get_fontsize() >= 11.0
-            assert all(label.get_fontsize() >= 9.5 for label in axis.get_xticklabels())
-            assert all(label.get_fontsize() >= 9.5 for label in axis.get_yticklabels())
+            assert axis.xaxis.label.get_fontsize() >= 12.5
+            assert axis.yaxis.label.get_fontsize() >= 12.5
+            assert all(label.get_fontsize() >= 10.5 for label in axis.get_xticklabels())
+            assert all(label.get_fontsize() >= 10.5 for label in axis.get_yticklabels())
         assert coverage_axis.get_xlim() == pytest.approx((0.0, 1.0))
         assert coverage_axis.get_ylim() == pytest.approx((0.0, 1.0))
         labels = [text.get_text() for text in figure.legends[0].get_texts()]
@@ -313,12 +313,12 @@ def test_conditional_coverage_figure_pairs_recovery_scatter_with_coverage(tmp_pa
             "underconfident",
             "overconfident",
         }
-        assert all(text.get_fontsize() >= 9.5 for text in region_labels.values())
+        assert all(text.get_fontsize() >= 10.5 for text in region_labels.values())
         assert all(text.get_ha() == "center" for text in region_labels.values())
         assert region_labels["overconfident"].get_position()[0] <= 0.68
         assert figure.legends[0].get_texts()
         assert all(
-            text.get_fontsize() >= 9.0
+            text.get_fontsize() >= 10.0
             for text in figure.legends[0].get_texts()
         )
         assert plotting.COVERAGE_MARKERS == {0.68: "o", 0.95: "s"}
@@ -437,6 +437,7 @@ def test_results_notebook_contains_idempotent_paper_figure_section(tmp_path):
     assert "conditional_coverage_report['plotted']" in source_text
     assert "paper_dimensions" in source_text
     assert "plot_nf_conditional_bias_paper_figures" in source_text
+    assert "importlib.reload(paper_plotting)" in source_text
     assert "paper_generalization" in source_text
     assert "paper_samples" in source_text
 

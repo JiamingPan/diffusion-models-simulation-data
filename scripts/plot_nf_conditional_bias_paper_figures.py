@@ -311,7 +311,7 @@ def build_conditional_coverage_figure(
             f"found {counts.to_dict()}"
         )
 
-    figure = plt.figure(figsize=(FULL_W, 3.20))
+    figure = plt.figure(figsize=(FULL_W, 3.35))
     grid = figure.add_gridspec(
         1,
         2,
@@ -378,10 +378,10 @@ def build_conditional_coverage_figure(
     recovery_axis.set_xlim(limits)
     recovery_axis.set_ylim(limits)
     recovery_axis.set_aspect("equal", adjustable="box")
-    recovery_axis.set_xlabel(r"Requested $\Omega_m$", fontsize=11.0)
-    recovery_axis.set_ylabel(r"Recovered $\Omega_m$", fontsize=11.0)
+    recovery_axis.set_xlabel(r"Requested $\Omega_m$", fontsize=12.5)
+    recovery_axis.set_ylabel(r"Recovered $\Omega_m$", fontsize=12.5)
     style_axis(recovery_axis)
-    recovery_axis.tick_params(axis="both", labelsize=9.5)
+    recovery_axis.tick_params(axis="both", labelsize=10.5)
 
     coverage_axis.plot(
         (0.0, 1.0),
@@ -424,7 +424,7 @@ def build_conditional_coverage_figure(
         0.87,
         "underconfident",
         color="0.38",
-        fontsize=9.5,
+        fontsize=10.5,
         ha="center",
     )
     coverage_axis.text(
@@ -432,17 +432,17 @@ def build_conditional_coverage_figure(
         0.24,
         "overconfident",
         color="0.38",
-        fontsize=9.5,
+        fontsize=10.5,
         ha="center",
     )
-    coverage_axis.set_xlabel("Nominal coverage", fontsize=11.0)
-    coverage_axis.set_ylabel("Empirical coverage", fontsize=11.0)
+    coverage_axis.set_xlabel("Nominal coverage", fontsize=12.5)
+    coverage_axis.set_ylabel("Empirical coverage", fontsize=12.5)
     coverage_axis.set_xlim(0.0, 1.0)
     coverage_axis.set_ylim(0.0, 1.0)
     coverage_axis.set_xticks(np.linspace(0.0, 1.0, 6))
     coverage_axis.set_yticks(np.linspace(0.0, 1.0, 6))
     style_axis(coverage_axis)
-    coverage_axis.tick_params(axis="both", labelsize=9.5)
+    coverage_axis.tick_params(axis="both", labelsize=10.5)
     figure.legend(
         legend_handles,
         legend_labels,
@@ -452,7 +452,7 @@ def build_conditional_coverage_figure(
         ncol=3,
         handlelength=1.6,
         columnspacing=1.1,
-        fontsize=9.0,
+        fontsize=10.0,
     )
     return figure, report
 
@@ -1069,11 +1069,8 @@ def nearest_training_caption(table: pd.DataFrame) -> str:
     baselines = table["fd_sscd_real_real_baseline"].to_numpy(float)
     if len(baselines) == 0 or not np.all(np.isfinite(baselines)):
         raise ValueError("nearest-training caption requires finite real-real baselines")
-    if not np.allclose(baselines, baselines[0], rtol=1.0e-6, atol=1.0e-9):
-        raise ValueError(
-            "nearest-training caption requires one shared real-real baseline; "
-            f"found {baselines.tolist()}"
-        )
+    if np.any(baselines <= 0.0):
+        raise ValueError("nearest-training caption requires positive real-real baselines")
     n_generated = sorted(set(table["n_generated"].astype(int)))
     n_reference = sorted(set(table["n_reference"].astype(int)))
     if n_generated != [EXPECTED_NEAREST_SAMPLES] or n_reference != [EXPECTED_NEAREST_SAMPLES]:
@@ -1081,7 +1078,23 @@ def nearest_training_caption(table: pd.DataFrame) -> str:
             "nearest-training caption requires matched 512-map generated and "
             f"reference sets; n_generated={n_generated}, n_reference={n_reference}"
         )
-    baseline = float(baselines[0])
+    if np.allclose(baselines, baselines[0], rtol=1.0e-6, atol=1.0e-9):
+        baseline_text = f"The real-real reference value is {float(baselines[0]):.3f}. "
+    else:
+        ordered = table.sort_values("dataset_size")
+        baseline_items = []
+        for row in ordered.itertuples(index=False):
+            power = int(round(np.log2(int(row.dataset_size))))
+            baseline_items.append(
+                rf"$N_{{2D}}=2^{{{power}}}$: "
+                f"{float(row.fd_sscd_real_real_baseline):.3f}"
+            )
+        baseline_text = (
+            "The column-specific real-real reference values are "
+            + ", ".join(baseline_items)
+            + ". They differ because held-out maps use the corresponding run's "
+            "training normalization before SSCD embedding. "
+        )
     return (
         r"\caption{Generated U-Net-128 fields (top), their closest training "
         r"slices under SSCD cosine similarity (middle), and Nyquist-limited "
@@ -1091,8 +1104,9 @@ def nearest_training_caption(table: pd.DataFrame) -> str:
         r"16th--84th and 2.5th--97.5th percentile ranges, respectively. The panel annotation "
         r"$\mathrm{FD}_{\mathrm{SSCD}}$ is the generated-to-held-out-real "
         r"Fr\'echet distance in SSCD feature space normalized by the matched-sample "
-        rf"real-real reference; lower is better. The real-real reference value is {baseline:.3f}, "
-        r"computed between two disjoint halves of the held-out real set with 512 fields "
+        r"real-real reference; lower is better. "
+        + baseline_text
+        + r"Each reference is computed between two disjoint halves of the held-out real set with 512 fields "
         r"per half. Thus $\mathrm{FD}_{\mathrm{SSCD}}$ uses held-out real fields as "
         r"its reference. In contrast, the real power-spectrum distribution in the "
         r"bottom row is computed from each model's exact training subset.}"
