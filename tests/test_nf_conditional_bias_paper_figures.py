@@ -330,7 +330,7 @@ def test_conditional_coverage_figure_pairs_recovery_scatter_with_coverage(tmp_pa
             (0.40, 0.90)
         )
         assert region_labels["overconfident"].get_position() == pytest.approx(
-            (0.68, 0.28)
+            (0.70, 0.24)
         )
         assert figure.legends[0].get_texts()
         assert all(
