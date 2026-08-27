@@ -51,14 +51,17 @@ COVERAGE_MARKERS = {0.68: "o", 0.95: "s"}
 COVERAGE_STYLES = {
     7: {
         "color": "#C23B2A",
+        "marker": "o",
         "label": r"$N_{2D}=2^{7}$ memorization regime",
     },
     10: {
         "color": "#E67E22",
+        "marker": "D",
         "label": r"$N_{2D}=2^{10}$",
     },
     14: {
         "color": "#0072B2",
+        "marker": "s",
         "label": r"$N_{2D}=2^{14}$ generalization regime",
     },
 }
@@ -272,7 +275,7 @@ def build_conditional_coverage_figure(
     bootstrap: int = 2000,
     seed: int = 123,
 ) -> tuple[plt.Figure, pd.DataFrame]:
-    """Plot full calibration curves for representative training-set sizes."""
+    """Pair recovery scatters with coverage curves for representative sizes."""
 
     set_paper_style()
     report = compute_conditional_coverage(
@@ -283,10 +286,103 @@ def build_conditional_coverage_figure(
     )
     selected_sizes = {2**power for power in COVERAGE_POWERS}
     report["plotted"] = report["dataset_size"].isin(selected_sizes)
-    figure, axis = plt.subplots(figsize=(5.25, 3.70))
-    figure.subplots_adjust(left=0.13, right=0.98, bottom=0.15, top=0.98)
+    omega = _single_protocol(samples)
+    omega = omega[
+        (omega["parameter"] == "Omega_m")
+        & omega["dataset_size"].isin(selected_sizes)
+    ].copy()
+    recovery = (
+        omega.groupby(["dataset_size", "heldout_sim"], observed=True, sort=True)
+        .agg(
+            theta_in=("theta_in", "first"),
+            theta_rec_median=("theta_rec", "median"),
+            theta_rec_q16=("theta_rec", lambda values: np.quantile(values, 0.16)),
+            theta_rec_q84=("theta_rec", lambda values: np.quantile(values, 0.84)),
+        )
+        .reset_index()
+    )
+    counts = recovery.groupby("dataset_size", observed=True).size()
+    if set(counts.index.astype(int)) != selected_sizes or not bool(
+        (counts == EXPECTED_HELDOUT_COSMOLOGIES).all()
+    ):
+        raise ValueError(
+            "expected exactly "
+            f"{EXPECTED_HELDOUT_COSMOLOGIES} recovery points for each plotted size; "
+            f"found {counts.to_dict()}"
+        )
 
-    axis.plot(
+    figure = plt.figure(figsize=(FULL_W, 3.05))
+    grid = figure.add_gridspec(
+        1,
+        2,
+        width_ratios=(1.0, 1.06),
+        left=0.085,
+        right=0.985,
+        bottom=0.17,
+        top=0.82,
+        wspace=0.33,
+    )
+    recovery_axis = figure.add_subplot(grid[0, 0])
+    coverage_axis = figure.add_subplot(grid[0, 1])
+
+    lower = float(
+        min(recovery["theta_in"].min(), recovery["theta_rec_q16"].min())
+    )
+    upper = float(
+        max(recovery["theta_in"].max(), recovery["theta_rec_q84"].max())
+    )
+    padding = 0.06 * max(upper - lower, 1.0e-6)
+    limits = (lower - padding, upper + padding)
+    recovery_axis.plot(
+        limits,
+        limits,
+        color="0.15",
+        ls="--",
+        lw=0.9,
+        label="_nolegend_",
+        zorder=0,
+    )
+    legend_handles = []
+    legend_labels = []
+    for power in COVERAGE_POWERS:
+        dataset_size = 2**power
+        plot_style = COVERAGE_STYLES[power]
+        sub = recovery[recovery["dataset_size"] == dataset_size].sort_values(
+            "theta_in"
+        )
+        y = sub["theta_rec_median"].to_numpy(float)
+        yerr = np.vstack(
+            (
+                np.maximum(y - sub["theta_rec_q16"].to_numpy(float), 0.0),
+                np.maximum(sub["theta_rec_q84"].to_numpy(float) - y, 0.0),
+            )
+        )
+        handle = recovery_axis.errorbar(
+            sub["theta_in"],
+            y,
+            yerr=yerr,
+            fmt=plot_style["marker"],
+            ms=3.0,
+            capsize=1.3,
+            elinewidth=0.65,
+            color=plot_style["color"],
+            ecolor=plot_style["color"],
+            markeredgecolor="white",
+            markeredgewidth=0.35,
+            alpha=0.78,
+            zorder=2,
+        )
+        legend_handles.append(handle)
+        legend_labels.append(plot_style["label"])
+
+    recovery_axis.set_xlim(limits)
+    recovery_axis.set_ylim(limits)
+    recovery_axis.set_aspect("equal", adjustable="box")
+    recovery_axis.set_xlabel(r"Requested $\Omega_m$", fontsize=10.0)
+    recovery_axis.set_ylabel(r"Recovered $\Omega_m$", fontsize=10.0)
+    style_axis(recovery_axis)
+
+    coverage_axis.plot(
         (0.0, 1.0),
         (0.0, 1.0),
         color="0.15",
@@ -301,17 +397,17 @@ def build_conditional_coverage_figure(
         sub = report[report["dataset_size"] == dataset_size].sort_values(
             "nominal_coverage"
         )
-        axis.plot(
+        coverage_axis.plot(
             sub["nominal_coverage"],
             sub["empirical_coverage"],
             color=plot_style["color"],
             lw=1.45,
-            label=plot_style["label"],
+            label="_nolegend_",
             zorder=2,
         )
         for nominal in COVERAGE_LEVELS:
             focal = sub[np.isclose(sub["nominal_coverage"], nominal)]
-            axis.scatter(
+            coverage_axis.scatter(
                 focal["nominal_coverage"],
                 focal["empirical_coverage"],
                 s=22,
@@ -322,29 +418,34 @@ def build_conditional_coverage_figure(
                 zorder=3,
             )
 
-    axis.text(
+    coverage_axis.text(
         0.58,
         0.87,
         "underconfident",
         color="0.38",
-        fontsize=10.0,
+        fontsize=8.5,
         ha="center",
     )
-    axis.text(0.72, 0.25, "overconfident", color="0.38", fontsize=10.0)
-    axis.set_xlabel("Nominal coverage", fontsize=11.0)
-    axis.set_ylabel("Empirical coverage", fontsize=11.0)
-    axis.set_xlim(0.0, 1.0)
-    axis.set_ylim(0.0, 1.0)
-    axis.set_xticks(np.linspace(0.0, 1.0, 6))
-    axis.set_yticks(np.linspace(0.0, 1.0, 6))
-    style_axis(axis)
-    axis.tick_params(axis="both", labelsize=9.5)
-    axis.legend(
+    coverage_axis.text(
+        0.70, 0.24, "overconfident", color="0.38", fontsize=8.5
+    )
+    coverage_axis.set_xlabel("Nominal coverage", fontsize=10.0)
+    coverage_axis.set_ylabel("Empirical coverage", fontsize=10.0)
+    coverage_axis.set_xlim(0.0, 1.0)
+    coverage_axis.set_ylim(0.0, 1.0)
+    coverage_axis.set_xticks(np.linspace(0.0, 1.0, 6))
+    coverage_axis.set_yticks(np.linspace(0.0, 1.0, 6))
+    style_axis(coverage_axis)
+    figure.legend(
+        legend_handles,
+        legend_labels,
         frameon=False,
-        loc="upper left",
-        ncol=1,
-        handlelength=2.2,
-        fontsize=9.5,
+        loc="upper center",
+        bbox_to_anchor=(0.53, 0.985),
+        ncol=3,
+        handlelength=1.6,
+        columnspacing=1.1,
+        fontsize=8.0,
     )
     return figure, report
 
