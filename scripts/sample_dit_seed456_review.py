@@ -64,7 +64,10 @@ def main():
     if output.exists():
         raise FileExistsError(f"Refusing to overwrite {output}")
     output.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(plan["command"], check=True, cwd=args.code_root)
+    # Keep startup in the pin's original code root: its sitecustomize binds
+    # the canonical shim to that directory, not to this adapter checkout.
+    runtime_code_root = Path(os.environ["RUNTIME_CODE_ROOT"])
+    subprocess.run(plan["command"], check=True, cwd=runtime_code_root)
     report = validate_sample_file(output, requested_checkpoint=Path(plan["checkpoint"]),
                                   scheduler="DPMSolverMultistepScheduler", requested_steps=50)
     with output.with_suffix(".validated.json").open("x") as handle:
