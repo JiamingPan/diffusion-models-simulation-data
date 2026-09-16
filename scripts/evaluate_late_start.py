@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import sys
 from pathlib import Path
 
@@ -69,6 +70,49 @@ def validate_provenance(data, *, training_mean_sha256: str) -> dict:
         raise ValueError("actual late-start timestep is outside the requested schedule range")
     if not 1 <= record["steps_run"] <= record["num_steps"]:
         raise ValueError("late-start step count is invalid")
+    return record
+
+
+def validate_matrix_provenance(data, *, reference_sha256: str, config_sha256: str) -> dict:
+    """Separate opt-in contract; legacy late-start guards remain unchanged."""
+    from dit_sampler_matrix import CONDITIONS, PROTOCOL, STEP_SEED
+    if str(scalar(data, "protocol")) != PROTOCOL:
+        raise ValueError("sample lacks the explicit sampler-matrix protocol")
+    name = str(scalar(data, "matrix_condition"))
+    condition = next((c for c in CONDITIONS if c["name"] == name), None)
+    if condition is None:
+        raise ValueError("unknown matrix condition")
+    scheduler = str(scalar(data, "scheduler_class"))
+    config = json.loads(str(scalar(data, "scheduler_config_json")))
+    if scheduler != condition["scheduler"] or config.get("prediction_type") != "v_prediction":
+        raise ValueError("matrix scheduler/prediction type differs from protocol")
+    for key, expected in condition["kwargs"].items():
+        if config.get(key) != expected:
+            raise ValueError(f"matrix scheduler override differs: {key}")
+    record = {"matrix_condition": name, "scheduler_class": scheduler,
+              "num_steps": int(scalar(data, "num_steps")),
+              "steps_run": int(scalar(data, "executed_inference_steps")),
+              "seed": int(scalar(data, "seed")), "step_seed": int(scalar(data, "step_seed")),
+              "ema_sigma_rel": float(scalar(data, "ema_sigma_rel")),
+              "checkpoint": str(scalar(data, "resolved_checkpoint")),
+              "config_sha256": str(scalar(data, "config_sha256")),
+              "reference_sha256": str(scalar(data, "reference_sha256")),
+              "noise_batch_sha256": str(scalar(data, "initial_noise_batch_sha256"))}
+    if record["num_steps"] != condition["steps"] or record["steps_run"] != condition["steps"]:
+        raise ValueError("matrix requested/executed step count differs")
+    if record["seed"] != 123 or record["step_seed"] != STEP_SEED or record["ema_sigma_rel"] != -1.:
+        raise ValueError(f"matrix requires initial seed 123, distinct step seed {STEP_SEED}, and raw weights")
+    if record["reference_sha256"] != reference_sha256 or record["config_sha256"] != config_sha256:
+        raise ValueError("matrix training reference/config changed")
+    if "initial_noise" not in data or "initial_noise_sha256" not in data:
+        raise ValueError("matrix sample lacks saved initial-noise pairing evidence")
+    noise = np.asarray(data["initial_noise"])
+    if noise.dtype != np.float32 or noise.ndim != 4 or len(noise) != 128 or not np.isfinite(noise).all():
+        raise ValueError("matrix initial noise must contain 128 finite float32 NCHW fields")
+    batch_hash = hashlib.sha256(np.ascontiguousarray(noise).tobytes()).hexdigest()
+    sample_hashes = [hashlib.sha256(np.ascontiguousarray(x).tobytes()).hexdigest() for x in noise]
+    if batch_hash != record["noise_batch_sha256"] or np.asarray(data["initial_noise_sha256"]).tolist() != sample_hashes:
+        raise ValueError("saved initial-noise hashes do not match actual fields")
     return record
 
 
@@ -138,6 +182,9 @@ def score(samples: np.ndarray, reference: np.ndarray, ref_power: np.ndarray, k: 
     hi = (k >= NYQUIST / 2) & valid
     return {
         "n": int(len(samples)),
+        "copy_count": int(copies.sum()),
+        "junk_count": int(junk.sum()),
+        "other_count": int((~copies & ~junk).sum()),
         "copy_fraction": float(copies.mean()),
         "junk_fraction": float(junk.mean()),
         "median_max_cos": float(np.median(cos)),
@@ -155,9 +202,13 @@ def main() -> None:
     parser.add_argument("--samples", type=Path, nargs="+", required=True)
     parser.add_argument("--out", type=Path, default=None, help="Optional CSV output.")
     parser.add_argument("--eval-root", type=Path, default=None)
+    parser.add_argument("--protocol", choices=("late-start", "sampler-matrix"), default="late-start",
+                        help="Explicitly select the distinct matrix contract; legacy checks are the default.")
     args = parser.parse_args()
 
     reference = load_reference(args.config, args.eval_root)
+    if args.protocol == "sampler-matrix" and reference.shape != (256, 1, 128, 128):
+        raise ValueError("matrix requires the exact 256-map 128x128 training reference")
     expected_training_mean_sha256 = hashlib.sha256(
         reference.mean(axis=0, keepdims=True).tobytes()
     ).hexdigest()
@@ -169,9 +220,15 @@ def main() -> None:
     for path in args.samples:
         with np.load(path, allow_pickle=False) as data:
             samples = data["samples"].astype(np.float32)
-            provenance = validate_provenance(
-                data, training_mean_sha256=expected_training_mean_sha256
-            )
+            if args.protocol == "sampler-matrix":
+                provenance = validate_matrix_provenance(data,
+                    reference_sha256=hashlib.sha256(np.ascontiguousarray(reference).tobytes()).hexdigest(),
+                    config_sha256=hashlib.sha256(args.config.read_bytes()).hexdigest())
+                if samples.shape != data["initial_noise"].shape:
+                    raise ValueError("matrix samples and saved initial noise have different shapes")
+            else:
+                provenance = validate_provenance(
+                    data, training_mean_sha256=expected_training_mean_sha256)
         if samples.ndim != 4 or not np.isfinite(samples).all():
             raise ValueError(f"{path}: samples must be finite NCHW fields")
         if samples.shape[1:] != reference.shape[1:]:

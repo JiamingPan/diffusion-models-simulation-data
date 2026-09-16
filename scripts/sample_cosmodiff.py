@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import importlib.metadata
 import inspect
+import json
 import re
 import sys
 from pathlib import Path
@@ -153,17 +154,46 @@ def _load_scheduler_from_config(config_path: Path | None, *, allow_default_sched
     return scheduler_cls(**scheduler_config.get("kwargs", {}))
 
 
-def build_inference_scheduler(base_scheduler, scheduler_name: str | None):
+def parse_scheduler_kwargs(value: str) -> dict:
+    """Parse explicit constructor overrides; never accept JSON NaN/Infinity."""
+    def reject_constant(token):
+        raise ValueError(f"non-finite JSON value: {token}")
+
+    try:
+        kwargs = json.loads(value, parse_constant=reject_constant)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"invalid scheduler JSON: {exc}") from exc
+    if not isinstance(kwargs, dict):
+        raise argparse.ArgumentTypeError("--scheduler-kwargs must be a JSON object")
+    return kwargs
+
+
+def build_inference_scheduler(base_scheduler, scheduler_name: str | None,
+                              scheduler_kwargs: dict | None = None):
     """Optionally replace the training scheduler with an inference scheduler."""
     if not scheduler_name:
+        if scheduler_kwargs:
+            raise ValueError("scheduler overrides require an explicit scheduler name")
         return base_scheduler
 
     import diffusers
 
     scheduler_cls = getattr(diffusers, scheduler_name)
+    overrides = scheduler_kwargs or {}
+    if not isinstance(overrides, dict):
+        raise ValueError("scheduler overrides must be a dictionary")
+    params = inspect.signature(scheduler_cls.__init__).parameters
+    unknown = set(overrides) - set(params)
+    if unknown:
+        raise ValueError(f"unknown {scheduler_name} constructor overrides: {sorted(unknown)}")
     if hasattr(scheduler_cls, "from_config"):
-        return scheduler_cls.from_config(base_scheduler.config)
-    return scheduler_cls(**dict(base_scheduler.config))
+        scheduler = scheduler_cls.from_config(base_scheduler.config, **overrides)
+    else:
+        scheduler = scheduler_cls(**{**dict(base_scheduler.config), **overrides})
+    for key, requested in overrides.items():
+        if key not in scheduler.config or scheduler.config[key] != requested:
+            raise ValueError(f"{scheduler_name} did not apply override {key}={requested!r}")
+    return scheduler
 
 
 def _config_model_class(config_path: Path | None) -> str | None:
@@ -308,12 +338,26 @@ def generate_samples(
     device: torch.device,
     generator: torch.Generator | None,
     class_labels: torch.Tensor | None = None,
+    initial_noise: torch.Tensor | None = None,
+    model_batch_size: int | None = None,
 ) -> torch.Tensor:
     model.eval()
     n_steps = int(num_steps or noise_scheduler.config.num_train_timesteps)
     noise_scheduler.set_timesteps(n_steps)
 
-    images = torch.randn((batch_size, *image_shape), device=device, generator=generator)
+    if batch_size <= 0 or (model_batch_size is not None and model_batch_size <= 0):
+        raise ValueError("batch sizes must be positive")
+    if initial_noise is None:
+        images = torch.randn((batch_size, *image_shape), device=device, generator=generator)
+    else:
+        if tuple(initial_noise.shape) != (batch_size, *image_shape):
+            raise ValueError("supplied initial noise shape differs from requested batch")
+        if not torch.isfinite(initial_noise).all():
+            raise ValueError("supplied initial noise is not finite")
+        images = initial_noise.to(device=device).clone()
+    images *= float(getattr(noise_scheduler, "init_noise_sigma", 1.0))
+    if class_labels is not None and len(class_labels) != batch_size:
+        raise ValueError("class label count differs from batch size")
 
     try:
         step_params = inspect.signature(noise_scheduler.step).parameters
@@ -321,21 +365,25 @@ def generate_samples(
         step_params = {}
 
     for t in noise_scheduler.timesteps:
-        timesteps = torch.full((batch_size,), t, device=device, dtype=torch.long)
-        if class_labels is not None:
-            labels = class_labels.to(device=device, dtype=torch.long)
-            noise_pred = model(
-                images,
-                timestep=timesteps,
-                class_labels=labels,
-                return_dict=False,
-            )[0]
-        else:
-            noise_pred = model(images, timesteps, return_dict=False)[0]
+        predictions = []
+        chunk = model_batch_size or batch_size
+        for start in range(0, batch_size, chunk):
+            inputs = images[start:start + chunk]
+            timesteps = torch.full((len(inputs),), int(t), device=device, dtype=torch.long)
+            if class_labels is not None:
+                labels = class_labels[start:start + chunk].to(device=device, dtype=torch.long)
+                prediction = model(inputs, timestep=timesteps, class_labels=labels,
+                                   return_dict=False)[0]
+            else:
+                prediction = model(inputs, timesteps, return_dict=False)[0]
+            predictions.append(prediction)
+        noise_pred = torch.cat(predictions)
         step_kwargs = {}
         if "generator" in step_params:
             step_kwargs["generator"] = generator
         images = noise_scheduler.step(noise_pred, t, images, **step_kwargs).prev_sample
+        if not torch.isfinite(images).all():
+            raise ValueError(f"non-finite sampling state at timestep {int(t)}")
 
     return images
 
@@ -413,6 +461,8 @@ def save_sample_output(
     num_steps: int,
     seed: int,
     scheduler_audit: dict[str, Any] | None = None,
+    scheduler_config: dict | None = None,
+    scheduler_kwargs: dict | None = None,
 ) -> None:
     """Save samples with enough provenance to audit checkpoint comparisons."""
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -421,6 +471,9 @@ def save_sample_output(
             key: np.asarray(value)
             for key, value in (scheduler_audit or {}).items()
         }
+        if scheduler_config is not None:
+            provenance["scheduler_config_json"] = np.asarray(json.dumps(scheduler_config, default=str))
+            provenance["scheduler_kwargs_json"] = np.asarray(json.dumps(scheduler_kwargs or {}))
         np.savez(
             output,
             samples=samples,
@@ -451,6 +504,8 @@ def main() -> None:
     parser.add_argument("--image-size", type=int, default=128)
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--scheduler", default=None, help="Optional inference scheduler class, e.g. DPMSolverMultistepScheduler.")
+    parser.add_argument("--scheduler-kwargs", type=parse_scheduler_kwargs, default={},
+                        help='Explicit JSON constructor overrides, e.g. {"algorithm_type":"sde-dpmsolver++"}.')
     parser.add_argument("--num-steps", type=int, default=None, help="Optional inference-step count for the scheduler.")
     parser.add_argument("--class-label", type=int, default=None, help="Use one class label for every generated sample.")
     parser.add_argument("--labels", default=None, help="Optional .npy file with one integer class label per generated sample.")
@@ -489,7 +544,7 @@ def main() -> None:
         resolved_checkpoint=checkpoint,
         sigma_rel=args.ema_sigma_rel,
     )
-    scheduler = build_inference_scheduler(scheduler, args.scheduler)
+    scheduler = build_inference_scheduler(scheduler, args.scheduler, args.scheduler_kwargs)
     n_steps = int(args.num_steps or scheduler.config.num_train_timesteps)
     scheduler.set_timesteps(n_steps)
     scheduler_audit = scheduler_audit_metadata(scheduler, n_steps)
@@ -554,6 +609,8 @@ def main() -> None:
         num_steps=n_steps,
         seed=args.seed,
         scheduler_audit=scheduler_audit,
+        scheduler_config=dict(scheduler.config),
+        scheduler_kwargs=args.scheduler_kwargs,
     )
     print(f"Wrote {args.num_samples} samples to {output}")
 

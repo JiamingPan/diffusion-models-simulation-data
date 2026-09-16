@@ -20,7 +20,7 @@ def _old_model(project: Path, architecture: str, run_arch: str) -> dict:
     return {"name": architecture, "checkpoint": str(checkpoint), "config": str(config)}
 
 
-def resolve(project: Path) -> list[dict]:
+def resolve(project: Path, *, allow_missing_l12: bool = False) -> list[dict]:
     rows = [
         _old_model(project, "dit_l8_200k", "l8"),
         _old_model(project, "dit_l12_200k", "base"),
@@ -51,6 +51,9 @@ def resolve(project: Path) -> list[dict]:
     for row, depth in zip(rows, expected_layers):
         checkpoint, config = Path(row["checkpoint"]), Path(row["config"])
         if not checkpoint.is_dir() or not config.is_file():
+            if allow_missing_l12 and row["name"] == "dit_l12_200k":
+                configs.append(None)
+                continue
             raise FileNotFoundError(f"missing {row['name']} input: {checkpoint}, {config}")
         payload = yaml.safe_load(config.read_text())
         configs.append(payload)
@@ -66,6 +69,8 @@ def resolve(project: Path) -> list[dict]:
     reference_data = json.dumps(configs[0]["data"], sort_keys=True)
     reference_noise = json.dumps(configs[0]["noise_scheduler"], sort_keys=True)
     for row, payload in zip(rows[1:], configs[1:]):
+        if payload is None:
+            continue
         if json.dumps(payload["data"], sort_keys=True) != reference_data:
             raise ValueError(f"{row['name']} data config differs from L8")
         if json.dumps(payload["noise_scheduler"], sort_keys=True) != reference_noise:
