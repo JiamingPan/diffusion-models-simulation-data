@@ -70,6 +70,58 @@ def add_shared_noise_pair(
     }
 
 
+def field_to_rgb(field: np.ndarray) -> np.ndarray:
+    """Small dependency-free approximation to viridis for values in [-1, 1]."""
+    anchors = np.asarray(
+        [
+            [68, 1, 84],
+            [59, 82, 139],
+            [33, 145, 140],
+            [94, 201, 98],
+            [253, 231, 37],
+        ],
+        dtype=np.float32,
+    )
+    scaled = np.clip((field.astype(np.float32) + 1.0) / 2.0, 0.0, 1.0)
+    position = scaled * (len(anchors) - 1)
+    lower = np.floor(position).astype(np.int64)
+    upper = np.minimum(lower + 1, len(anchors) - 1)
+    fraction = (position - lower)[..., None]
+    rgb = anchors[lower] * (1.0 - fraction) + anchors[upper] * fraction
+    return np.rint(rgb).astype(np.uint8)
+
+
+def write_gallery_png(
+    gallery: dict[tuple[int, str], np.ndarray],
+    *,
+    timesteps: list[int],
+    label: str,
+    output: Path,
+) -> None:
+    """Write the diagnostic gallery without importing system Matplotlib."""
+    from PIL import Image, ImageDraw
+
+    sample = next(iter(gallery.values()))
+    height, width = sample.shape[-2:]
+    label_width = 110
+    title_height = 28
+    rows = 2 * len(timesteps)
+    canvas = Image.new(
+        "RGB", (label_width + 4 * width, title_height + rows * height), "white"
+    )
+    draw = ImageDraw.Draw(canvas)
+    draw.text((5, 7), f"{label}: one-step x0 estimates", fill="black")
+    for row_index, timestep in enumerate(timesteps):
+        for kind_offset, kind in enumerate(("no_trace", "trace")):
+            row = 2 * row_index + kind_offset
+            y = title_height + row * height
+            draw.text((5, y + height // 2 - 6), f"t={timestep} {kind}", fill="black")
+            for column in range(4):
+                rgb = field_to_rgb(gallery[(timestep, kind)][column, 0])
+                canvas.paste(Image.fromarray(rgb, mode="RGB"), (label_width + column * width, y))
+    canvas.save(output, format="PNG")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--checkpoint", required=True)
@@ -164,21 +216,12 @@ def main() -> None:
     with temporary_csv.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys())); writer.writeheader(); writer.writerows(rows)
 
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    fig, axes = plt.subplots(2 * len(args.timesteps), 4, figsize=(9, 4.4 * len(args.timesteps)), constrained_layout=True)
-    for r, t in enumerate(args.timesteps):
-        for k, kind in enumerate(("no_trace", "trace")):
-            for c in range(4):
-                ax = axes[2 * r + k, c]
-                ax.imshow(gallery[(t, kind)][c, 0], cmap="viridis", vmin=-1, vmax=1)
-                ax.set_xticks([]); ax.set_yticks([])
-                if c == 0:
-                    ax.set_ylabel(f"t={t}\n{kind}", fontsize=9)
-    fig.suptitle(f"{args.label}: one-step x0 estimate from mean+noise (no_trace) vs noised real map (trace)")
-    fig.savefig(temporary_png, dpi=120)
-    plt.close(fig)
+    write_gallery_png(
+        gallery,
+        timesteps=list(args.timesteps),
+        label=args.label,
+        output=temporary_png,
+    )
     provenance = {
         "status": "complete",
         "label": args.label,

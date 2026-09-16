@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -80,6 +81,22 @@ def test_v_prediction_is_converted_to_x0_estimate():
     torch.testing.assert_close(result, torch.full_like(x_t, 2.0))
 
 
+def test_gallery_png_does_not_require_matplotlib(tmp_path, monkeypatch):
+    module = load_module()
+    gallery = {}
+    for timestep in (10, 5):
+        for kind in ("no_trace", "trace"):
+            gallery[(timestep, kind)] = np.linspace(
+                -1, 1, 4 * 1 * 8 * 8, dtype=np.float32
+            ).reshape(4, 1, 8, 8)
+    output = tmp_path / "gallery.png"
+    monkeypatch.setitem(__import__("sys").modules, "matplotlib", None)
+    module.write_gallery_png(
+        gallery, timesteps=[10, 5], label="fixture", output=output
+    )
+    assert output.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
 def test_great_lakes_preflight_records_missing_l12_and_uses_frozen_runtime(tmp_path):
     runtime = tmp_path / "runtime"
     code = tmp_path / "code"
@@ -141,4 +158,4 @@ def test_great_lakes_preflight_records_missing_l12_and_uses_frozen_runtime(tmp_p
     assert result.returncode == 0, result.stderr
     assert "L12 OMITTED" in result.stdout
     assert "ONESTEP PATCHWORK PREFLIGHT PASSED; NO GPU PROBE" in result.stdout
-    assert not (project / "results/onestep_probe").exists()
+    assert not (project / "results/onestep_probe_v2").exists()
