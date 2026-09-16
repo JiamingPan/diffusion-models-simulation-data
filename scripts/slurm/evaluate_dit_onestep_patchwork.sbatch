@@ -15,7 +15,7 @@ set -euo pipefail
 PYTHON_BIN=${PYTHON_BIN:-/home/jiamingp/venvs/cosmodiff_nf_class/bin/python}
 VENV_PATH=/home/jiamingp/venvs/cosmodiff_nf_class
 RUNTIME_CODE_REVISION=555f350f82c913ff06150c96e66709719856cd83
-OUTPUT_DIR="$PROJECT_DIR/results/onestep_probe"
+OUTPUT_DIR="$PROJECT_DIR/results/onestep_probe_v2"
 
 test "$(git -C "$CODE_ROOT" rev-parse HEAD)" = "$EXPECTED_COMMIT"
 test -z "$(git -C "$CODE_ROOT" status --porcelain)"
@@ -41,6 +41,11 @@ cd "$RUNTIME_CODE_ROOT"
   --patch-script "$RUNTIME_CODE_ROOT/scripts/patch_cosmodiff_constant_label.py" \
   --patch-script "$RUNTIME_CODE_ROOT/scripts/patch_cosmodiff_dit_class_labels.py" \
   --patch-script "$RUNTIME_CODE_ROOT/scripts/patch_cosmodiff_checkpoint_state.py"
+
+"$PYTHON_BIN" - <<'PY'
+from PIL import Image
+print(f"PIL RUNTIME PASSED: {Image.__version__}")
+PY
 
 models=()
 for model_index in 0 2 3; do
