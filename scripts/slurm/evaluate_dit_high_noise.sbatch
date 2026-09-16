@@ -15,30 +15,40 @@ set -euo pipefail
 : "${EXPECTED_COSMODIFF_BASE_REVISION:?}"
 PYTHON_BIN=${PYTHON_BIN:-/home/jiamingp/venvs/cosmodiff_nf_class/bin/python}
 VENV_PATH=/home/jiamingp/venvs/cosmodiff_nf_class
+RUNTIME_CODE_ROOT=${RUNTIME_CODE_ROOT:-/scratch/huterer_root/huterer0/jiamingp/iaifi_poster_code_555f350}
+export RUNTIME_CODE_ROOT
+RUNTIME_CODE_REVISION=555f350f82c913ff06150c96e66709719856cd83
 test "$(git -C "$CODE_ROOT" rev-parse HEAD)" = "$EXPECTED_COMMIT"
 test -z "$(git -C "$CODE_ROOT" status --porcelain)"
+test "$(git -C "$RUNTIME_CODE_ROOT" rev-parse HEAD)" = "$RUNTIME_CODE_REVISION"
+test -z "$(git -C "$RUNTIME_CODE_ROOT" status --porcelain)"
 export PYTHONNOUSERSITE=1
-export PYTHONPATH="$COSMODIFF_PIN_ROOT/seed_restart_runtime:$CODE_ROOT:$COSMODIFF_PIN_ROOT"
+export PYTHONPATH="$COSMODIFF_PIN_ROOT/seed_restart_runtime:$RUNTIME_CODE_ROOT:$COSMODIFF_PIN_ROOT"
 export COSMODIFF_DIR="$COSMODIFF_PIN_ROOT"
 export OMP_NUM_THREADS=4
 export MKL_NUM_THREADS=4
-cd "$CODE_ROOT"
-"$PYTHON_BIN" scripts/verify_cosmodiff_seed_restart_runtime.py \
+cd "$RUNTIME_CODE_ROOT"
+"$PYTHON_BIN" "$RUNTIME_CODE_ROOT/scripts/verify_cosmodiff_seed_restart_runtime.py" \
   "$COSMODIFF_PIN_ROOT" --manifest "$COSMODIFF_PIN_MANIFEST" \
   --expected-base-revision "$EXPECTED_COSMODIFF_BASE_REVISION" \
-  --python-bin "$PYTHON_BIN" --code-root "$CODE_ROOT" \
+  --python-bin "$PYTHON_BIN" --code-root "$RUNTIME_CODE_ROOT" \
   --expected-torch-prefix "$VENV_PATH" \
   --incompatible-python-path /home/jiamingp/venvs/cosmodiff_nf/lib/python3.10/site-packages \
   --incompatible-python-path /sw/pkgs/arc/python3.10-anaconda/2023.03/lib/python3.10/site-packages \
-  --patch-script "$CODE_ROOT/scripts/patch_cosmodiff_package_metadata.py" \
-  --patch-script "$CODE_ROOT/scripts/patch_cosmodiff_constant_label.py" \
-  --patch-script "$CODE_ROOT/scripts/patch_cosmodiff_dit_class_labels.py" \
-  --patch-script "$CODE_ROOT/scripts/patch_cosmodiff_checkpoint_state.py"
+  --patch-script "$RUNTIME_CODE_ROOT/scripts/patch_cosmodiff_package_metadata.py" \
+  --patch-script "$RUNTIME_CODE_ROOT/scripts/patch_cosmodiff_constant_label.py" \
+  --patch-script "$RUNTIME_CODE_ROOT/scripts/patch_cosmodiff_dit_class_labels.py" \
+  --patch-script "$RUNTIME_CODE_ROOT/scripts/patch_cosmodiff_checkpoint_state.py"
+
+if [[ "${PREFLIGHT_ONLY:-0}" == 1 ]]; then
+  echo 'RUNTIME PREFLIGHT PASSED; NO DIAGNOSTIC'
+  exit 0
+fi
 
 OUTPUT_DIR="$PROJECT_DIR/results/dit_l16_high_noise_diagnostic"
 mkdir -p "$OUTPUT_DIR"
 
-model_json=$("$PYTHON_BIN" scripts/resolve_dit_high_noise_models.py \
+model_json=$("$PYTHON_BIN" "$CODE_ROOT/scripts/resolve_dit_high_noise_models.py" \
   --project-dir "$PROJECT_DIR" --index "${SLURM_ARRAY_TASK_ID:?}")
 readarray -t model_fields < <("$PYTHON_BIN" - "$model_json" <<'PY'
 import json
@@ -53,9 +63,10 @@ model_name=${model_fields[0]}
 checkpoint=${model_fields[1]}
 config=${model_fields[2]}
 
-"$PYTHON_BIN" scripts/evaluate_dit_high_noise.py \
+"$PYTHON_BIN" "$CODE_ROOT/scripts/evaluate_dit_high_noise.py" \
   --model-name "$model_name" \
   --checkpoint "$checkpoint" \
   --config "$config" \
   --output-npz "$OUTPUT_DIR/${model_name}.npz" \
-  --expected-code-revision "$EXPECTED_COMMIT"
+  --expected-code-revision "$EXPECTED_COMMIT" \
+  --expected-runtime-code-root "$RUNTIME_CODE_ROOT"
