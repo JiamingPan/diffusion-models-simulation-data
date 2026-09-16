@@ -23,6 +23,16 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+# The immutable seed-restart runtime intentionally imports ``simdiff_eval``
+# from the code root that created the pin.  Keep that package (and its already
+# loaded torch_compat module), but make this adapter checkout available for the
+# new diagnostic-only submodule.
+import simdiff_eval as _simdiff_eval
+
+_LOCAL_SIMDIFF_ROOT = str((REPO_ROOT / "simdiff_eval").resolve())
+if _LOCAL_SIMDIFF_ROOT not in _simdiff_eval.__path__:
+    _simdiff_eval.__path__.insert(0, _LOCAL_SIMDIFF_ROOT)
+
 from simdiff_eval.dit_diagnostics import patch_boundary_per_image
 from simdiff_eval.dit_high_noise import (
     batch_cosine,
@@ -282,6 +292,7 @@ def main() -> None:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--output-npz", type=Path, required=True)
     parser.add_argument("--expected-code-revision", required=True)
+    parser.add_argument("--expected-runtime-code-root", type=Path, required=True)
     parser.add_argument("--num-reference", type=int, default=32)
     parser.add_argument("--gallery-size", type=int, default=6)
     parser.add_argument("--batch-size", type=int, default=8)
@@ -299,6 +310,28 @@ def main() -> None:
     )
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
+    runtime_compat = Path(
+        sys.modules["simdiff_eval.torch_compat"].__file__
+    ).resolve()
+    expected_runtime_compat = (
+        args.expected_runtime_code_root.resolve() / "simdiff_eval/torch_compat.py"
+    )
+    if runtime_compat != expected_runtime_compat:
+        raise RuntimeError(
+            "Torch compatibility module did not come from the immutable runtime "
+            f"code root: {runtime_compat} != {expected_runtime_compat}"
+        )
+    diagnostic_module = Path(sys.modules["simdiff_eval.dit_high_noise"].__file__).resolve()
+    expected_diagnostic_module = (REPO_ROOT / "simdiff_eval/dit_high_noise.py").resolve()
+    if diagnostic_module != expected_diagnostic_module:
+        raise RuntimeError(
+            "High-noise diagnostic module did not come from the adapter code root: "
+            f"{diagnostic_module} != {expected_diagnostic_module}"
+        )
+    print(
+        "[dit-high-noise] runtime torch compatibility:", runtime_compat, flush=True
+    )
+    print("[dit-high-noise] diagnostic module:", diagnostic_module, flush=True)
     if not os.environ.get("SLURM_JOB_ID") and args.device.startswith("cuda"):
         raise RuntimeError("CUDA diagnostic must run inside a Slurm allocation")
     args.output_npz = args.output_npz.resolve()
