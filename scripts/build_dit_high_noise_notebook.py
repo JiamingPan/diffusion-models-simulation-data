@@ -31,7 +31,7 @@ def build_notebook() -> dict:
 
 ## tl;dr
 
-Run all cells after the four GPU diagnostic files exist. This notebook tests one specific mechanism: whether the Min-SNR weighting leaves the terminal high-noise region poorly learned, and whether L16 extrapolates there worse than L8/L12.
+Run all cells after the L8 and both L16 diagnostics finish. L12 is optional because its checkpoint weights are unavailable. Missing L12 results are reported and omitted from plots. These diagnostics investigate high-noise behavior but cannot alone establish that loss weighting caused the failure.
 
 This is **not training**. It reads frozen checkpoints and answers three questions:
 
@@ -39,7 +39,7 @@ This is **not training**. It reads frozen checkpoints and answers three question
 2. Does skipping the earliest, noisiest DPM steps remove the blocky failure?
 3. At the terminal noise level, does the model return the training-set mean as the MSE-optimal solution, or an unstable blocky field?
 
-No conclusion should be drawn until all four files pass the provenance checks below."""))
+The three required models must pass the checks below. L8 has a different training length, so this comparison does not isolate depth alone."""))
     cells.append(_cell("code", """from pathlib import Path
 import json
 import os
@@ -51,6 +51,8 @@ import pandas as pd
 PROJECT_DIR = Path(os.environ.get('PROJECT_DIR', '/home/jiamingp/diffusion_models_repo'))
 RESULT_DIR = PROJECT_DIR / 'results/dit_l16_high_noise_diagnostic'
 EXPECTED = ['dit_l8_200k', 'dit_l12_200k', 'dit_l16_fresh300k', 'dit_l16_seed456_500k']
+OPTIONAL = {'dit_l12_200k'}
+EXPECTED_LAYERS = dict(zip(EXPECTED, [8, 12, 16, 16]))
 COLORS = {
     'dit_l8_200k': '#009E73',
     'dit_l12_200k': '#0072B2',
@@ -77,6 +79,9 @@ All models use the same 128×128 normalized fields, patch size 8, v-prediction, 
 for name in EXPECTED:
     json_path = RESULT_DIR / f'{name}.json'
     npz_path = RESULT_DIR / f'{name}.npz'
+    if name in OPTIONAL and not json_path.exists() and not npz_path.exists():
+        print(f'UNAVAILABLE: {LABELS[name]} — checkpoint weights missing; excluded from plots.')
+        continue
     if not json_path.is_file() or not npz_path.is_file():
         raise FileNotFoundError(f'Missing completed diagnostic for {name}: {json_path}, {npz_path}')
     summaries[name] = json.loads(json_path.read_text())
@@ -84,7 +89,8 @@ for name in EXPECTED:
         raise RuntimeError(f'{name} does not have terminal complete status')
     arrays[name] = np.load(npz_path, allow_pickle=False)
 
-assert [summaries[name]['num_layers'] for name in EXPECTED] == [8, 12, 16, 16]
+EXPECTED = [name for name in EXPECTED if name in summaries]
+assert all(summaries[name]['num_layers'] == EXPECTED_LAYERS[name] for name in EXPECTED)
 assert {summaries[name]['patch_size'] for name in EXPECTED} == {8}
 assert {summaries[name]['prediction_type'] for name in EXPECTED} == {'v_prediction'}
 assert {summaries[name]['weights'] for name in EXPECTED} == {'raw'}
