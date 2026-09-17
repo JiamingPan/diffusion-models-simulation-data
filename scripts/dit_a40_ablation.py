@@ -15,6 +15,8 @@ import time
 import numpy as np
 import yaml
 
+from dit_ablation_data import CONTRACT as DATA_CONTRACT, audit_native_dataset, load_native_training_reference
+
 SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
 NAME = "dit_l16_a40_init_patch_v1"
@@ -128,6 +130,9 @@ def prepare(project, output):
     if "/scratch/huterer_root/huterer0/jiamingp/" not in str(output):
         raise ValueError("use the dedicated scratch experiment root, not /home or an existing run")
     base = yaml.safe_load(Path(baseline["config"]).read_text())
+    training_reference, training_metadata = load_native_training_reference(base)
+    if training_reference.shape != (256, 1, 128, 128):
+        raise ValueError("native retained training subset must contain 256 128x128 maps")
     rows = arm_configs(base, Path(output) / "checkpoints")
     with atomic_output(Path(output) / "plan") as pending:
         for row in rows:
@@ -142,6 +147,8 @@ def prepare(project, output):
             "baseline": baseline, "matrix_plan_sha256": MATRIX_SHA,
             "matrix_plan_path": str(matrix_root / "plan/plan.json"),
             "runtime_versions": deepcopy(matrix["runtime_versions"]),
+            "training_data_reference": training_metadata,
+            "training_reference_sha256": array_hash(training_reference),
             "reference_sha256": matrix["reference_sha256"], "noise_batch_sha256": array_hash(noise),
             "noise_file_sha256": file_hash(pending / "initial_noise.npz"),
             "checkpoint_cadence_updates": CHECKPOINT_EPOCHS * 32,
@@ -163,6 +170,13 @@ def load_plan(output):
             or [(r["name"], r["patch_size"], r["initialization"]) for r in plan["arms"]] != ARMS):
         raise ValueError("ablation plan/code/arm coverage changed")
     validate_runtime_versions(plan.get("runtime_versions"))
+    data_reference = plan.get("training_data_reference", {})
+    if (data_reference.get("contract") != DATA_CONTRACT
+            or data_reference.get("shape") != [256, 1, 128, 128]
+            or data_reference.get("dtype") != "float32"
+            or data_reference.get("reference_sha256") != plan.get("training_reference_sha256")
+            or not isinstance(data_reference.get("selected_raw_sha256"), str)):
+        raise ValueError("missing slice-first data contract; preserve the old plan and reprepare in a new root")
     matrix = read_matrix_plan(plan["matrix_plan_path"])
     if (plan.get("matrix_plan_sha256") != MATRIX_SHA
             or plan["runtime_versions"] != matrix["runtime_versions"]):
@@ -207,13 +221,17 @@ def runtime(expected_versions):
     return torch, diffusers
 
 
-def single_a40(torch):
+def single_process():
     for key in ("WORLD_SIZE", "SLURM_NTASKS"):
         if int(os.environ.get(key, "1")) != 1:
             raise RuntimeError("single-process training only; DDP is not approved")
     for key in ("RANK", "LOCAL_RANK", "SLURM_PROCID"):
         if int(os.environ.get(key, "0")) != 0:
             raise RuntimeError("a nonzero rank must not train/write this experiment")
+
+
+def single_a40(torch):
+    single_process()
     if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
         raise RuntimeError("exactly one visible CUDA GPU required")
     name = torch.cuda.get_device_name(0)
@@ -279,10 +297,108 @@ def cpu_preflight(output):
 
 def reference_for(row, plan):
     from evaluate_late_start import load_reference
-    reference = load_reference(Path(row["config"]), None)
-    if reference.shape != (256, 1, 128, 128) or array_hash(reference) != plan["reference_sha256"]:
-        raise ValueError("ablation training reference differs from the frozen baseline")
-    return reference
+    legacy = load_reference(Path(row["config"]), None)
+    if legacy.shape != (256, 1, 128, 128) or array_hash(legacy) != plan["reference_sha256"]:
+        raise ValueError("legacy evaluation reference differs from the frozen baseline")
+    config = yaml.safe_load(Path(row["config"]).read_text())
+    reference, metadata = load_native_training_reference(config)
+    if (metadata != plan["training_data_reference"]
+            or array_hash(reference) != plan["training_reference_sha256"]):
+        raise ValueError("slice-first training reference/raw selection changed")
+    return reference, legacy
+
+
+def checked_dataset(utils, config, reference, plan, torch):
+    from run_cosmodiff_train_with_dit_resume import install_constant_label_adapter
+    if not config["data"].get("keep_on_cpu"):
+        raise ValueError("native data preflight requires keep_on_cpu; do not silently change the recipe")
+    install_constant_label_adapter(utils)
+    parsed = utils.parse_config_data(config)
+    audit = audit_native_dataset(parsed, reference, plan["training_data_reference"], torch)
+    return parsed["data"], audit
+
+
+def require_data_preflight(output, plan):
+    path = Path(output) / "data_preflight_record/data_preflight.json"
+    if not path.is_file():
+        raise ValueError("run the real-data CPU preflight before GPU training; no completed receipt exists")
+    report = json.loads(path.read_text())
+    arms = report.get("arms") if isinstance(report, dict) else None
+    if (not isinstance(report, dict) or not isinstance(arms, list)
+            or not all(isinstance(row, dict) for row in arms)
+            or report.get("status") != "complete" or report.get("plan_sha256") != file_hash(Path(output) / "plan/plan.json")
+            or report.get("code_revision") != plan["code_revision"]
+            or report.get("runtime_versions") != plan["runtime_versions"]
+            or report.get("training_reference_sha256") != plan["training_reference_sha256"]
+            or report.get("legacy_reference_sha256") != plan["reference_sha256"]
+            or [r.get("arm") for r in arms] != [r[0] for r in ARMS]):
+        raise ValueError("real-data CPU preflight receipt differs from the frozen plan")
+    return report
+
+
+def rescore_saved_baseline(plan, reference):
+    """Reuse baseline samples; compare normalization without any sampling."""
+    from evaluate_late_start import boundary_ratio, max_cosine, radial_power
+    source = Path(plan["matrix_plan_path"]).parents[1] / "tasks/dit_l16_fresh300k__dpm50"
+    report = json.loads((source / "complete.json").read_text())
+    path = source / "samples.npz"
+    if (report.get("status") != "complete" or report.get("plan_sha256") != MATRIX_SHA
+            or report.get("task") != {"model": "dit_l16_fresh300k", "condition": "dpm50"}
+            or report.get("reference_sha256") != plan["reference_sha256"]
+            or file_hash(path) != report.get("artifacts_sha256", {}).get("samples.npz")):
+        raise ValueError("saved baseline is not a completed, unchanged frozen matrix task")
+    with np.load(path, allow_pickle=False) as data:
+        samples = data["samples"].copy()
+        if str(data["initial_noise_batch_sha256"].item()) != plan["noise_batch_sha256"]:
+            raise ValueError("saved baseline noise pairing differs")
+    if samples.shape != (128, 1, 128, 128) or not np.isfinite(samples).all():
+        raise ValueError("saved baseline samples have invalid shape/values")
+    cosine = max_cosine(samples, reference)
+    power, k = radial_power(samples)
+    real_power, _ = radial_power(reference)
+    boundaries = boundary_ratio(samples)
+    populations = {}
+    for group, mask in {"near_copy": cosine > .98, "low_similarity": cosine < .8,
+                         "intermediate": (cosine >= .8) & (cosine <= .98)}.items():
+        hi = (k >= 32) & (k <= 64)
+        populations[group] = {"n": int(mask.sum()),
+            "boundary8_median": float(np.median(boundaries[mask])) if mask.any() else None,
+            "pk_ratio_hi": float((power[mask].mean(axis=0) / real_power.mean(axis=0))[hi].mean()) if mask.any() else None}
+    return {"model": "dit_l16_fresh300k", "condition": "dpm50", "source_samples_sha256": file_hash(path),
+        "reference_sha256": array_hash(reference), "data_reference_contract": DATA_CONTRACT,
+        "n": len(samples), "populations": populations,
+        "quality_caveat": "Low training cosine is not an invalidity verdict; baseline sampling used microbatch8 vs new arms2."}
+
+
+def data_preflight(output):
+    """Validate actual retained data/labels before committing any training GPU."""
+    single_process()
+    plan, _ = load_plan(output)
+    torch, _ = runtime(plan["runtime_versions"])
+    from cosmodiff import utils
+    pin = Path(os.environ["COSMODIFF_PIN_ROOT"]).resolve()
+    if pin not in Path(inspect.getfile(utils)).resolve().parents:
+        raise RuntimeError("data preflight escaped the immutable cosmodiff pin")
+    rows = []
+    for row in plan["arms"]:
+        reference, legacy = reference_for(row, plan)
+        config = yaml.safe_load(Path(row["config"]).read_text())
+        dataset, audit = checked_dataset(utils, config, reference, plan, torch)
+        audit.update(arm=row["name"], legacy_reference_max_abs_delta=float(np.max(np.abs(reference-legacy))))
+        rows.append(audit)
+        print(f"NATIVE REAL-DATA CPU MATCH PASSED: {row['name']} {audit}", flush=True)
+        del dataset
+    if len({r["training_tensor_sha256"] for r in rows}) != 1:
+        raise ValueError("the three arms must receive byte-identical native training data")
+    baseline = rescore_saved_baseline(plan, reference)
+    print(f"SAVED BASELINE RESCORED WITH RETAINED-SLICE NORMALIZATION: {baseline}", flush=True)
+    publish_json(Path(output) / "data_preflight.json", {"status": "complete", "arms": rows,
+        "plan_sha256": file_hash(Path(output) / "plan/plan.json"), "code_revision": plan["code_revision"],
+        "runtime_versions": plan["runtime_versions"], "training_reference_sha256": plan["training_reference_sha256"],
+        "legacy_reference_sha256": plan["reference_sha256"], "utils_source_sha256": file_hash(inspect.getfile(utils)),
+        "saved_baseline": baseline,
+        "qualification": "Legacy IO fits normalization before z-thinning; retained-slice native normalization is the training/evaluation contract. Old matrix power ratios need rescoring; native training data is never replaced."})
+    print("REAL-DATA CPU PREFLIGHT COMPLETE; ALL THREE ARMS MATCH; NO GPU/MODEL LOAD OR TRAINING", flush=True)
 
 
 def train(output, index):
@@ -290,9 +406,11 @@ def train(output, index):
     if not 0 <= index < 3:
         raise ValueError("arm index must be 0..2")
     row = plan["arms"][index]
+    preflight = require_data_preflight(output, plan)
     checkpoint_dir = Path(row["checkpoint_dir"])
     # Even a partial prior launch is preserved; do not restart/overwrite implicitly.
-    checkpoint_dir.mkdir(parents=True, exist_ok=False)
+    if checkpoint_dir.exists():
+        raise FileExistsError(f"preserving prior arm output: {checkpoint_dir}")
     torch, diffusers = runtime(plan["runtime_versions"])
     single_a40(torch)
     from cosmodiff import optim, utils
@@ -300,29 +418,27 @@ def train(output, index):
     for module in (optim, utils):
         if pin not in Path(inspect.getfile(module)).resolve().parents:
             raise RuntimeError("cosmodiff did not resolve inside the immutable pin")
-    from run_cosmodiff_train_with_dit_resume import install_constant_label_adapter, validate_scientific_checkpoint
+    from run_cosmodiff_train_with_dit_resume import validate_scientific_checkpoint
     from run_cosmodiff_train_fresh_seeded import seed_everything
     from dit_zero_init import zero_modulation_and_output
     from accelerate import Accelerator
     config = yaml.safe_load(Path(row["config"]).read_text())
-    reference = reference_for(row, plan)
+    reference, legacy_reference = reference_for(row, plan)
     seed_everything(123)
-    install_constant_label_adapter(utils)
-    dataset = utils.parse_config_data(config)["data"]
+    dataset, data_audit = checked_dataset(utils, config, reference, plan, torch)
     actual = dataset.arrays.detach().cpu().numpy()
-    # Torch and NumPy tanh/log may round differently. Compare every element,
-    # preserve order, and record both hashes; never substitute the IO reference.
-    if (actual.shape != reference.shape or actual.dtype != np.float32
-            or not np.allclose(actual, reference, rtol=0, atol=2e-6)):
-        raise ValueError("native training tensors disagree with the frozen evaluation subset")
-    if dataset.labels.dtype != torch.long or tuple(dataset.labels.shape) != (256,):
-        raise ValueError("null class labels must be one long integer per image")
+    if (data_audit["training_tensor_sha256"] != preflight["arms"][index]["training_tensor_sha256"]
+            or file_hash(inspect.getfile(utils)) != preflight["utils_source_sha256"]):
+        raise ValueError("native dataset/source changed after the real-data CPU preflight")
+    checkpoint_dir.mkdir(parents=True, exist_ok=False)
     built = utils.parse_config_model(config)
     model, optimizer = built["model"], built["optimizer"]
     init = (zero_modulation_and_output(model, fresh=True) if row["initialization"] == "zero"
             else {"kind": "native_diffusers", "zeroed_tensors": 0})
     provenance = {"status": "started", "arm": row, "initialization": init,
         "training_tensor_sha256": array_hash(actual), "evaluation_reference_sha256": array_hash(reference),
+        "data_audit": data_audit, "legacy_reference_sha256": array_hash(legacy_reference),
+        "legacy_reference_max_abs_delta": float(np.max(np.abs(actual-legacy_reference))),
         "reference_max_abs_delta": float(np.max(np.abs(actual - reference))),
         "torch": str(torch.__version__), "diffusers": diffusers.__version__,
         "gpu": torch.cuda.get_device_name(0), "parameters": sum(p.numel() for p in model.parameters()),
@@ -408,7 +524,7 @@ def sample(output, index):
     torch, _ = runtime(plan["runtime_versions"])
     single_a40(torch)
     import sample_cosmodiff as sc
-    reference = reference_for(row, plan)
+    reference, _ = reference_for(row, plan)
     model, scheduler = sc._load_for_sampling(Path(row["expected_checkpoint"]), Path(row["config"]))
     model.to("cuda").eval()
     scheduler = sc.build_inference_scheduler(scheduler, "DPMSolverMultistepScheduler", {"algorithm_type": "dpmsolver++", "solver_order": 2})
@@ -436,7 +552,8 @@ def sample(output, index):
             max_cos=cos, boundary8=boundary_ratio(samples), boundary_model_grid=own_boundary,
             real_boundary_model_grid=real_boundary, power=power, reference_power=real_power, k=k,
             config_sha256=row["config_sha256"], checkpoint=row["expected_checkpoint"],
-            reference_sha256=plan["reference_sha256"], initial_noise_batch_sha256=array_hash(noise),
+            reference_sha256=plan["training_reference_sha256"], legacy_reference_sha256=plan["reference_sha256"],
+            data_reference_contract=DATA_CONTRACT, initial_noise_batch_sha256=array_hash(noise),
             scheduler_config_json=json.dumps(dict(scheduler.config)), raw_weights=True,
             model_batch_size=2, seed=123, step_seed=124, num_steps=50)
         hi = (k >= 32) & (k <= 64)
@@ -459,6 +576,7 @@ def main():
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--prepare", action="store_true")
     mode.add_argument("--preflight", action="store_true")
+    mode.add_argument("--data-preflight", action="store_true")
     mode.add_argument("--train", type=int)
     mode.add_argument("--sample", type=int)
     parser.add_argument("--project-dir", type=Path, default=Path("/home/jiamingp/diffusion_models_repo"))
@@ -468,6 +586,8 @@ def main():
         prepare(args.project_dir, args.out_dir)
     elif args.preflight:
         cpu_preflight(args.out_dir)
+    elif args.data_preflight:
+        data_preflight(args.out_dir)
     elif args.train is not None:
         train(args.out_dir, args.train)
     else:

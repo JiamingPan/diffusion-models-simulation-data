@@ -6,6 +6,11 @@ Use the existing fresh-300k patch8/native run as the baseline. Preserve its actu
 YAML recipe; only initialization, patch size, output identity and checkpoint
 cadence may differ. No continuation, LR/loss/precision changes or depth sweep.
 
+Match the native select/zthin/log/normalization order; never change training
+tensors to match the legacy evaluation reader. Require an actual-data CPU
+validation receipt for all three arms before GPU training, and evaluate new
+samples and the saved baseline against the same retained-slice reference.
+
 Run the bounded CPU patch-memorization Test A on saved matrix DPM50 samples.
 Do not run the supplied Test B. Evaluate new raw-weight checkpoints using DPM++
 order2/50 and the matrix's saved 128 initial noise fields. Do not infer physical
