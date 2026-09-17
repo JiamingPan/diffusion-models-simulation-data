@@ -47,11 +47,17 @@ API tests now exercise native diffusers 0.38.0. An untested matrix diffusers
 version or missing runtime contract fails closed. Preflight runs
 small native CPU models through scheduler, v/min-SNR backward and AdamW update,
 checks the actual trainer signature, and does not load real data or use a GPU.
+That API check alone is NOT a real-data preflight. A separate CPU-only
+`ABLATION_MODE=data-preflight` allocation must load each arm's actual native
+dataset, verify every retained pixel/label/normalization statistic, rescore the
+saved fresh300k DPM50 baseline, and publish the complete receipt before any
+training arm is eligible. Train refuses a missing/stale receipt and rechecks
+native tensor/source hashes on its own startup.
 The full A40 run must separately confirm first-update finite loss/head weights,
 GPU model, peak VRAM and a 100-step rough throughput estimate in stdout.
 
 All new outputs live under the dedicated scratch experiment
-`/scratch/huterer_root/huterer0/jiamingp/dit_l16_a40_init_patch_v1_runtime038`.
+`/scratch/huterer_root/huterer0/jiamingp/dit_l16_a40_init_patch_v2_datafix`.
 Do not use /home for large artifacts; home is already >95% full. Scratch is not
 archival storage; review and approve a durable copy separately after completion.
 Neither old 300k/500k checkpoints nor C4 are written. A prior launch, even a
@@ -74,10 +80,16 @@ matrix initial-noise bytes. Require the reviewed new plan SHA and code revision
 on every invocation. Verify N=256 / 32 updates per epoch / 9,375 epochs / final
 epoch 9,374. Changes to the plan/config/reference fail closed.
 
-Native training arrays must agree elementwise/orderwise with the frozen IO
-reference to absolute 2e-6 (zero relative tolerance), allowing only Torch/NumPy
-log/tanh rounding. Record both SHA256s and maximum delta. Never replace actual
-training tensors with the evaluation reader's array. Labels must be long[256]
+Native training arrays must agree elementwise/orderwise with an independent
+slice-first NumPy reference to absolute 2e-6 (zero relative tolerance), allowing
+only Torch/NumPy log/tanh rounding. Both native and independent normalizers fit
+on the retained slices, matching pinned cosmodiff's select/reshape/log/norm order.
+Freeze the retained raw-slice hash, volume/z order, normalization statistics and
+reference hash at preparation. Keep the old IO reference and its hash unchanged
+as legacy provenance, NOT as the native training equality target. Changes to
+either reference or the retained data still fail closed. Record both native and
+independent SHA256s, maximum rounding delta, and the legacy-reference delta.
+Never replace actual training tensors with a NumPy reference. Labels must be long[256]
 and all zero; the existing three-path constant-label adapter logs the injection,
 native no-op or refusal. Genuine differing labels still raise.
 
@@ -110,12 +122,18 @@ so numerical repeatability is a qualification, not an unreported change. Measure
 both patch4 and patch8 grids so moving the artifact grid cannot look like a fix.
 Report low-similarity, intermediate and near-copy populations separately. Power
 spectra here are normalized-field checks, not physical-density power spectra.
+New sampling evaluates against the retained-slice reference. The real-data CPU
+preflight rescales no saved images: it rescores existing baseline sample bytes
+against that same matched reference, producing population counts, boundary
+medians and conditional P(k) ratios. Old matrix spectra fitted with the legacy
+reference are not directly comparable until rescored. No causal verdict follows
+from the normalization mismatch or this rescore.
 
 ## Execution order
 
 1. Local native 0.38.0 tests, relevant regression suite, syntax and diff checks.
 2. Preview exact branch push; STOP for APPROVE PUSH.
-3. On Great Lakes, prepare isolated plan, run CPU preflight, review plan/hash,
+3. On Great Lakes, prepare isolated plan, run CPU API AND real-data preflight, review plan/hash,
    free space and quota. Staging/preparation must be part of an approved preview.
 4. Preview frozen train array, dependent sampling array and CPU Test A commands
    with cost/resource caps; STOP for APPROVE RUN. Do not submit on generic “run”.
@@ -141,3 +159,31 @@ Local native tests use the host's CPU Torch, not Great Lakes Torch 2.1.2/CUDA;
 repeat the small checks inside the approved CPU-only allocation in the real pin
 before submitting the expensive A40 train/sample arrays. Those extra submissions
 remain separate protected actions, not part of the branch push.
+
+## Recovery from the retained-slice equality-check failure
+
+All three training tasks 61290230_0/1/2 failed at the adapter's dataset check,
+before native model construction/initialization and before `optim.train`.
+Dependent sample array 61290231 was cancelled; CPU Test A 61290232 completed.
+Do not repeat the full launcher, delete partial arm directories, or repeat Test A.
+Preserve root `dit_l16_a40_init_patch_v1_runtime038`, frozen plan
+`c75df5176aa49d1cb58b1de1907ca44384c0d903922f782181e189c967fbfc7d`,
+all logs and the completed Test A output.
+
+The adapter incorrectly required equality to legacy evaluation IO. That IO
+fits center/max over unthinned configured volumes and then takes retained
+z-slices. Native cosmodiff thins/reshapes first and fits on the retained training
+slices. An excluded extreme therefore changes legacy IO normalization but not
+native training normalization. This is a population/operation-order difference,
+not merely float rounding; increasing tolerance or changing training tensors
+would hide it. Local regression tests reproduce that exact mismatch, and the
+corrected audit still rejects changed data, permutations, dtype/shape differences,
+nonfinite pixels, altered normalization and conflicting labels. The mmap warning
+is not the raised exception; the adapter does not modify native tensor storage.
+
+Reprepare corrected code in the new root above. Stage and run ONE CPU-only
+API+real-data validation job first (4 CPU,16GB,20-minute cap; <=1.34 CPU-hours,
+no GPU training/sampling). Require a fresh approval for that staging/job preview.
+Only after all real-data checks and baseline rescore finish successfully should
+the expensive train/sample recovery be previewed separately. Source checkpoints,
+main, C4, the immutable original runtime and shared packages remain untouched.

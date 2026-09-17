@@ -225,6 +225,9 @@ def test_frozen_plan_rejects_modified_yaml_and_noise(tmp_path, monkeypatch):
         "arms": rows, "baseline": {"config": str(source), "config_sha256": ab.file_hash(source)},
         "matrix_plan_path": str(matrix_path), "matrix_plan_sha256": ab.MATRIX_SHA,
         "runtime_versions": matrix_versions(),
+        "training_data_reference": {"contract": ab.DATA_CONTRACT, "shape": [256, 1, 128, 128],
+            "dtype": "float32", "reference_sha256": "reference-test", "selected_raw_sha256": "raw-test"},
+        "training_reference_sha256": "reference-test",
         "noise_file_sha256": ab.file_hash(directory / "initial_noise.npz"), "noise_batch_sha256": ab.array_hash(noise)}
     path = directory / "plan.json"
     path.write_text(json.dumps(plan))
@@ -265,6 +268,6 @@ def test_failed_first_cpu_update_cannot_emit_preflight_pass():
 
 def test_all_entrypoints_check_the_frozen_runtime_and_prepare_records_it():
     source = (SCRIPTS / "dit_a40_ablation.py").read_text()
-    assert source.count('runtime(plan["runtime_versions"])') == 3
+    assert source.count('runtime(plan["runtime_versions"])') == 4
     assert '"runtime_versions": deepcopy(matrix["runtime_versions"])' in source
     assert "this init ablation is verified against diffusers 0.35.1" not in source

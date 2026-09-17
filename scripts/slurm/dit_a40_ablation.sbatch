@@ -14,7 +14,7 @@ set -euo pipefail
 : "${EXPECTED_COSMODIFF_BASE_REVISION:?}" "${ABLATION_OUT_DIR:?}"
 PYTHON_BIN=${PYTHON_BIN:-/home/jiamingp/venvs/cosmodiff_nf_class/bin/python}
 MODE=${ABLATION_MODE:-train}
-case "$MODE" in train|sample|test-a) ;; *) echo "Unknown mode: $MODE" >&2; exit 1 ;; esac
+case "$MODE" in train|sample|test-a|data-preflight) ;; *) echo "Unknown mode: $MODE" >&2; exit 1 ;; esac
 
 test "$(git -C "$CODE_ROOT" rev-parse HEAD)" = "$EXPECTED_COMMIT"
 test -z "$(git -C "$CODE_ROOT" status --porcelain)"
@@ -47,7 +47,10 @@ if [[ "${PREFLIGHT_ONLY:-0}" == 1 ]]; then
   echo "A40 PREFLIGHT PASSED; NO TRAINING, SAMPLING, TEST A OR JOB SUBMISSION"
   exit 0
 fi
-if [[ "$MODE" == test-a ]]; then
+if [[ "$MODE" == data-preflight ]]; then
+  "$PYTHON_BIN" "$CODE_ROOT/scripts/dit_a40_ablation.py" \
+    --data-preflight --out-dir "$ABLATION_OUT_DIR"
+elif [[ "$MODE" == test-a ]]; then
   "$PYTHON_BIN" "$CODE_ROOT/scripts/patch_memorization_test.py" \
     --project-dir "$PROJECT_DIR" --eval-root "$RUNTIME_CODE_ROOT" \
     --out-dir "$ABLATION_OUT_DIR/test_a"
