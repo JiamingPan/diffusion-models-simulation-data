@@ -8,7 +8,7 @@ import torch
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
-from dit_a40_ablation import ARMS, arm_configs, single_a40
+from dit_a40_ablation import ARMS, arm_configs, single_a40, validate_runtime_versions
 from dit_zero_init import zero_modulation_and_output
 from prepare_nf_generalize_fig2_dit_configs import build_config
 from patch_memorization_test import patch_cos_stats
@@ -18,6 +18,41 @@ def baseline():
     config = build_config("baseline", "dit_l16", [{"path": "/example.npy", "n_samples": 16}], 256)
     config["train"]["num_epochs"] = 9375
     return config
+
+
+def matrix_versions():
+    return {"python": "3.10.9", "torch": "2.1.2+cu118", "numpy": "1.26.4",
+            "diffusers": "0.38.0", "huggingface-hub": "0.36.2"}
+
+
+def test_actual_great_lakes_versions_match_without_a_downgrade():
+    assert validate_runtime_versions(matrix_versions(), matrix_versions()) is None
+
+
+@pytest.mark.parametrize("key", list(matrix_versions()))
+def test_runtime_drift_fails_with_expected_and_actual_values(key):
+    actual = matrix_versions()
+    actual[key] = "unexpected"
+    with pytest.raises(RuntimeError, match="differs from frozen working matrix") as error:
+        validate_runtime_versions(matrix_versions(), actual)
+    assert key in str(error.value)
+    assert "unexpected" in str(error.value)
+    assert matrix_versions()[key] in str(error.value)
+
+
+@pytest.mark.parametrize("version", ["0.35.1", "0.39.0"])
+def test_untested_matrix_version_must_not_silently_change_the_recipe(version):
+    expected = matrix_versions()
+    expected["diffusers"] = version
+    with pytest.raises(RuntimeError, match="has not been tested"):
+        validate_runtime_versions(expected)
+
+
+@pytest.mark.parametrize("expected", [None, {}, {"diffusers": "0.38.0"},
+    {**matrix_versions(), "torch": None}])
+def test_missing_runtime_contract_fails_closed(expected):
+    with pytest.raises(ValueError, match="missing/incomplete"):
+        validate_runtime_versions(expected)
 
 
 def test_three_arms_only_requested_training_differences():
@@ -175,6 +210,9 @@ def test_frozen_plan_rejects_modified_yaml_and_noise(tmp_path, monkeypatch):
     output = tmp_path / "experiment"
     directory = output / "plan"
     directory.mkdir(parents=True)
+    matrix_path = tmp_path / "matrix_plan.json"
+    matrix_path.write_text(json.dumps({"runtime_versions": matrix_versions()}))
+    monkeypatch.setattr(ab, "MATRIX_SHA", ab.file_hash(matrix_path))
     rows = ab.arm_configs(baseline(), output / "checkpoints")
     for row in rows:
         config = row.pop("config_data")
@@ -185,6 +223,8 @@ def test_frozen_plan_rejects_modified_yaml_and_noise(tmp_path, monkeypatch):
     np.savez_compressed(directory / "initial_noise.npz", initial_noise=noise)
     plan = {"status": "prepared", "protocol": ab.NAME, "code_revision": "testcode",
         "arms": rows, "baseline": {"config": str(source), "config_sha256": ab.file_hash(source)},
+        "matrix_plan_path": str(matrix_path), "matrix_plan_sha256": ab.MATRIX_SHA,
+        "runtime_versions": matrix_versions(),
         "noise_file_sha256": ab.file_hash(directory / "initial_noise.npz"), "noise_batch_sha256": ab.array_hash(noise)}
     path = directory / "plan.json"
     path.write_text(json.dumps(plan))
@@ -192,6 +232,19 @@ def test_frozen_plan_rejects_modified_yaml_and_noise(tmp_path, monkeypatch):
     monkeypatch.setenv("ABLATION_PLAN_SHA256", ab.file_hash(path))
     _, actual = ab.load_plan(output)
     assert np.array_equal(actual, noise)
+    for versions in (None, {**matrix_versions(), "torch": "different"}):
+        edited = {**plan, "runtime_versions": versions}
+        path.write_text(json.dumps(edited))
+        monkeypatch.setenv("ABLATION_PLAN_SHA256", ab.file_hash(path))
+        with pytest.raises(ValueError, match="runtime"):
+            ab.load_plan(output)
+    path.write_text(json.dumps(plan))
+    monkeypatch.setenv("ABLATION_PLAN_SHA256", ab.file_hash(path))
+    matrix_text = matrix_path.read_text()
+    matrix_path.write_text(matrix_text + "\n")
+    with pytest.raises(ValueError, match="original reviewed sampler matrix plan changed"):
+        ab.load_plan(output)
+    matrix_path.write_text(matrix_text)
     config_path = Path(rows[0]["config"])
     text = config_path.read_text()
     config_path.write_text(text + "# edited\n")
@@ -208,3 +261,10 @@ def test_failed_first_cpu_update_cannot_emit_preflight_pass():
     assert source.index('raise RuntimeError("native first CPU update is nonfinite")') < source.index('print("ABLATION PREFLIGHT PASSED;')
     assert 'checkpoint_dir.mkdir(parents=True, exist_ok=False)' in source
     assert 'zero_modulation_and_output(model, fresh=True)' in source
+
+
+def test_all_entrypoints_check_the_frozen_runtime_and_prepare_records_it():
+    source = (SCRIPTS / "dit_a40_ablation.py").read_text()
+    assert source.count('runtime(plan["runtime_versions"])') == 3
+    assert '"runtime_versions": deepcopy(matrix["runtime_versions"])' in source
+    assert "this init ablation is verified against diffusers 0.35.1" not in source

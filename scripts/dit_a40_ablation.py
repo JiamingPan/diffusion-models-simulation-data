@@ -24,6 +24,32 @@ TARGET = 300_000
 # Operational-only difference: retain six complete safety/final checkpoints,
 # instead of generating ~60 and deleting most. No checkpoint pruning.
 CHECKPOINT_EPOCHS = 1563  # 50,016 nominal optimizer updates
+RUNTIME_KEYS = ("python", "torch", "numpy", "diffusers", "huggingface-hub")
+TESTED_DIFFUSERS = ("0.38.0",)
+
+
+def validate_runtime_versions(expected, actual=None):
+    """Match the frozen, working baseline; never change shared packages."""
+    if (not isinstance(expected, dict) or set(expected) != set(RUNTIME_KEYS)
+            or any(not isinstance(expected[key], str) or not expected[key] for key in RUNTIME_KEYS)):
+        raise ValueError("frozen matrix runtime versions are missing/incomplete; reprepare an isolated plan")
+    if expected["diffusers"] not in TESTED_DIFFUSERS:
+        raise RuntimeError(f"matrix diffusers {expected['diffusers']} has not been tested for this ablation; "
+                           f"tested versions: {TESTED_DIFFUSERS}; do not reinstall shared packages")
+    if actual is not None:
+        changed = {key: {"expected": expected[key], "actual": actual.get(key)}
+                   for key in RUNTIME_KEYS if actual.get(key) != expected[key]}
+        if changed:
+            raise RuntimeError(f"ablation runtime differs from frozen working matrix: {changed}; "
+                               "do not reinstall shared packages or bypass this check")
+
+
+def read_matrix_plan(path):
+    if file_hash(path) != MATRIX_SHA:
+        raise ValueError("original reviewed sampler matrix plan changed")
+    matrix = json.loads(Path(path).read_text())
+    validate_runtime_versions(matrix.get("runtime_versions"))
+    return matrix
 
 
 def file_hash(path):
@@ -48,9 +74,7 @@ def publish_json(path, value):
 def matrix_inputs(project):
     root = Path(project) / "results/dit_l16_sampler_matrix_v1"
     path = root / "plan/plan.json"
-    if file_hash(path) != MATRIX_SHA:
-        raise ValueError("original reviewed sampler matrix plan changed")
-    plan = json.loads(path.read_text())
+    plan = read_matrix_plan(path)
     noise_path = root / "plan/initial_noise.npz"
     if file_hash(noise_path) != plan["noise_file_sha256"]:
         raise ValueError("original paired noise artifact changed")
@@ -100,7 +124,7 @@ def arm_configs(baseline, checkpoint_root):
 
 def prepare(project, output):
     from trace_trajectories import atomic_output
-    _, matrix, baseline, noise = matrix_inputs(project)
+    matrix_root, matrix, baseline, noise = matrix_inputs(project)
     if "/scratch/huterer_root/huterer0/jiamingp/" not in str(output):
         raise ValueError("use the dedicated scratch experiment root, not /home or an existing run")
     base = yaml.safe_load(Path(baseline["config"]).read_text())
@@ -116,6 +140,8 @@ def prepare(project, output):
         plan = {"status": "prepared", "protocol": NAME, "arms": rows,
             "code_revision": os.environ.get("EXPECTED_COMMIT"),
             "baseline": baseline, "matrix_plan_sha256": MATRIX_SHA,
+            "matrix_plan_path": str(matrix_root / "plan/plan.json"),
+            "runtime_versions": deepcopy(matrix["runtime_versions"]),
             "reference_sha256": matrix["reference_sha256"], "noise_batch_sha256": array_hash(noise),
             "noise_file_sha256": file_hash(pending / "initial_noise.npz"),
             "checkpoint_cadence_updates": CHECKPOINT_EPOCHS * 32,
@@ -136,6 +162,11 @@ def load_plan(output):
             or plan.get("code_revision") != os.environ.get("EXPECTED_COMMIT")
             or [(r["name"], r["patch_size"], r["initialization"]) for r in plan["arms"]] != ARMS):
         raise ValueError("ablation plan/code/arm coverage changed")
+    validate_runtime_versions(plan.get("runtime_versions"))
+    matrix = read_matrix_plan(plan["matrix_plan_path"])
+    if (plan.get("matrix_plan_sha256") != MATRIX_SHA
+            or plan["runtime_versions"] != matrix["runtime_versions"]):
+        raise ValueError("ablation runtime contract differs from the original frozen matrix")
     source = yaml.safe_load(Path(plan["baseline"]["config"]).read_text())
     if file_hash(plan["baseline"]["config"]) != plan["baseline"]["config_sha256"]:
         raise ValueError("baseline config changed")
@@ -157,7 +188,8 @@ def load_plan(output):
     return plan, noise
 
 
-def runtime():
+def runtime(expected_versions):
+    validate_runtime_versions(expected_versions)
     # Import compatibility from the ORIGINAL pinned runtime before new adapter modules.
     from simdiff_eval.torch_compat import install_torch_backend_compat
     install_torch_backend_compat(entry_point=__name__)
@@ -166,8 +198,12 @@ def runtime():
     sc._install_sklearn_roc_curve_stub()
     import torch
     import diffusers
-    if diffusers.__version__ != "0.35.1":
-        raise RuntimeError("this init ablation is verified against diffusers 0.35.1; reconcile rather than silently changing it")
+    actual = {"python": sys.version.split()[0], "torch": str(torch.__version__),
+              "numpy": np.__version__, "diffusers": diffusers.__version__,
+              "huggingface-hub": sc.importlib.metadata.version("huggingface-hub")}
+    print(f"[ablation] runtime expected={expected_versions} actual={actual}", flush=True)
+    validate_runtime_versions(expected_versions, actual)
+    print("[ablation] FROZEN MATRIX RUNTIME MATCH PASSED", flush=True)
     return torch, diffusers
 
 
@@ -189,7 +225,7 @@ def single_a40(torch):
 def cpu_preflight(output):
     """Exercise the actual installed model/optimizer API, without a GPU or data scan."""
     plan, _ = load_plan(output)
-    torch, _ = runtime()
+    torch, _ = runtime(plan["runtime_versions"])
     from cosmodiff import optim, utils
     from dit_zero_init import zero_modulation_and_output
     from accelerate import Accelerator
@@ -257,7 +293,7 @@ def train(output, index):
     checkpoint_dir = Path(row["checkpoint_dir"])
     # Even a partial prior launch is preserved; do not restart/overwrite implicitly.
     checkpoint_dir.mkdir(parents=True, exist_ok=False)
-    torch, diffusers = runtime()
+    torch, diffusers = runtime(plan["runtime_versions"])
     single_a40(torch)
     from cosmodiff import optim, utils
     pin = Path(os.environ["COSMODIFF_PIN_ROOT"]).resolve()
@@ -369,7 +405,7 @@ def sample(output, index):
     current_hashes = {str(path.relative_to(final)): file_hash(path) for path in final.rglob("*") if path.is_file()}
     if not current_hashes or current_hashes != report["checkpoint_files_sha256"]:
         raise ValueError("validated final checkpoint artifacts changed")
-    torch, _ = runtime()
+    torch, _ = runtime(plan["runtime_versions"])
     single_a40(torch)
     import sample_cosmodiff as sc
     reference = reference_for(row, plan)

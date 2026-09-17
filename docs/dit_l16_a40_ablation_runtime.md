@@ -13,7 +13,7 @@ projections, after fresh construction and before training/EMA creation. For L16
 this is 18 Linear modules / 36 tensors. It preserves other native initialization,
 per-block time embedders and the rest of the model. This is NOT a reproduction
 of the complete [reference DiT initialization](https://github.com/facebookresearch/DiT/blob/main/models.py).
-The [diffusers 0.35.1 DiT API](https://github.com/huggingface/diffusers/blob/v0.35.1/src/diffusers/models/transformers/dit_transformer_2d.py)
+The [diffusers 0.38.0 DiT API](https://github.com/huggingface/diffusers/blob/v0.38.0/src/diffusers/models/transformers/dit_transformer_2d.py)
 is explicitly checked. Zeroing a restored model is forbidden.
 
 Patch4 uses 1,024 tokens, versus 256 at patch8; dense attention score storage is
@@ -37,15 +37,21 @@ allows longer caps, but we do not increase this one automatically.
 Original runtime checkout remains `iaifi_poster_code_555f350`, immutable pin
 `cosmodiff_seed_restart_pin_58c77eb_555f350`, Python `cosmodiff_nf_class` venv.
 Preserve the pin's `PYTHONPATH` order and original runtime manifest/code identity.
-No installs or patching in shared environments. Require diffusers 0.35.1; version
-disagreement fails rather than silently changing the recipe. Preflight runs
+No installs or patching in shared environments. Freeze Python/Torch/NumPy/
+diffusers/huggingface-hub versions from the original reviewed matrix plan,
+recheck that source plan's SHA256, and require exact equality at every preflight,
+train and sample startup. Stdout prints expected and actual versions before any
+version failure. The actual successful matrix used Python 3.10.9, Torch
+2.1.2+cu118, NumPy 1.26.4, diffusers 0.38.0 and huggingface-hub 0.36.2; ablation
+API tests now exercise native diffusers 0.38.0. An untested matrix diffusers
+version or missing runtime contract fails closed. Preflight runs
 small native CPU models through scheduler, v/min-SNR backward and AdamW update,
 checks the actual trainer signature, and does not load real data or use a GPU.
 The full A40 run must separately confirm first-update finite loss/head weights,
 GPU model, peak VRAM and a 100-step rough throughput estimate in stdout.
 
 All new outputs live under the dedicated scratch experiment
-`/scratch/huterer_root/huterer0/jiamingp/dit_l16_a40_init_patch_v1`.
+`/scratch/huterer_root/huterer0/jiamingp/dit_l16_a40_init_patch_v1_runtime038`.
 Do not use /home for large artifacts; home is already >95% full. Scratch is not
 archival storage; review and approve a durable copy separately after completion.
 Neither old 300k/500k checkpoints nor C4 are written. A prior launch, even a
@@ -107,7 +113,7 @@ spectra here are normalized-field checks, not physical-density power spectra.
 
 ## Execution order
 
-1. Local native 0.35.1 tests, relevant regression suite, syntax and diff checks.
+1. Local native 0.38.0 tests, relevant regression suite, syntax and diff checks.
 2. Preview exact branch push; STOP for APPROVE PUSH.
 3. On Great Lakes, prepare isolated plan, run CPU preflight, review plan/hash,
    free space and quota. Staging/preparation must be part of an approved preview.
@@ -119,3 +125,19 @@ spectra here are normalized-field checks, not physical-density power spectra.
 
 This checkout has no authenticated Great Lakes connection. User password/MFA
 must remain user-entered; do not claim to have started or inspected remote jobs.
+
+## Recovery from the version-check failure
+
+CPU preflight 61288400 failed before native model smoke checks or training:
+adapter c87aea9 incorrectly required the locally tested diffusers 0.35.1 instead
+of the working matrix's 0.38.0. Do not downgrade the shared venv. Preserve the
+original experiment directory, its plan hash
+`0bae872d5ff3a15eaa9763b93440c4575e9c9b3f01574bb7410a7c74df45b3e6`
+and failed-job logs. Reprepare the corrected immutable code in the new scratch
+root above; never edit the old plan's code revision or bypass its hash checks.
+The fresh plan records both the corrected code revision and the source matrix's
+runtime contract, with scientifically unchanged arm recipes, inputs and budgets.
+Local native tests use the host's CPU Torch, not Great Lakes Torch 2.1.2/CUDA;
+repeat the small checks inside the approved CPU-only allocation in the real pin
+before submitting the expensive A40 train/sample arrays. Those extra submissions
+remain separate protected actions, not part of the branch push.
