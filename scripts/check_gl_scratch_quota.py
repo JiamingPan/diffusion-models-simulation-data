@@ -29,15 +29,17 @@ def main() -> None:
     used, soft, hard, block_doubt = map(bytes_from_size, row[2:6])
     block_headroom = min(soft, hard) - used - block_doubt
     file_used, file_soft, file_hard, file_doubt = map(int, row[7:11])
-    file_headroom = min(file_soft, file_hard) - file_used
+    file_headroom = min(file_soft, file_hard) - file_used - file_doubt
     if block_headroom < args.min_gib * 2**30:
         raise ValueError(f"scratch headroom is only {block_headroom / 2**30:.1f} GiB")
-    if file_doubt != 0 or file_headroom < args.min_files:
-        raise ValueError(f"scratch file headroom is ambiguous or too small: {file_headroom}")
+    if file_headroom < args.min_files:
+        raise ValueError(
+            f"scratch file headroom after subtracting in_doubt is too small: {file_headroom}"
+        )
     print(
         f"SCRATCH QUOTA PASSED: {block_headroom / 2**40:.2f} TiB after "
         f"subtracting {block_doubt / 2**20:.1f} MiB in_doubt; "
-        f"{file_headroom} files free"
+        f"{file_headroom} files free after subtracting {file_doubt} in_doubt"
     )
 
 
