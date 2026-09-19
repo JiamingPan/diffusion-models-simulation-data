@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 import sys
 from pathlib import Path
 
@@ -33,3 +34,28 @@ def test_refresh_preserves_the_recipe_except_init_budget_and_new_outputs(tmp_pat
 def test_old_output_root_cannot_be_reused(tmp_path):
     with pytest.raises(ValueError,match="old sweep"):
         refresh.draft_runs(tmp_path,Path(refresh.base.CHECKPOINT_ROOT),200000)
+
+
+def test_cli_can_freeze_the_four_l16_high_n_screen(tmp_path, monkeypatch):
+    output = tmp_path / "screen"
+    monkeypatch.setattr(sys, "argv", [
+        "prepare_dit_adaln_zero_refresh.py",
+        "--out-dir", str(output),
+        "--checkpoint-root", "/scratch/experiment/l16_highn",
+        "--target-updates", "300000",
+        "--depth", "16",
+        "--dataset-tag", "d2p09",
+        "--dataset-tag", "d2p11",
+        "--dataset-tag", "d2p13",
+        "--dataset-tag", "d2p15",
+    ])
+    refresh.main()
+    plan = json.loads((output / "plan.json").read_text())
+    assert plan["selection"] == {
+        "depths": [16], "dataset_tags": ["d2p09", "d2p11", "d2p13", "d2p15"]}
+    assert [(row["dataset_tag"], row["dataset_size"]) for row in plan["runs"]] == [
+        ("d2p09", 512), ("d2p11", 2048), ("d2p13", 8192), ("d2p15", 32768)]
+    assert all(row["target_updates"] == 300000 and row["num_layers"] == 16
+               and row["patch_size"] == 8 and row["training_seed"] == 123
+               for row in plan["runs"])
+    assert len(list((output / "configs").glob("*.yaml"))) == 4
