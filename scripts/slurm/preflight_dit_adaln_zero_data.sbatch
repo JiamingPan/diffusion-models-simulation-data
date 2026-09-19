@@ -19,6 +19,7 @@ export PYTHONPATH="$COSMODIFF_ROOT:$CODE_ROOT:${PYTHONPATH:-}"
   --cosmodiff-root "$COSMODIFF_ROOT" --cosmodiff-commit "$COSMODIFF_COMMIT" \
   --cosmodiff-manifest "$COSMODIFF_MANIFEST" \
   --cosmodiff-manifest-sha256 "$COSMODIFF_MANIFEST_SHA256"
+"$PYTHON_BIN" "$CODE_ROOT/scripts/check_dit_zero_screen_imports.py"
 "$PYTHON_BIN" "$CODE_ROOT/scripts/preflight_dit_adaln_zero_data.py" \
   --plan "$PLAN_PATH" --plan-sha256 "$PLAN_SHA256" \
   --cosmodiff-manifest-sha256 "$COSMODIFF_MANIFEST_SHA256"
