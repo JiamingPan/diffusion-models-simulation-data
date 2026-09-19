@@ -77,11 +77,23 @@ def main():
     parser.add_argument("--out-dir",type=Path,required=True)
     parser.add_argument("--checkpoint-root",type=Path,required=True)
     parser.add_argument("--target-updates",type=int,required=True)
+    parser.add_argument("--depth", type=int, action="append", choices=[8, 12, 16])
+    parser.add_argument("--dataset-tag", action="append",
+                        help="Restrict the plan, e.g. d2p09. Repeatable.")
     args=parser.parse_args()
     if args.out_dir.exists():
         raise FileExistsError("preserve the existing plan; choose a new out-dir")
     root=args.out_dir.resolve()
     plan, configs=draft_runs(root,args.checkpoint_root,args.target_updates)
+    depths = set(args.depth or [8, 12, 16])
+    tags = set(args.dataset_tag or [row["dataset_tag"] for row in plan["runs"]])
+    plan["runs"] = [row for row in plan["runs"]
+                    if row["num_layers"] in depths and row["dataset_tag"] in tags]
+    if not plan["runs"]:
+        raise ValueError("selection produced no runs")
+    selected_configs = {Path(row["config"]): configs[Path(row["config"])] for row in plan["runs"]}
+    configs = selected_configs
+    plan["selection"] = {"depths": sorted(depths), "dataset_tags": sorted(tags)}
     (root/"configs").mkdir(parents=True,exist_ok=False)
     for path,text in configs.items():
         path.write_text(text)
