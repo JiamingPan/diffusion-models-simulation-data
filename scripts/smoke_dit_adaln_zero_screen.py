@@ -20,6 +20,10 @@ from simdiff_eval.torch_compat import install_torch_backend_compat
 
 TORCH_COMPAT_REPORT = install_torch_backend_compat(entry_point=__name__)
 
+from sample_cosmodiff import _install_sklearn_roc_curve_stub
+
+_install_sklearn_roc_curve_stub()
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
