@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+from dit_checkpoint_path import resolve_checkpoint
 
 
 def sha256(path: Path) -> str:
@@ -22,7 +23,7 @@ def main() -> None:
         raise ValueError("plan hash changed")
     row = json.loads(args.plan.read_text())["runs"][args.index]
     root = Path(row["checkpoint_dir"])
-    final = root / f"checkpoint-epoch-{row['checkpoint_epoch']}"
+    final = resolve_checkpoint(root, row['checkpoint_epoch'])
     receipt_path = root / "training_complete.json"
     if receipt_path.exists():
         raise FileExistsError(f"preserving existing training receipt: {receipt_path}")

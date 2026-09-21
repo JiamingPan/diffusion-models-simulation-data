@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 
 import yaml
+from dit_checkpoint_path import resolve_checkpoint
 
 
 def sha(path):
@@ -21,7 +22,7 @@ def verify_training_receipt(row, plan_sha256):
     if not receipt_path.is_file():
         raise FileNotFoundError(f"completed training receipt is missing: {receipt_path}")
     receipt = json.loads(receipt_path.read_text())
-    expected_final = root / f"checkpoint-epoch-{row['checkpoint_epoch']}"
+    expected_final = resolve_checkpoint(root, row['checkpoint_epoch'])
     if (receipt.get("status") != "complete" or receipt.get("plan_sha256") != plan_sha256
             or receipt.get("run_name") != row["run_name"]
             or receipt.get("config_sha256") != row["config_sha256"]
