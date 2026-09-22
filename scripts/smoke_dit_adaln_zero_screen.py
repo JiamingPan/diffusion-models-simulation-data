@@ -28,8 +28,9 @@ _install_sklearn_roc_curve_stub()
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plan", type=Path, required=True)
+    parser.add_argument("--index", type=int, default=0)
     args = parser.parse_args()
-    row = json.loads(args.plan.read_text())["runs"][0]
+    row = json.loads(args.plan.read_text())["runs"][args.index]
     cfg = yaml.safe_load(Path(row["config"]).read_text())
     if not torch.cuda.is_available():
         raise RuntimeError("A40 smoke requires CUDA")
