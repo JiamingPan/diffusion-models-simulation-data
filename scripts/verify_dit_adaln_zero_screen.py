@@ -109,12 +109,13 @@ def main():
         if sha(cfg_path) != row["config_sha256"]:
             raise ValueError(f"config hash changed: {cfg_path}")
         cfg = yaml.safe_load(cfg_path.read_text())
-        if (row["num_layers"] != 16 or row["target_updates"] != 300000
+        if (row["num_layers"] not in (8, 12, 16) or row["target_updates"] != 300000
                 or row["patch_size"] != 8 or row["training_seed"] != 123):
             raise ValueError("screen contract changed")
         if (cfg["model"].get("initialization") != "adaln_zero"
                 or cfg["model"]["kwargs"].get("norm_type") != "ada_norm_zero"
-                or cfg["model"]["kwargs"].get("patch_size") != 8):
+                or cfg["model"]["kwargs"].get("patch_size") != 8
+                or cfg["model"]["kwargs"].get("num_layers") != row["num_layers"]):
             raise ValueError("zero-init model contract changed")
         if not args.allow_checkpoint and Path(row["checkpoint_dir"]).exists():
             raise FileExistsError(f"fresh checkpoint destination already exists: {row['checkpoint_dir']}")
@@ -122,7 +123,7 @@ def main():
             raise FileNotFoundError(f"checkpoint destination is missing: {row['checkpoint_dir']}")
         if args.allow_checkpoint:
             verify_training_receipt(row, args.plan_sha256)
-    print(f"SCREEN PREFLIGHT PASSED: {len(runs)} fresh L16 runs; no training performed")
+    print(f"SCREEN PREFLIGHT PASSED: {len(runs)} DiT runs; no training performed")
 
 
 if __name__ == "__main__":
