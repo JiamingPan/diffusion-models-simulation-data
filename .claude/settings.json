@@ -2,17 +2,39 @@
   "permissions": {
     "defaultMode": "default",
     "allow": [
-      "Read", "Grep", "Glob",
+      "Read",
+      "Grep",
+      "Glob",
       "Edit(/home/jiamingp/diffusion_models_repo/**)",
       "Edit(/Users/apple/AI/Diffusion_model/**)",
-      "Bash(sacct *)", "Bash(squeue *)", "Bash(ls *)", "Bash(head *)", "Bash(tail *)",
-      "Bash(cat *)", "Bash(find *)", "Bash(wc *)", "Bash(git status*)", "Bash(git diff*)",
-      "Bash(git log*)", "Bash(python scripts/ledger.py *)", "Bash(pytest *)"
+      "Bash(sacct *)",
+      "Bash(squeue *)",
+      "Bash(ls *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(cat *)",
+      "Bash(find *)",
+      "Bash(wc *)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(python scripts/ledger.py *)",
+      "Bash(pytest *)",
+      "Write(/home/jiamingp/diffusion_models_repo/**)",
+      "Bash(python *)",
+      "Bash(python3 *)"
     ],
     "deny": [
       "Edit(/home/jiamingp/Diffusion_model/**)",
       "Edit(/scratch/**)",
-      "Bash(rm *)", "Bash(scancel *)", "Bash(pip *)", "Bash(conda *)", "Bash(git push *)"
+      "Bash(rm *)",
+      "Bash(scancel *)",
+      "Bash(pip *)",
+      "Bash(conda *)",
+      "Bash(git push *)",
+      "Write(/home/jiamingp/Diffusion_model/**)",
+      "Write(/scratch/**)",
+      "Bash(rm -rf *)"
     ]
   },
   "hooks": {
@@ -20,7 +42,10 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard_sbatch.py" }
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard_sbatch.py"
+          }
         ]
       }
     ]

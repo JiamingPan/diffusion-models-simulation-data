@@ -38,6 +38,8 @@ Omega_m recovery bias of conditional models at small training-set size. Paper in
 - Interactive: `PYTHONPATH="$STUB_ROOT:$COSMODIFF_DIR:$PROJECT_DIR:$PROJECT_DIR/scripts"`;
   for probe steps `PYTHONPATH="$PROJECT_DIR:$PROJECT_DIR/scripts"`.
   `PROJECT_DIR=/home/jiamingp/diffusion_models_repo`, `COSMODIFF_DIR=/home/jiamingp/Diffusion_model/cosmo_diffusion_main`.
+- Slurm account: **huterer2** for every project job (`#SBATCH -A huterer2`). Never huterer0 (the `/scratch/huterer_root/huterer0/`
+  paths are storage only) and never cavestru0 (another project). Check the account in every sbatch file and submit command.
 - Slurm: array limit `%2`. Attach to a running allocation with `srun --jobid=<id> --overlap --pty bash`
   rather than queueing. Check jobs with `sacct -X -j <id> --format=JobID%20,JobName%40,State,Elapsed,WorkDir%80`.
 - Never `--overwrite` existing samples or results. New outputs get new paths or new `sample_label`s.
