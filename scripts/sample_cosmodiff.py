@@ -204,8 +204,39 @@ def _load_dit_direct(checkpoint: Path, config_path: Path | None, *, allow_defaul
     return model, scheduler
 
 
+def _load_d4_direct(checkpoint: Path, config_path: Path | None, *, allow_default_scheduler: bool = False):
+    """Load the D4-equivariant UNet (simdiff_eval.d4_unet64); no fallbacks."""
+    from simdiff_eval.d4_unet64 import D4ScalarUNet2DModel, register_model
+
+    register_model()
+    model = D4ScalarUNet2DModel.from_pretrained(str(checkpoint))
+    scheduler = _load_scheduler_from_config(
+        config_path,
+        allow_default_scheduler=allow_default_scheduler,
+    )
+    return model, scheduler
+
+
+def _checkpoint_model_class(checkpoint: Path) -> str | None:
+    import json
+
+    config_json = checkpoint / "config.json"
+    if not config_json.is_file():
+        return None
+    return json.loads(config_json.read_text()).get("_class_name")
+
+
 def _load_for_sampling(checkpoint: Path, config_path: Path | None, *, allow_default_scheduler: bool = False):
     model_class = _config_model_class(config_path)
+    if _checkpoint_model_class(checkpoint) == "D4ScalarUNet2DModel" or model_class == "D4ScalarUNet2DModel":
+        # Plain UNet2DModel loading of a D4 checkpoint would drop the kernel tying and
+        # stride hooks; require the run's own training_config.yaml so the class is explicit.
+        if model_class != "D4ScalarUNet2DModel" or _checkpoint_model_class(checkpoint) != "D4ScalarUNet2DModel":
+            raise ValueError(
+                f"D4 checkpoint/config mismatch: config class {model_class!r}, "
+                f"checkpoint class {_checkpoint_model_class(checkpoint)!r}. Pass the run's training_config.yaml."
+            )
+        return _load_d4_direct(checkpoint, config_path, allow_default_scheduler=allow_default_scheduler)
     if model_class in {"UNet2DModel", "diffusers.UNet2DModel"}:
         try:
             return _load_unet_direct(
