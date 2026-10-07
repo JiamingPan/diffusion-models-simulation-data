@@ -35,12 +35,15 @@ def _d4_stack(x, torch):
 
 
 def orbit_max_cosine(queries: np.ndarray, references: np.ndarray, *, exclude_same_index: bool = False,
+                     exclude_ref_index: np.ndarray | None = None,
                      device: str | None = None, query_batch: int = 4, ref_batch: int = 512) -> dict:
     """Best orbit cosine of each query against all references.
 
     exclude_same_index: queries and references are the same set; query i never
     matches reference i under any transform (its whole orbit is excluded), as
     needed for train-to-train threshold calibration.
+    exclude_ref_index: per-query reference index whose whole orbit is excluded
+    (queries a subset of references); -1 excludes nothing.
     Returns arrays: max_cosine, ref_index, group_element, shift_y, shift_x.
     """
     import torch
@@ -52,6 +55,14 @@ def orbit_max_cosine(queries: np.ndarray, references: np.ndarray, *, exclude_sam
         raise ValueError("square maps of equal size required")
     if exclude_same_index and len(q) != len(r):
         raise ValueError("exclude_same_index needs queries == references")
+    if exclude_same_index and exclude_ref_index is not None:
+        raise ValueError("use exclude_same_index or exclude_ref_index, not both")
+    if exclude_same_index:
+        exclude_ref_index = np.arange(len(q))
+    if exclude_ref_index is not None:
+        exclude_ref_index = np.asarray(exclude_ref_index, dtype=np.int64).reshape(-1)
+        if len(exclude_ref_index) != len(q):
+            raise ValueError("exclude_ref_index needs one entry per query")
     h, w = q.shape[-2:]
     n_q = len(q)
     best = torch.full((n_q,), -np.inf)
@@ -67,9 +78,9 @@ def orbit_max_cosine(queries: np.ndarray, references: np.ndarray, *, exclude_sam
             # corr[g, b, j, s] = sum_x g(q_b)(x + s) r_j(x)
             corr = torch.fft.irfft2(q_f[:, :, None] * r_f.conj()[None, None], s=(h, w))
             corr = corr.reshape(8, len(qb), n_r, h * w)
-            if exclude_same_index:
+            if exclude_ref_index is not None:
                 for b in range(len(qb)):
-                    j = q0 + b - r0
+                    j = int(exclude_ref_index[q0 + b]) - r0
                     if 0 <= j < n_r:
                         corr[:, b, j] = -np.inf
             vals, flat = corr.permute(1, 0, 2, 3).reshape(len(qb), -1).max(dim=1)
