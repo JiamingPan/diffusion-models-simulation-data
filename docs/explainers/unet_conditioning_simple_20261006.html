@@ -1,0 +1,1053 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UNet Conditioning, Step by Step</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'\\(',right:'\\)',display:false}]})"></script>
+<style>
+:root{
+  --bg:#fbfaf7; --panel:#ffffff; --ink:#1d1f24; --muted:#5d636e; --line:#d9dbe0;
+  --down:#2b6cb0; --up:#7b4fb3; --mid:#666; --cond:#d9480f; --cond-soft:#fde4d6;
+  --time:#2f9e44; --time-soft:#dcf3e1; --attn:#b08800; --attn-soft:#fbf1c7; --skip:#8a8f98;
+  --box:#eef2f8; --code:#f1f1ee; --note:#f4f1ea;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#15171b; --panel:#1d2026; --ink:#e7e9ee; --muted:#a2a8b3; --line:#343944;
+    --down:#6aa6e8; --up:#b493e0; --mid:#aaa; --cond:#ff8a4c; --cond-soft:#4a2a1a;
+    --time:#5fd17a; --time-soft:#1e3a25; --attn:#e3c04a; --attn-soft:#3d3416; --skip:#9aa0aa;
+    --box:#262b35; --code:#262a31; --note:#23262c;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#15171b; --panel:#1d2026; --ink:#e7e9ee; --muted:#a2a8b3; --line:#343944;
+  --down:#6aa6e8; --up:#b493e0; --mid:#aaa; --cond:#ff8a4c; --cond-soft:#4a2a1a;
+  --time:#5fd17a; --time-soft:#1e3a25; --attn:#e3c04a; --attn-soft:#3d3416; --skip:#9aa0aa;
+  --box:#262b35; --code:#262a31; --note:#23262c;
+}
+*{box-sizing:border-box}
+html,body{max-width:100%;overflow-x:hidden}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+main{max-width:960px;margin:0 auto;padding:24px 16px 80px}
+h1{font-size:1.8rem;margin:0 0 6px;letter-spacing:-.01em}
+h2{font-size:1.35rem;margin:46px 0 10px;padding-top:10px;border-top:2px solid var(--line)}
+h3{font-size:1.05rem;margin:24px 0 6px}
+p,li{max-width:74ch}
+.sub{color:var(--muted);margin:0 0 14px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin:14px 0}
+.note{background:var(--note);border-left:4px solid var(--cond);border-radius:8px;padding:10px 14px;margin:14px 0}
+.note.t{border-color:var(--time)}
+.note.a{border-color:var(--attn)}
+.ex{background:var(--box);border-radius:10px;padding:10px 14px;margin:12px 0}
+.ex b:first-child{color:var(--down)}
+.toggle{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+.toggle button{font:inherit;font-size:.95rem;padding:7px 14px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+.toggle button.on{background:var(--cond);border-color:var(--cond);color:#fff}
+.legend{display:flex;flex-wrap:wrap;gap:12px 16px;font-size:.85rem;color:var(--muted);margin-top:8px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+svg{width:100%;height:auto;display:block}
+svg text{fill:var(--ink);font-family:inherit;font-size:12px}
+.box{fill:var(--box);stroke:var(--line)}
+.res{fill:var(--box);stroke:var(--down);stroke-width:1.5}
+.res.up{stroke:var(--up)}
+.res.mid{stroke:var(--mid)}
+.attn{fill:var(--attn-soft);stroke:var(--attn);stroke-width:1.5}
+.attn.cross{fill:var(--cond-soft);stroke:var(--cond);stroke-width:2.4}
+.inj{fill:var(--cond-soft);stroke:var(--cond);stroke-width:1.6;stroke-dasharray:5 3}
+.lab{font-size:12px}
+.big{font-size:14px;font-weight:600}
+.small{font-size:10.5px;fill:var(--muted)}
+.wire{stroke:var(--ink);stroke-width:1.4;fill:none}
+.skipw{stroke:var(--skip);stroke-width:1.8;stroke-dasharray:6 4;fill:none}
+.ebus{stroke:var(--time);stroke-width:2.2;fill:none}
+.ebus.withcond{stroke:var(--cond)}
+.drop{stroke:var(--time);stroke-width:1.4;fill:none}
+.drop.withcond{stroke:var(--cond)}
+.tokwire{stroke:var(--cond);stroke-width:2;fill:none;stroke-dasharray:4 3}
+.mk-ink{fill:var(--ink)} .mk-skip{fill:var(--skip)} .mk-cond{fill:var(--cond)} .mk-time{fill:var(--time)}
+.hidden{display:none}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:760px){.grid2{grid-template-columns:1fr}}
+table{border-collapse:collapse;width:100%;font-size:.9rem}
+th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+th{color:var(--muted);font-weight:600}
+td.fix{color:var(--muted)} td.lrn{color:var(--cond);font-weight:600}
+code{background:var(--code);padding:1px 5px;border-radius:5px;font-size:.88em}
+.key{background:var(--cond-soft);border:1px solid var(--cond);border-radius:12px;padding:12px 18px;margin-top:20px}
+details{border:1px solid var(--line);border-radius:10px;padding:6px 14px;margin:12px 0;background:var(--panel)}
+summary{cursor:pointer;font-weight:600;color:var(--cond);padding:4px 0}
+details[open] summary{border-bottom:1px solid var(--line);margin-bottom:8px}
+.katex-display{overflow-x:auto;overflow-y:hidden;padding:2px 0}
+.mode-note{font-size:.95rem;min-height:3em}
+.themebtn{float:right;font:inherit;font-size:.85rem;padding:4px 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+dl.gloss{display:grid;grid-template-columns:max-content 1fr;gap:4px 14px;font-size:.92rem}
+dl.gloss dt{font-weight:600} dl.gloss dd{margin:0}
+@media (max-width:560px){dl.gloss{grid-template-columns:1fr} dl.gloss dd{margin:0 0 6px 12px}}
+label{display:block;margin:6px 0}
+input[type=range]{width:min(100%,260px);vertical-align:middle}
+.steps li{margin-bottom:6px}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-ink" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="arrSkip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-skip" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="arrCond" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-cond" d="M0,0 L10,5 L0,10 z"/></marker>
+  </defs>
+</svg>
+<main>
+<button class="themebtn" id="theme">Light / dark</button>
+<h1>Where the cosmology enters the UNet</h1>
+<p class="sub">A step-by-step guide to our conditional diffusion model, for readers who know tensors and math but are new to deep learning. Each section adds one idea. Intuition comes first, then the equation. The full math is in the <b>Show the math</b> boxes.</p>
+
+<div class="panel">
+<b>Conventions used on this page</b>
+<ul style="margin:6px 0 0">
+<li>One map is a tensor with shape \((C, H, W)\). \(C\) is the number of <b>channels</b> (Section 2). \(H = W\) is the size in pixels: 128, 64 or 32.</li>
+<li>In training, the network sees a batch of \(B = 32\) maps at once: \((B, C, H, W)\). This page shows one map, so \(B\) is left out.</li>
+<li>Three models are compared: <code>baseline</code>, <code>temb</code> and <code>tembss</code>. Colors in diagrams: <span style="color:var(--cond);font-weight:600">orange</span> = the cosmology enters here; <span style="color:var(--time);font-weight:600">green</span> = only the noise level enters here.</li>
+</ul>
+</div>
+
+<!-- ============ 1. PROBLEM ============ -->
+<h2>1. The problem</h2>
+<p>A <b>diffusion model</b> makes a new map by removing noise, step by step. It starts from pure noise and runs the network 50 times. Each run removes a little noise. The network is a function with three inputs and one output:</p>
+<ul>
+<li>the noisy map \(x_t\), shape \((1, 128, 128)\);</li>
+<li>the <b>noise level</b> \(t\), an integer from 0 (clean) to 499 (pure noise);</li>
+<li>the requested <b>cosmology</b>: \(\Omega_m\) (matter density) and \(\sigma_8\) (clustering amplitude).</li>
+</ul>
+<p>The output is \(\hat v\), shape \((1, 128, 128)\). It tells which part of \(x_t\) is noise and which part is signal (the exact definition is in Section 9).</p>
+<p>The final map must look like a universe with the requested \(\Omega_m\) and \(\sigma_8\). So these two numbers must change what the network does. The question of this page is: <b>where and how do the two cosmology numbers get into the network?</b> We have three answers. They are the three models <code>baseline</code>, <code>temb</code> and <code>tembss</code>. Section 4 compares them.</p>
+
+<!-- ============ 2. UNET ============ -->
+<h2>2. The UNet in one picture</h2>
+<p>The network is a <b>UNet</b>. The name comes from its U shape. It shrinks the map twice, then grows it back twice. Each size is one <b>level</b>. Data flows from the top left, down the left side, across the bottom, and up the right side.</p>
+<div class="panel scroll">
+<svg viewBox="0 0 600 470" style="min-width:520px" role="img" aria-label="UNet overview">
+  <!-- input / output -->
+  <rect class="box" x="100" y="12" width="140" height="36" rx="6"/>
+  <text class="lab" x="170" y="34" text-anchor="middle">x_t  (1, 128, 128)</text>
+  <rect class="box" x="360" y="12" width="140" height="36" rx="6"/>
+  <text class="lab" x="430" y="34" text-anchor="middle">v̂  (1, 128, 128)</text>
+  <line class="wire" x1="170" y1="48" x2="170" y2="78" marker-end="url(#arr)"/>
+  <text class="small" x="178" y="68">conv_in: 1 → 32 channels</text>
+  <line class="wire" x1="430" y1="80" x2="430" y2="50" marker-end="url(#arr)"/>
+  <text class="small" x="438" y="68">conv_out: 32 → 1</text>
+
+  <!-- level labels -->
+  <text class="lab" x="8" y="100">128×128</text><text class="small" x="8" y="116">C = 32</text>
+  <text class="lab" x="8" y="210">64×64</text><text class="small" x="8" y="226">C = 64</text>
+  <text class="lab" x="8" y="320">32×32</text><text class="small" x="8" y="336">C = 128</text>
+
+  <!-- down boxes -->
+  <rect class="res" x="100" y="80" width="140" height="48" rx="8"/>
+  <text class="lab" x="170" y="100" text-anchor="middle">2 ResBlocks</text>
+  <text class="small" x="170" y="118" text-anchor="middle">(32, 128, 128)</text>
+  <rect class="res" x="100" y="190" width="140" height="48" rx="8"/>
+  <text class="lab" x="170" y="210" text-anchor="middle">2 ResBlocks</text>
+  <text class="small" x="170" y="228" text-anchor="middle">(64, 64, 64)</text>
+  <rect class="res" x="100" y="300" width="140" height="48" rx="8"/>
+  <text class="lab" x="170" y="320" text-anchor="middle">2 ResBlocks + Attn</text>
+  <text class="small" x="170" y="338" text-anchor="middle">(128, 32, 32)</text>
+
+  <!-- up boxes -->
+  <rect class="res up" x="360" y="80" width="140" height="48" rx="8"/>
+  <text class="lab" x="430" y="100" text-anchor="middle">3 ResBlocks</text>
+  <text class="small" x="430" y="118" text-anchor="middle">(32, 128, 128)</text>
+  <rect class="res up" x="360" y="190" width="140" height="48" rx="8"/>
+  <text class="lab" x="430" y="210" text-anchor="middle">3 ResBlocks</text>
+  <text class="small" x="430" y="228" text-anchor="middle">(64, 64, 64)</text>
+  <rect class="res up" x="360" y="300" width="140" height="48" rx="8"/>
+  <text class="lab" x="430" y="320" text-anchor="middle">3 ResBlocks + Attn</text>
+  <text class="small" x="430" y="338" text-anchor="middle">(128, 32, 32)</text>
+
+  <!-- down / up arrows -->
+  <line class="wire" x1="170" y1="128" x2="170" y2="188" marker-end="url(#arr)"/>
+  <text class="small" x="178" y="162">↓ halve H and W</text>
+  <line class="wire" x1="170" y1="238" x2="170" y2="298" marker-end="url(#arr)"/>
+  <text class="small" x="178" y="272">↓ halve H and W</text>
+  <line class="wire" x1="430" y1="300" x2="430" y2="240" marker-end="url(#arr)"/>
+  <text class="small" x="438" y="272">↑ double H and W</text>
+  <line class="wire" x1="430" y1="190" x2="430" y2="130" marker-end="url(#arr)"/>
+  <text class="small" x="438" y="162">↑ double H and W</text>
+
+  <!-- skips -->
+  <line class="skipw" x1="240" y1="104" x2="358" y2="104" marker-end="url(#arrSkip)"/>
+  <text class="small" x="299" y="98" text-anchor="middle">skip (copy)</text>
+  <line class="skipw" x1="240" y1="214" x2="358" y2="214" marker-end="url(#arrSkip)"/>
+  <text class="small" x="299" y="208" text-anchor="middle">skip (copy)</text>
+  <line class="skipw" x1="240" y1="324" x2="358" y2="324" marker-end="url(#arrSkip)"/>
+  <text class="small" x="299" y="318" text-anchor="middle">skip (copy)</text>
+
+  <!-- middle -->
+  <rect class="res mid" x="180" y="400" width="240" height="44" rx="8"/>
+  <text class="lab" x="300" y="419" text-anchor="middle">middle: ResBlock · Attn · ResBlock</text>
+  <text class="small" x="300" y="436" text-anchor="middle">(128, 32, 32), same in all three models</text>
+  <line class="wire" x1="170" y1="348" x2="205" y2="398" marker-end="url(#arr)"/>
+  <line class="wire" x1="395" y1="400" x2="430" y2="350" marker-end="url(#arr)"/>
+</svg>
+<div class="legend">
+  <span style="--c:var(--down)">down path</span>
+  <span style="--c:var(--up)">up path</span>
+  <span style="--c:var(--mid)">middle</span>
+  <span style="--c:var(--skip)">skip connection</span>
+</div>
+</div>
+<ol class="steps">
+<li><b>Down path</b> (left). At each level, 2 ResBlocks process the features (Section 3). Then a learned layer halves the height and width: 128 → 64 → 32.</li>
+<li><b>Middle</b> (bottom). At 32×32: ResBlock, attention, ResBlock (Section 7).</li>
+<li><b>Up path</b> (right). A layer doubles the height and width: 32 → 64 → 128. At each level, 3 ResBlocks process the features.</li>
+<li><b>Skips</b> (dashed). The up path also gets a copy of the down-path features at the same level (Section 8).</li>
+</ol>
+<p>Count of ResBlocks: 6 down + 2 middle + 9 up = <b>17</b>, in every model.</p>
+
+<h3>What is a channel?</h3>
+<p>The input map has 1 channel: one number per pixel. The first layer, <code>conv_in</code>, turns it into 32 channels. A tensor with \(C\) channels is a <b>stack of \(C\) images</b>, all of size \(H\times W\). Each image is the output of one learned <b>detector</b>. For example, channel 1 might respond to sharp edges, and channel 7 to bright blobs. The network chooses these detectors during training. Nobody designs them by hand.</p>
+<div class="panel scroll">
+<svg viewBox="0 0 560 200" style="min-width:480px" role="img" aria-label="A feature map is a stack of channel images">
+  <text class="lab" x="70" y="26" text-anchor="middle">input: 1 channel</text>
+  <rect class="box" x="20" y="40" width="100" height="100"/>
+  <path d="M45 40 V140 M70 40 V140 M95 40 V140 M20 65 H120 M20 90 H120 M20 115 H120" stroke="var(--line)" fill="none"/>
+  <text class="small" x="70" y="158" text-anchor="middle">128 × 128 pixels</text>
+  <text class="small" x="70" y="172" text-anchor="middle">one number each</text>
+  <line class="wire" x1="130" y1="90" x2="205" y2="90" marker-end="url(#arr)"/>
+  <text class="small" x="168" y="80" text-anchor="middle">conv_in</text>
+  <text class="small" x="168" y="106" text-anchor="middle">3×3 conv, 1 → 32</text>
+  <!-- stack, back to front -->
+  <rect class="box" x="265" y="40" width="100" height="100" style="fill:var(--panel)"/>
+  <text class="small" x="315" y="36">channel 32</text>
+  <rect class="box" x="256" y="49" width="100" height="100" style="fill:var(--panel)"/>
+  <rect class="box" x="247" y="58" width="100" height="100" style="fill:var(--panel)"/>
+  <text class="small" x="300" y="70" text-anchor="middle">…</text>
+  <rect class="box" x="238" y="67" width="100" height="100" style="fill:var(--panel)"/>
+  <rect class="box" x="229" y="76" width="100" height="100" style="fill:var(--panel)"/>
+  <text class="small" x="279" y="88" text-anchor="middle">channel 2</text>
+  <rect class="box" x="220" y="85" width="100" height="100"/>
+  <text class="lab" x="270" y="140" text-anchor="middle">channel 1</text>
+  <text class="lab" x="385" y="76">32 images, each 128 × 128</text>
+  <text class="lab" x="385" y="96">= tensor (32, 128, 128)</text>
+  <text class="small" x="385" y="116">each channel = the response</text>
+  <text class="small" x="385" y="130">of one learned detector</text>
+  <text class="small" x="385" y="150">a pixel is described by</text>
+  <text class="small" x="385" y="164">32 numbers, not 1</text>
+</svg>
+</div>
+<div class="ex"><b>Worked example.</b> At the 128×128 level, \(C = 32\). The tensor is \((32, 128, 128)\): \(32 \times 16\,384 = 524\,288\) numbers for one map. At the 32×32 level, \(C = 128\): \((128, 32, 32) = 131\,072\) numbers. Fewer pixels, but more detectors per pixel. Coarse levels describe large-scale structure with many features per position.</div>
+
+<h3>What is a 3×3 convolution?</h3>
+<p>A <b>Conv 3×3</b> layer makes each output channel from a weighted sum over a 3×3 pixel window, summed over all input channels, plus a bias. The same weights are used at every pixel. So the detector slides over the map. The weights are learned. A <b>1×1 convolution</b> is the same with a 1×1 window: a per-pixel linear map that only changes the channel count.</p>
+<details><summary>Show the math</summary>
+<p>Input \(x\in\mathbb R^{C_{\rm in}\times H\times W}\), output \(y\in\mathbb R^{C_{\rm out}\times H\times W}\). For output channel \(c'\) and pixel \(i\):</p>
+$$y_{c',i}=b_{c'}+\sum_{c=1}^{C_{\rm in}}\ \sum_{\delta\in\{-1,0,1\}^2} K_{c',c,\delta}\;x_{c,\,i+\delta}$$
+<p>Learned parameters: the kernel \(K\) and bias \(b\): \(9\,C_{\rm in}C_{\rm out}+C_{\rm out}\) numbers. Examples: \(1\to32\): 320. \(32\to32\): 9 248. \(128\to128\): 147 584. The border uses zero padding, so \(H\) and \(W\) do not change.</p>
+</details>
+
+<h3>What does "the 32×32 level" mean?</h3>
+<p>The 32×32 level is <b>not</b> a small piece of the map. It is the <b>whole map, zoomed out</b>. The map was downsampled twice (128 → 64 → 32). So each of the \(32\times32 = 1\,024\) positions covers a \(4\times4\) patch of the original 128×128 map. At this level the network sees the large-scale layout: where the big clusters, filaments and voids are. The fine detail inside each 4×4 patch is not there any more. It comes back through the skips (Section 8).</p>
+<div class="panel scroll">
+<svg viewBox="0 0 560 190" style="min-width:480px" role="img" aria-label="One 32x32 position covers a 4x4 patch of the 128x128 map">
+  <text class="lab" x="90" y="22" text-anchor="middle">128 × 128 map (16 384 pixels)</text>
+  <rect class="box" x="20" y="36" width="140" height="140"/>
+  <g stroke="var(--line)" fill="none" stroke-width=".6">
+    <path d="M37.5 36V176M55 36V176M72.5 36V176M90 36V176M107.5 36V176M125 36V176M142.5 36V176M20 53.5H160M20 71H160M20 88.5H160M20 106H160M20 123.5H160M20 141H160M20 158.5H160"/>
+  </g>
+  <rect x="55" y="71" width="17.5" height="17.5" fill="var(--cond-soft)" stroke="var(--cond)" stroke-width="1.6"/>
+  <text class="small" x="90" y="188" text-anchor="middle">orange = a 4 × 4 patch of pixels</text>
+  <line class="wire" x1="172" y1="106" x2="222" y2="106" marker-end="url(#arr)"/>
+  <text class="small" x="197" y="96" text-anchor="middle">↓ ½, ↓ ½</text>
+  <text class="lab" x="300" y="22" text-anchor="middle">32 × 32 level (1 024 positions)</text>
+  <rect class="box" x="235" y="36" width="140" height="140"/>
+  <g stroke="var(--line)" fill="none" stroke-width=".6">
+    <path d="M252.5 36V176M270 36V176M287.5 36V176M305 36V176M322.5 36V176M340 36V176M357.5 36V176M235 53.5H375M235 71H375M235 88.5H375M235 106H375M235 123.5H375M235 141H375M235 158.5H375"/>
+  </g>
+  <rect x="270" y="71" width="17.5" height="17.5" fill="var(--cond-soft)" stroke="var(--cond)" stroke-width="1.6"/>
+  <text class="small" x="300" y="188" text-anchor="middle">orange = ONE position, 128 channels</text>
+  <text class="lab" x="392" y="60">same field of view,</text>
+  <text class="lab" x="392" y="78">16× fewer positions</text>
+  <text class="small" x="392" y="104">each position holds</text>
+  <text class="small" x="392" y="118">128 numbers that</text>
+  <text class="small" x="392" y="132">summarize its 4×4 patch</text>
+  <text class="small" x="392" y="152">(grid drawn coarser</text>
+  <text class="small" x="392" y="166">than the real 32 × 32)</text>
+</svg>
+</div>
+<p>Why this level is special on this page:</p>
+<ul>
+<li><b>Attention happens only here.</b> Attention compares every position with every other one. Its cost grows with the square of the number of positions: \(1\,024^2 \approx 1.0\) million pairs at 32×32, but \(16\,384^2 \approx 268\) million at 128×128. That is 256 times more. Section 7.</li>
+<li><b>In the baseline, the cosmology also enters only here.</b> The 64×64 and 128×128 levels, where small-scale detail is drawn, never see it directly. The new runs <code>temb</code> and <code>tembss</code> change that. Section 4.</li>
+</ul>
+
+<!-- ============ 3. RESBLOCK ============ -->
+<h2>3. A ResBlock</h2>
+<p><b>ResBlock</b> is short for residual block. It is the basic unit of the network. Every model on this page has 17 of them. A ResBlock takes a tensor \((C_{\rm in}, H, W)\) and returns \((C, H, W)\). The pixel size does not change. Only the channel count may change.</p>
+<div class="grid2">
+<div class="panel">
+<svg viewBox="0 0 420 530" role="img" aria-label="ResBlock flow">
+  <!-- column boxes -->
+  <rect class="box" x="110" y="8" width="170" height="34" rx="6"/><text class="lab" x="195" y="30" text-anchor="middle">input x: (C_in, H, W)</text>
+  <line class="wire" x1="195" y1="42" x2="195" y2="55" marker-end="url(#arr)"/>
+  <rect class="box" x="110" y="56" width="170" height="34" rx="6"/><text class="lab" x="195" y="78" text-anchor="middle">GroupNorm</text>
+  <line class="wire" x1="195" y1="90" x2="195" y2="101" marker-end="url(#arr)"/>
+  <rect class="box" x="110" y="102" width="170" height="34" rx="6"/><text class="lab" x="195" y="124" text-anchor="middle">SiLU</text>
+  <line class="wire" x1="195" y1="136" x2="195" y2="147" marker-end="url(#arr)"/>
+  <rect class="box" x="110" y="148" width="170" height="34" rx="6"/><text class="lab" x="195" y="170" text-anchor="middle">Conv 3×3  (C_in → C)</text>
+  <line class="wire" x1="195" y1="182" x2="195" y2="193" marker-end="url(#arr)"/>
+  <rect class="inj" x="110" y="194" width="170" height="34" rx="6"/>
+  <text class="lab" x="195" y="208" text-anchor="middle">+ p_c  (add, per channel)</text>
+  <text class="small" x="195" y="222" text-anchor="middle">baseline and temb</text>
+  <line class="wire" x1="195" y1="228" x2="195" y2="239" marker-end="url(#arr)"/>
+  <rect class="box" x="110" y="240" width="170" height="34" rx="6"/><text class="lab" x="195" y="262" text-anchor="middle">GroupNorm</text>
+  <line class="wire" x1="195" y1="274" x2="195" y2="285" marker-end="url(#arr)"/>
+  <rect class="inj" x="110" y="286" width="170" height="34" rx="6"/>
+  <text class="lab" x="195" y="300" text-anchor="middle">× (1 + g_c) + β_c  (per channel)</text>
+  <text class="small" x="195" y="314" text-anchor="middle">tembss only</text>
+  <line class="wire" x1="195" y1="320" x2="195" y2="331" marker-end="url(#arr)"/>
+  <rect class="box" x="110" y="332" width="170" height="34" rx="6"/><text class="lab" x="195" y="354" text-anchor="middle">SiLU</text>
+  <line class="wire" x1="195" y1="366" x2="195" y2="377" marker-end="url(#arr)"/>
+  <rect class="box" x="110" y="378" width="170" height="34" rx="6"/><text class="lab" x="195" y="400" text-anchor="middle">Conv 3×3  (C → C)</text>
+  <line class="wire" x1="195" y1="412" x2="195" y2="425" marker-end="url(#arr)"/>
+  <circle cx="195" cy="440" r="14" class="box" style="stroke:var(--ink)"/><text x="195" y="445" text-anchor="middle" style="font-size:16px">+</text>
+  <line class="wire" x1="195" y1="454" x2="195" y2="475" marker-end="url(#arr)"/>
+  <rect class="box" x="110" y="476" width="170" height="34" rx="6"/><text class="lab" x="195" y="498" text-anchor="middle">output: (C, H, W)</text>
+  <!-- residual path -->
+  <path class="wire" d="M280 25 H 360 V 440 H 211" marker-end="url(#arr)"/>
+  <text class="small" x="366" y="226">S(x):</text>
+  <text class="small" x="366" y="240">identity, or</text>
+  <text class="small" x="366" y="254">1×1 conv if</text>
+  <text class="small" x="366" y="268">C_in ≠ C</text>
+  <!-- e input -->
+  <rect class="inj" x="8" y="232" width="86" height="50" rx="6"/>
+  <text class="lab" x="51" y="251" text-anchor="middle">e ∈ ℝ¹²⁸</text>
+  <text class="small" x="51" y="268" text-anchor="middle">W_b·SiLU(e)+b_b</text>
+  <path class="wire" d="M51 232 V 211 H 108" marker-end="url(#arr)" style="stroke:var(--cond)"/>
+  <path class="wire" d="M51 282 V 303 H 108" marker-end="url(#arr)" style="stroke:var(--cond)"/>
+</svg>
+</div>
+<div>
+<p>The steps, top to bottom:</p>
+<ol class="steps">
+<li><b>GroupNorm</b> (GN) re-centers and re-scales the features. Section 6 explains it.</li>
+<li><b>SiLU</b> is a smooth nonlinear function: \(\mathrm{SiLU}(x)=x\,\sigma(x)=x/(1+e^{-x})\). Without nonlinear steps, a stack of convolutions would be one big linear map.</li>
+<li><b>Conv 3×3</b> changes the channel count from \(C_{\rm in}\) to \(C\).</li>
+<li><b>Injection</b> (orange). The noise level, and in <code>temb</code>/<code>tembss</code> also the cosmology, enter here as one or two numbers per channel. This is the subject of Section 4. The two orange boxes are the two possible places. A given model uses one of them.</li>
+<li>GN, SiLU, Conv 3×3 again.</li>
+<li><b>Add the input back</b>: \(\text{out} = S(x) + h\). This is the <b>residual</b> connection. The block only has to learn a correction to its input, which makes deep networks easy to train. \(S\) is the identity when \(C_{\rm in}=C\). Otherwise it is a 1×1 convolution that changes the channel count.</li>
+</ol>
+<p>Dropout is 0 in all our runs, so there is no random masking of features.</p>
+</div>
+</div>
+<details><summary>Show the math</summary>
+<p>Block \(b\) receives the conditioning vector \(e\in\mathbb R^{128}\) (Section 4) and has its own learned matrix \(W_b\) and bias \(\mathbf b_b\).</p>
+<p><b>baseline and temb</b> ("default" mode in diffusers): the per-channel number is added before the second GroupNorm.</p>
+$$\begin{aligned}
+h &= \mathrm{Conv}_{3\times3}\big(\mathrm{SiLU}(\mathrm{GN}(x))\big)\\
+p &= W_b\,\mathrm{SiLU}(e)+\mathbf b_b\ \in\mathbb R^{C},\qquad W_b\in\mathbb R^{C\times128}\\
+h_{c,i} &\leftarrow h_{c,i} + p_c\qquad\text{(same }p_c\text{ at every pixel }i\text{)}\\
+h &\leftarrow \mathrm{Conv}_{3\times3}\big(\mathrm{SiLU}(\mathrm{GN}(h))\big)\\
+\text{out} &= S(x) + h
+\end{aligned}$$
+<p><b>tembss</b> ("scale_shift" mode): two numbers per channel, applied after the second GroupNorm.</p>
+$$\begin{aligned}
+h &= \mathrm{Conv}_{3\times3}\big(\mathrm{SiLU}(\mathrm{GN}(x))\big)\\
+[\,g,\ \beta\,] &= W_b\,\mathrm{SiLU}(e)+\mathbf b_b\ \in\mathbb R^{2C},\qquad W_b\in\mathbb R^{2C\times128}\\
+h_{c,i} &\leftarrow \mathrm{GN}(h)_{c,i}\,(1+g_c) + \beta_c\\
+h &\leftarrow \mathrm{Conv}_{3\times3}\big(\mathrm{SiLU}(h)\big)\\
+\text{out} &= S(x) + h
+\end{aligned}$$
+<p>In the baseline, \(e=t_{\rm emb}\) carries the noise level only. In <code>temb</code> and <code>tembss</code>, \(e=t_{\rm emb}+c_{\rm emb}\) also carries the cosmology.</p>
+</details>
+
+<!-- ============ 4. KEY IDEA ============ -->
+<h2>4. The key idea: how the cosmology gets in</h2>
+<p>In <code>temb</code> and <code>tembss</code>, the cosmology reaches the features in three steps: A, B, C below. The <code>baseline</code> uses a different route (cross-attention). The toggle after the steps compares all three.</p>
+
+<h3>Step A: build one vector \(e\) per map per step</h3>
+<p>Some words first. An <b>embedding</b> is a vector of numbers that stands for an input. A <b>Linear</b> layer computes \(y = Wx + b\), where the matrix \(W\) and vector \(b\) are learned. An <b>MLP</b> is two Linear layers with a SiLU between them. <b>z-scored</b> means: subtract the training-set mean, then divide by the training-set standard deviation.</p>
+<ul>
+<li><b>Noise level.</b> A fixed sin/cos formula turns the integer \(t\) into 32 numbers \(\gamma(t)\). Then \(\mathrm{MLP}_t\) (32 → 128 → 128) turns them into \(t_{\rm emb}\in\mathbb R^{128}\).</li>
+<li><b>Cosmology.</b> \(\tilde\theta\) = the z-scored pair \((\Omega_m,\sigma_8)\), 2 numbers. Then \(\mathrm{MLP}_\theta\) (2 → 128 → 128) turns them into \(c_{\rm emb}\in\mathbb R^{128}\).</li>
+<li><b>Sum.</b> \(e = t_{\rm emb} + c_{\rm emb}\). In the baseline, \(e = t_{\rm emb}\) only.</li>
+</ul>
+<p>\(e\) is computed once per map per denoising step. The <b>same</b> \(e\) goes to all 17 ResBlocks. It changes when the noise level changes or when the cosmology changes.</p>
+<div class="ex"><b>Worked example.</b> Suppose the training set has mean \(\Omega_m = 0.30\) with standard deviation 0.05 (illustrative numbers). A request for \(\Omega_m = 0.35\) gives \(\tilde\theta_1 = (0.35-0.30)/0.05 = 1.0\). The z-score puts both cosmology numbers on the same scale, around \(-2\) to \(+2\), which keeps the MLP well behaved.</div>
+
+<h3>Step B: each ResBlock turns \(e\) into per-channel numbers</h3>
+<p>ResBlock \(b\) has its own learned matrix \(W_b\) and bias \(\mathbf b_b\). It computes \(p = W_b\,\mathrm{SiLU}(e) + \mathbf b_b\). In <code>temb</code>, \(p\) has \(C\) numbers: one <b>shift</b> per channel. In <code>tembss</code>, it has \(2C\) numbers: one <b>scale</b> \(g_c\) and one shift \(\beta_c\) per channel. Row \(c\) of \(W_b\) decides how channel \(c\) of this block reacts to the noise level and the cosmology. 17 blocks give 17 different matrices, all fed the same \(e\).</p>
+
+<h3>Step C: apply the same number at every pixel of a channel</h3>
+<p>This is the part that often looks strange. Why add the <b>same</b> number at all 16 384 pixels? Because the cosmology is one property of the whole map. It has no position. The network still has to decide <b>where</b> filaments and voids go. That information comes from the noisy map \(x_t\), through the convolutions. The per-channel number only says <b>how strongly</b> each detector should respond for this cosmology at this noise level. In code this is called <b>broadcasting</b>: a vector of \(C\) numbers is stretched to shape \((C, H, W)\) before the addition.</p>
+<div class="ex"><b>Worked example.</b> First ResBlock at 128×128, \(C = 32\). \(e\) has 128 numbers. \(W_b\) is \(32\times128\). \(p\) has 32 numbers. Suppose \(p_3 = 0.4\). Then 0.4 is added to all 16 384 pixels of channel 3, and nothing is added to channel 4 unless \(p_4\ne0\). If channel 3 is a "dense filament" detector, the cosmology can make it more or less active. For a clumpy universe (high \(\sigma_8\)) the MLP may learn to give it a larger value. Training decides.</div>
+
+<h3>Compare the three models</h3>
+<p>Click a model. Orange marks where the cosmology enters. Green marks paths that carry the noise level only.</p>
+<div class="toggle" id="modes">
+  <button data-mode="base" class="on">baseline (cross-attention)</button>
+  <button data-mode="temb">temb (add to time embedding)</button>
+  <button data-mode="tembss">tembss (time embedding + scale-shift)</button>
+</div>
+<p class="mode-note" id="modenote"></p>
+<div class="panel scroll">
+<svg viewBox="0 0 960 600" style="min-width:820px" role="img" aria-label="Where the cosmology enters, by model">
+  <!-- embedding branch -->
+  <rect class="box" x="16" y="10" width="150" height="42" rx="8"/>
+  <text class="lab" x="91" y="27" text-anchor="middle">noise level t</text>
+  <text class="small" x="91" y="43" text-anchor="middle">sin/cos → γ(t) ∈ ℝ³²</text>
+  <rect class="box" x="186" y="10" width="110" height="42" rx="8" style="stroke:var(--time)"/>
+  <text class="lab" x="241" y="27" text-anchor="middle">MLP_t</text>
+  <text class="small" x="241" y="43" text-anchor="middle">32 → 128 → 128</text>
+  <line class="wire" x1="166" y1="31" x2="184" y2="31" marker-end="url(#arr)"/>
+  <line class="wire" x1="296" y1="31" x2="322" y2="37" marker-end="url(#arr)"/>
+  <g id="condTemb">
+    <rect class="box" x="16" y="62" width="150" height="42" rx="8" style="stroke:var(--cond)"/>
+    <text class="lab" x="91" y="79" text-anchor="middle">cosmology θ̃</text>
+    <text class="small" x="91" y="95" text-anchor="middle">(Ω_m, σ_8) z-scored ∈ ℝ²</text>
+    <rect class="box" x="186" y="62" width="110" height="42" rx="8" style="stroke:var(--cond)"/>
+    <text class="lab" x="241" y="79" text-anchor="middle">MLP_θ</text>
+    <text class="small" x="241" y="95" text-anchor="middle">2 → 128 → 128</text>
+    <line class="wire" x1="166" y1="83" x2="184" y2="83" marker-end="url(#arr)"/>
+    <line class="wire" x1="296" y1="83" x2="327" y2="51" marker-end="url(#arr)"/>
+  </g>
+  <g id="condBase" class="hidden">
+    <rect class="box" x="16" y="62" width="150" height="42" rx="8" style="stroke:var(--cond)"/>
+    <text class="lab" x="91" y="79" text-anchor="middle">cosmology θ̃</text>
+    <text class="small" x="91" y="95" text-anchor="middle">(Ω_m, σ_8) z-scored ∈ ℝ²</text>
+    <rect class="box" x="186" y="62" width="110" height="42" rx="8" style="stroke:var(--cond)"/>
+    <text class="lab" x="241" y="79" text-anchor="middle">Linear W_p</text>
+    <text class="small" x="241" y="95" text-anchor="middle">2 → 32: one token u</text>
+    <line class="wire" x1="166" y1="83" x2="184" y2="83" marker-end="url(#arr)"/>
+    <path class="tokwire" d="M296 83 H 587 V 408" marker-end="url(#arrCond)"/>
+    <text class="small" x="594" y="250" style="fill:var(--cond)">token u → keys and values of</text>
+    <text class="small" x="594" y="264" style="fill:var(--cond)">the 6 cross-attention layers (32×32 only)</text>
+  </g>
+  <circle cx="338" cy="40" r="14" class="box" style="stroke:var(--ink)"/>
+  <text x="338" y="45" text-anchor="middle" style="font-size:16px">+</text>
+  <text class="lab" x="362" y="36" id="elabel">e = t_emb + c_emb ∈ ℝ¹²⁸</text>
+  <text class="small" x="362" y="52">one e per map per step; the same e goes to all 17 ResBlocks</text>
+  <!-- e bus + rails -->
+  <path id="ebus" class="ebus withcond" d="M338 54 V 128 M40 128 H 930 M40 128 V 506 M930 128 V 506 M40 156 H 930 M40 276 H 930 M40 396 H 930 M40 506 H 930"/>
+  <text class="small" x="934" y="520" text-anchor="end" id="buslabel">e bus</text>
+  <g id="kDrops"></g>
+  <g id="kSkips"></g>
+  <g id="kBlocks"></g>
+</svg>
+<div class="legend">
+  <span style="--c:var(--down)">down ResBlock</span>
+  <span style="--c:var(--up)">up ResBlock</span>
+  <span style="--c:var(--mid)">middle ResBlock</span>
+  <span style="--c:var(--attn)">self-attention</span>
+  <span style="--c:var(--cond)">cosmology enters</span>
+  <span style="--c:var(--time)">noise level only</span>
+  <span style="--c:var(--skip)">skip (concatenate)</span>
+</div>
+</div>
+
+<div class="panel">
+<b>What each level sees</b>
+<div id="see-base" class="scroll">
+<table>
+<tr><th>Level</th><th>ResBlocks (down and up)</th><th>Attention</th></tr>
+<tr><td>128×128</td><td>noise level only</td><td>none</td></tr>
+<tr><td>64×64</td><td>noise level only</td><td>none</td></tr>
+<tr><td>32×32</td><td>noise level only</td><td>self-attention + <b style="color:var(--cond)">cross-attention to the cosmology token</b> (6 layers). Adds one fixed vector at every position. Does not depend on \(t\).</td></tr>
+</table>
+</div>
+<div id="see-temb" class="scroll hidden">
+<table>
+<tr><th>Level</th><th>ResBlocks (down and up)</th><th>Attention</th></tr>
+<tr><td>128×128</td><td><b style="color:var(--cond)">noise level + cosmology</b>: per-channel shift \(p_c\)</td><td>none</td></tr>
+<tr><td>64×64</td><td><b style="color:var(--cond)">noise level + cosmology</b>: per-channel shift \(p_c\)</td><td>none</td></tr>
+<tr><td>32×32</td><td><b style="color:var(--cond)">noise level + cosmology</b>: per-channel shift \(p_c\)</td><td>self-attention only (no label)</td></tr>
+</table>
+</div>
+<div id="see-tembss" class="scroll hidden">
+<table>
+<tr><th>Level</th><th>ResBlocks (down and up)</th><th>Attention</th></tr>
+<tr><td>128×128</td><td><b style="color:var(--cond)">noise level + cosmology</b>: scale \(1+g_c\) and shift \(\beta_c\) after GroupNorm</td><td>none</td></tr>
+<tr><td>64×64</td><td><b style="color:var(--cond)">noise level + cosmology</b>: scale \(1+g_c\) and shift \(\beta_c\) after GroupNorm</td><td>none</td></tr>
+<tr><td>32×32</td><td><b style="color:var(--cond)">noise level + cosmology</b>: scale \(1+g_c\) and shift \(\beta_c\) after GroupNorm</td><td>self-attention only (no label)</td></tr>
+</table>
+</div>
+</div>
+
+<h3>temb versus tembss</h3>
+<p>The two new models share the same wiring. The difference is <b>where</b> and <b>how</b> the per-channel numbers act inside each ResBlock (see the two orange boxes in Section 3):</p>
+<ul>
+<li><code>temb</code>: <b>add</b> \(p_c\) to channel \(c\), <b>before</b> the second GroupNorm.</li>
+<li><code>tembss</code>: <b>multiply</b> channel \(c\) by \(1+g_c\) and add \(\beta_c\), <b>after</b> the second GroupNorm.</li>
+</ul>
+<p>Section 6 shows why "after GroupNorm" and "multiply" matter.</p>
+
+<h3>The baseline route</h3>
+<p>The baseline does not add the cosmology to \(e\). Instead, a single Linear layer \(W_p\) (2 → 32) turns \(\tilde\theta\) into one <b>token</b> \(u\): a vector of 32 numbers. This token is the only input to the <b>cross-attention</b> layers. There are 6 of them, all at 32×32 (2 down, 1 middle, 3 up). Section 7 shows what they do: each one adds the same fixed vector \(W_O W_V W_p\tilde\theta\) at every position. This vector does not depend on \(t\). The 64×64 and 128×128 blocks never see the cosmology directly. Note that the baseline ResBlocks still get the noise level through \(e = t_{\rm emb}\), by the same "add \(p_c\)" rule as <code>temb</code>.</p>
+
+<details><summary>Show the math</summary>
+<p><b>Noise-level code</b> (fixed, no learned numbers). 16 frequencies from fast (\(\omega_0 = 1\)) to slow (\(\omega_{15} = 10000^{-15/16}\approx 1.8\times10^{-4}\)):</p>
+$$\gamma(t)=\big[\cos(\omega_k t),\ \sin(\omega_k t)\big]_{k=0}^{15}\in\mathbb R^{32},\qquad \omega_k=10000^{-k/16}$$
+<p>The fast components tell neighboring \(t\) apart. The slow ones change smoothly over the whole range 0 to 499. The MLP can read both.</p>
+<p><b>Time embedding</b> (learned):</p>
+$$t_{\rm emb}=W^t_2\,\mathrm{SiLU}\!\left(W^t_1\gamma(t)+b^t_1\right)+b^t_2,\qquad W^t_1\in\mathbb R^{128\times32},\ W^t_2\in\mathbb R^{128\times128}$$
+<p><b>Cosmology embedding</b> (learned; temb and tembss only):</p>
+$$\tilde\theta=\left(\frac{\Omega_m-\mu_{\Omega}}{s_{\Omega}},\ \frac{\sigma_8-\mu_{\sigma}}{s_{\sigma}}\right),\qquad c_{\rm emb}=W^\theta_2\,\mathrm{SiLU}\!\left(W^\theta_1\tilde\theta+b^\theta_1\right)+b^\theta_2,\qquad W^\theta_1\in\mathbb R^{128\times2}$$
+<p>\(\mu,s\) are the training-set means and standard deviations (fixed constants).</p>
+$$\boxed{\,e = t_{\rm emb} + c_{\rm emb}\ \ (\text{temb, tembss}),\qquad e = t_{\rm emb}\ \ (\text{baseline})\,}$$
+<p><b>Per-block numbers</b> (learned \(W_b, \mathbf b_b\) for each of the 17 blocks):</p>
+$$p^{(b)} = W_b\,\mathrm{SiLU}(e)+\mathbf b_b,\qquad W_b\in\mathbb R^{C\times128}\ (\text{temb}),\quad W_b\in\mathbb R^{2C\times128}\ (\text{tembss})$$
+<p><b>Baseline token</b>: \(u = W_p\tilde\theta\in\mathbb R^{32}\), with \(W_p\in\mathbb R^{32\times2}\) learned. It has shape \((B, 1, 32)\): one token per map.</p>
+</details>
+
+<!-- ============ 5. PARAMETERS ============ -->
+<h2>5. Where are the learned parameters?</h2>
+<p>A <b>learned parameter</b> is a number that training changes, by gradient descent on the loss of Section 9. Everything else is fixed by design or computed from the data on the fly. The table sorts the pieces.</p>
+<div class="panel scroll">
+<table>
+<tr><th>Piece</th><th>Fixed or learned?</th><th>Size</th><th>Depends on cosmology?</th></tr>
+<tr><td>noise level \(t\)</td><td class="fix">input</td><td>1 integer</td><td>no</td></tr>
+<tr><td>cosmology \(\tilde\theta\)</td><td class="fix">input</td><td>2 numbers</td><td>it <i>is</i> the cosmology</td></tr>
+<tr><td>sin/cos formula \(\gamma(t)\)</td><td class="fix">fixed formula</td><td>0 parameters</td><td>no</td></tr>
+<tr><td>z-score constants \(\mu, s\)</td><td class="fix">fixed (from training set)</td><td>4 numbers</td><td>no</td></tr>
+<tr><td>\(\mathrm{MLP}_t\)</td><td class="lrn">learned</td><td>32·128+128 + 128·128+128 = 20 736</td><td>no</td></tr>
+<tr><td>\(\mathrm{MLP}_\theta\) (temb, tembss)</td><td class="lrn">learned</td><td>2·128+128 + 128·128+128 = 16 896</td><td>maps the cosmology to \(c_{\rm emb}\)</td></tr>
+<tr><td>\(W_b, \mathbf b_b\) in each of the 17 ResBlocks</td><td class="lrn">learned</td><td>temb: 128C + C; tembss: 256C + 2C</td><td>its <i>output</i> \(p\) does; the matrix itself is fixed after training</td></tr>
+<tr><td>Conv 3×3 and 1×1 kernels (every ResBlock, conv_in, conv_out, down/up layers)</td><td class="lrn">learned</td><td>9·C_in·C_out + C_out each</td><td>no</td></tr>
+<tr><td>GroupNorm statistics \(\mu_g, \sigma_g\)</td><td class="fix">computed from the features each time</td><td>0 parameters</td><td>indirectly, through the features</td></tr>
+<tr><td>GroupNorm affine \(a_c, d_c\)</td><td class="lrn">learned</td><td>2C per GroupNorm layer</td><td>no</td></tr>
+<tr><td>Attention \(W_Q, W_K, W_V, W_O\) (and \(W_p\) in baseline)</td><td class="lrn">learned</td><td>128×128 each per layer; \(W_p\): 32×2</td><td>no (baseline: \(W_p\) maps the cosmology)</td></tr>
+<tr><td>softmax, SiLU, skip concatenation</td><td class="fix">fixed operations</td><td>0 parameters</td><td>no</td></tr>
+</table>
+</div>
+<div class="ex"><b>Worked example: counting the cosmology-related parameters.</b> The 17 ResBlocks have output channels \(C\) = 32 (5 blocks), 64 (5 blocks), 128 (7 blocks). The sum of all \(C\) is \(5\cdot32+5\cdot64+7\cdot128 = 1\,376\). So the \(W_b,\mathbf b_b\) of all blocks together have \(1\,376\cdot128+1\,376 = 177\,504\approx0.18\) M parameters in <code>temb</code>, and twice that, \(355\,008\approx0.36\) M, in <code>tembss</code>. Check against the run table (Section 10): <code>tembss</code> − <code>temb</code> = 4.13 − 3.96 = 0.17 M (within rounding). And <code>temb</code> − unconditional <code>u128</code> = 3.96 − 3.94 = 0.02 M ≈ \(\mathrm{MLP}_\theta\) (16 896). So <code>temb</code> is exactly the unconditional network plus the cosmology MLP.</div>
+<p>Key point: <b>the cosmology itself is never a parameter.</b> It is an input. The learned parts are the matrices that decide how each channel of each block reacts to it.</p>
+
+<!-- ============ 6. GROUPNORM ============ -->
+<h2>6. Shift or scale? And what GroupNorm does</h2>
+<h3>GroupNorm in words</h3>
+<p><b>GroupNorm</b> (GN) splits the \(C\) channels into 32 groups. For one map and one group, it computes the mean and the variance over the group's channels and all pixels. It subtracts the mean and divides by the standard deviation. Then it multiplies channel \(c\) by a learned \(a_c\) and adds a learned \(d_c\). These two numbers do <b>not</b> depend on the cosmology.</p>
+<p>Group sizes in our network: at \(C = 32\), one channel per group. At \(C = 64\), two. At \(C = 128\), four.</p>
+<div class="ex"><b>Worked example (one channel, 4 pixels).</b> Values \([2, 4, 6, 8]\). Mean 5, variance 5, standard deviation 2.24. After normalization: \([-1.34, -0.45, 0.45, 1.34]\). Now multiply the input by 10: \([20, 40, 60, 80]\). Mean 50, standard deviation 22.4. After normalization: the <b>same</b> \([-1.34, -0.45, 0.45, 1.34]\). Add 100 to every value instead: again the same result. <b>GN erases the overall amplitude and the overall level of a group.</b></div>
+<p>Why this matters here: after GN, a clumpy universe and a smooth universe give features with the same spread. Something that knows the cosmology must put the amplitude back. In <code>tembss</code> the next step multiplies by \(1+g_c(\tilde\theta,t)\). So the cosmology sets the amplitude of every channel, in every block. In <code>temb</code> the block only adds \(p_c\). An added constant moves the mean of a channel. It does not change the contrast between pixels.</p>
+
+<h3>Try it: shift versus scale</h3>
+<div class="grid2">
+<div class="panel">
+<p>One channel, two pixels, after GN: a filament pixel at <b>+1.0</b> and a void pixel at <b>−1.0</b>. Contrast = 2.0. Move the sliders.</p>
+<div class="toggle" id="dmodes">
+  <button data-dm="temb" class="on">temb (shift only)</button>
+  <button data-dm="tembss">tembss (scale and shift)</button>
+</div>
+<label>shift \(\beta_c\) (or \(p_c\)): <input type="range" id="sh" min="-1" max="1" step="0.1" value="0"> <span id="shv">0.0</span></label>
+<label>scale \(g_c\): <input type="range" id="sc" min="-0.8" max="2" step="0.1" value="0"> <span id="scv">0.0</span></label>
+<svg viewBox="0 0 360 160" style="margin-top:8px">
+  <line x1="20" y1="80" x2="340" y2="80" stroke="var(--line)"/>
+  <text class="small" x="22" y="75">0</text>
+  <rect id="barF" x="90" y="60" width="60" height="20" fill="var(--down)"/>
+  <rect id="barV" x="210" y="80" width="60" height="20" fill="var(--up)"/>
+  <text class="lab" x="120" y="152" text-anchor="middle">filament</text>
+  <text class="lab" x="240" y="152" text-anchor="middle">void</text>
+</svg>
+<p id="contrast" style="margin:0"></p>
+</div>
+<div>
+<p>What to notice:</p>
+<ul>
+<li>The shift moves both bars together. The difference between filament and void stays 2.0. A shift cannot make the map more or less clumpy on its own.</li>
+<li>The scale stretches the bars apart or pushes them together. With \(g_c = 1\) the contrast doubles. With \(g_c = -0.8\) it shrinks to 0.4.</li>
+<li>In <code>tembss</code>, every channel of every block has its own \(g_c\) and \(\beta_c\), and both depend on the cosmology and on \(t\).</li>
+</ul>
+<p>Caveat: the shift is not useless. The SiLU and the next convolution are nonlinear, so a shift can still change what later layers do. But only the scale acts on the contrast directly.</p>
+</div>
+</div>
+<details><summary>Show the math</summary>
+<p>GroupNorm with 32 groups. Let \(g(c)\) be the group of channel \(c\), and \(\mu_{g}, \sigma_g^2\) the mean and variance over all channels in that group and all pixels of one map:</p>
+$$\mathrm{GN}(h)_{c,i}=a_c\,\frac{h_{c,i}-\mu_{g(c)}}{\sqrt{\sigma_{g(c)}^2+\epsilon}}+d_c$$
+<p>\(a_c, d_c\) are learned, cosmology-independent. In <code>tembss</code> the block then forms \(\tilde h_{c,i} = (1+g_c)\,\mathrm{GN}(h)_{c,i}+\beta_c\). Multiplying by a constant multiplies the spread over pixels:</p>
+$$\mathrm{Std}_i\big[\tilde h_{c,i}\big] = |1+g_c(\tilde\theta,t)|\ \mathrm{Std}_i\big[\mathrm{GN}(h)_{c,i}\big]$$
+<p>In <code>temb</code> the block forms \(\mathrm{GN}(h+p)\) instead. Adding a constant per channel changes the means but not the within-channel spread.</p>
+<p><b>A subtle consequence (verified numerically: changing \(e\) changes a C = 32 temb block's output by about 5×10⁻⁷, i.e. not at all).</b> In <code>temb</code> and in the baseline, \(p_c\) is added <i>before</i> the second GroupNorm. At \(C=32\) each group is a single channel, so GN subtracts the channel mean, which now includes \(p_c\):</p>
+$$\mathrm{GN}(h_c+p_c) = a_c\,\frac{(h_{c,i}+p_c)-(\mu_c+p_c)}{\sqrt{\sigma_c^2+\epsilon}}+d_c=\mathrm{GN}(h_c)$$
+<p>So in the five 128×128 ResBlocks, the added \(p_c\) is cancelled exactly, for the cosmology (temb) and for the noise level (temb and baseline). At \(C=64\) (two channels per group) only the difference between the two shifts in a group survives. At \(C=128\) (four per group) most of the shift survives. <code>tembss</code> applies its numbers <i>after</i> GN, so nothing is cancelled at any level.</p>
+</details>
+
+<!-- ============ 7. ATTENTION ============ -->
+<h2>7. Attention: self versus cross</h2>
+<p>At the 32×32 level the feature tensor is \((128, 32, 32)\). For attention it is viewed as <b>1 024 tokens</b>, one per position. A <b>token</b> is one vector: here, the 128 channel values at one position. Attention lets each position look at all other positions of the same map. A convolution only sees its 3×3 neighbors.</p>
+
+<h3>Self-attention: one position looks at all 1 024 positions</h3>
+<div class="grid2">
+<div class="panel">
+<svg viewBox="0 0 360 250" role="img" aria-label="One query position attends to all positions">
+  <g id="attnQuery"></g>
+  <text class="lab" x="100" y="22" text-anchor="middle">32 × 32 positions (coarse grid)</text>
+  <text class="small" x="100" y="226" text-anchor="middle">orange = query position i</text>
+  <text class="small" x="100" y="240" text-anchor="middle">darker = larger weight A_ij</text>
+  <text class="lab" x="270" y="60" text-anchor="middle">position i holds</text>
+  <text class="lab" x="270" y="78" text-anchor="middle">128 numbers h_i</text>
+  <rect class="box" x="215" y="92" width="110" height="14"/>
+  <text class="small" x="270" y="120" text-anchor="middle">q_i = W_Q h_i uses all 128</text>
+  <text class="small" x="270" y="134" text-anchor="middle">channels of position i</text>
+  <text class="small" x="270" y="160" text-anchor="middle">out_i = weighted sum</text>
+  <text class="small" x="270" y="174" text-anchor="middle">of v_j over all 1 024 j,</text>
+  <text class="small" x="270" y="188" text-anchor="middle">weights A_ij (row sums to 1)</text>
+</svg>
+</div>
+<div>
+<p>For every position \(i\) the layer builds three vectors from its 128 channels with learned matrices: a <b>query</b> \(q_i = W_Q h_i\), a <b>key</b> \(k_i = W_K h_i\) and a <b>value</b> \(v_i = W_V h_i\).</p>
+<ol class="steps">
+<li>Compare the query of \(i\) with the key of every \(j\): the dot product \(q_i\cdot k_j\). Large means "relevant".</li>
+<li>Turn the 1 024 scores into weights \(A_{ij}\) with a <b>softmax</b>: \(A_{ij}=e^{s_{ij}}/\sum_j e^{s_{ij}}\). The weights are positive and sum to 1.</li>
+<li>Output for \(i\) = \(\sum_j A_{ij} v_j\), then one more learned matrix \(W_O\).</li>
+</ol>
+<p>Two different kinds of mixing happen here. Keep them apart:</p>
+<ul>
+<li><b>Channels are mixed by the matrices</b> \(W_Q, W_K, W_V, W_O\). Each output channel is a learned combination of all 128 input channels at the same position. Channels do not "attend" to each other.</li>
+<li><b>Positions are mixed by the weights</b> \(A\). \(A\) is a \(1\,024\times1\,024\) matrix: one row per query position, one column per key position.</li>
+</ul>
+</div>
+</div>
+
+<h3>Multi-head: 16 small attentions side by side</h3>
+<div class="panel scroll">
+<svg viewBox="0 0 620 200" style="min-width:520px" role="img" aria-label="Multi-head attention">
+  <text class="lab" x="20" y="22">128 channels of every position, split into 16 heads × 8 channels</text>
+  <g id="headBar"></g>
+  <text class="small" x="20" y="72">head 1</text>
+  <text class="small" x="300" y="72" text-anchor="middle">…</text>
+  <text class="small" x="580" y="72" text-anchor="end">head 16</text>
+  <!-- heads: three example boxes -->
+  <rect class="attn" x="20" y="90" width="120" height="48" rx="6"/>
+  <text class="lab" x="80" y="110" text-anchor="middle">head 1</text>
+  <text class="small" x="80" y="126" text-anchor="middle">own A: 1024×1024, d = 8</text>
+  <rect class="attn" x="160" y="90" width="120" height="48" rx="6"/>
+  <text class="lab" x="220" y="110" text-anchor="middle">head 2</text>
+  <text class="small" x="220" y="126" text-anchor="middle">own A: 1024×1024, d = 8</text>
+  <text class="lab" x="330" y="118" text-anchor="middle">…</text>
+  <rect class="attn" x="380" y="90" width="120" height="48" rx="6"/>
+  <text class="lab" x="440" y="110" text-anchor="middle">head 16</text>
+  <text class="small" x="440" y="126" text-anchor="middle">own A: 1024×1024, d = 8</text>
+  <line class="wire" x1="80" y1="138" x2="80" y2="156" marker-end="url(#arr)"/>
+  <line class="wire" x1="220" y1="138" x2="220" y2="156" marker-end="url(#arr)"/>
+  <line class="wire" x1="440" y1="138" x2="440" y2="156" marker-end="url(#arr)"/>
+  <rect class="box" x="20" y="158" width="480" height="30" rx="6"/>
+  <text class="lab" x="260" y="178" text-anchor="middle">concatenate 16 × 8 = 128 channels → multiply by W_O (128×128)</text>
+  <line class="wire" x1="500" y1="173" x2="540" y2="173" marker-end="url(#arr)"/>
+  <text class="lab" x="548" y="177">out_i</text>
+</svg>
+</div>
+<p>In practice the 128 channels are split into <b>16 heads</b> of 8 channels each. Every head has its own small \(W_Q, W_K, W_V\) (128 → 8) and its own \(1\,024\times1\,024\) weight matrix \(A\). So one head can look at "nearby filaments" while another looks at "the largest void". The 16 outputs (8 channels each) are concatenated back to 128 channels and mixed by \(W_O\).</p>
+
+<h3>The batch: every map attends only to itself</h3>
+<div class="panel scroll">
+<svg viewBox="0 0 620 170" style="min-width:520px" role="img" aria-label="Each map in the batch attends independently">
+  <g id="batchStack"></g>
+  <text class="lab" x="300" y="150" text-anchor="middle">32 maps in a training batch, 32 separate attention computations</text>
+</svg>
+</div>
+<p>During training the network sees \(B = 32\) maps at once. Attention is computed <b>separately for each map</b>. A position in map 1 never attends to a position in map 2. Each map has its own \(A\). In the baseline, each map also attends only to its <b>own</b> cosmology token. The shapes make this visible: the batch index \(B\) is carried along and never mixed.</p>
+<div class="ex"><b>Shapes at one self-attention layer (training, B = 32):</b> features \(h\): \((32, 1024, 128)\). \(Q, K, V\): \((32, 16, 1024, 8)\), that is (batch, heads, positions, channels per head). Weights \(A\): \((32, 16, 1024, 1024)\). Output: \((32, 1024, 128)\), then reshaped back to \((32, 128, 32, 32)\).</div>
+
+<h3>Cross-attention with one token (baseline only)</h3>
+<div class="grid2">
+<div class="panel">
+<svg viewBox="0 0 560 250" role="img" aria-label="Attention weight matrices">
+  <g id="attnSelf"></g>
+  <g id="attnCross"></g>
+  <text class="lab" x="130" y="22" text-anchor="middle">self-attention</text>
+  <text class="small" x="130" y="36" text-anchor="middle">A is 1024 × 1024</text>
+  <text class="small" x="130" y="232" text-anchor="middle">keys j = 1 … 1024 (all positions)</text>
+  <text class="small" transform="translate(28 130) rotate(-90)" text-anchor="middle">queries i = 1 … 1024</text>
+  <text class="lab" x="420" y="22" text-anchor="middle">cross-attention (baseline)</text>
+  <text class="small" x="420" y="36" text-anchor="middle">A is 1024 × 1</text>
+  <text class="small" x="420" y="232" text-anchor="middle">1 key: the token u</text>
+  <text class="small" transform="translate(370 130) rotate(-90)" text-anchor="middle">queries i = 1 … 1024</text>
+  <text class="small" x="450" y="100">every entry = 1</text>
+  <text class="small" x="450" y="114">→ every position gets</text>
+  <text class="small" x="450" y="128">the same vector</text>
+</svg>
+</div>
+<div>
+<p><b>Cross-attention</b> is attention where the queries come from the map but the keys and values come from somewhere else. In the baseline they come from the cosmology token \(u = W_p\tilde\theta\) (32 numbers). There is only <b>one</b> token. So each query has exactly one key to compare with. \(A\) is \(1\,024\times1\). A softmax over a single number is always 1: \(e^{s}/e^{s} = 1\).</p>
+<p>The result: every position receives the same vector \(W_O W_V u = W_O W_V W_p\tilde\theta\). It does not depend on the position. It does not depend on \(t\). It does not depend on the map. The six cross-attention layers each add one fixed, cosmology-dependent vector at every position of the 32×32 level, and nothing anywhere else.</p>
+<div class="ex"><b>Worked example.</b> Query \(q_i\) of position 17 gives score \(s = q_{17}\cdot k_u/\sqrt d = 2.3\). The softmax over the single score is \(e^{2.3}/e^{2.3} = 1\). Position 900 gives \(s = -4.1\). Its weight is \(e^{-4.1}/e^{-4.1} = 1\) as well. The value of the score never matters.</div>
+</div>
+</div>
+<details><summary>Show the math</summary>
+<p><b>Self-attention</b> at 32×32. Write the features as a matrix \(h\in\mathbb R^{1024\times128}\) (one row per position). Per head, with \(d = 8\):</p>
+$$Q = hW_Q,\quad K = hW_K,\quad V = hW_V\qquad (W_Q,W_K,W_V\in\mathbb R^{128\times8})$$
+$$A=\mathrm{softmax}_{\rm rows}\!\left(\frac{QK^\top}{\sqrt d}\right)\in\mathbb R^{1024\times1024},\qquad \text{head output}=AV\in\mathbb R^{1024\times8}$$
+$$\mathrm{out}=\big[\,A^{(1)}V^{(1)}\ \big|\ \cdots\ \big|\ A^{(16)}V^{(16)}\,\big]\,W_O\in\mathbb R^{1024\times128}$$
+<p>Each row of \(A\) sums to 1. Row \(i\) says how much position \(i\) uses each position \(j\). With a batch, every tensor gets a leading \(B\) index and the products are done per map.</p>
+<p><b>Cross-attention</b> (baseline). The keys and values come from the single token \(u = W_p\tilde\theta\in\mathbb R^{32}\):</p>
+$$K = uW_K\in\mathbb R^{1\times d},\qquad V = uW_V\in\mathbb R^{1\times d},\qquad A=\mathrm{softmax}\!\left(\frac{QK^\top}{\sqrt d}\right)\in\mathbb R^{1024\times1}=\mathbf 1$$
+$$\mathrm{out}_i = W_O W_V W_p\,\tilde\theta\qquad\text{for every position } i$$
+<p>In the baseline each 32×32 attention block is a transformer block: self-attention, then cross-attention, then a feed-forward layer. In <code>temb</code> and <code>tembss</code> the attention is self-attention only.</p>
+<p><b>Cost.</b> \(A\) has (positions)² entries per head. At 32×32: \(1\,024^2\approx1.0\times10^6\). At 128×128 it would be \(16\,384^2\approx2.7\times10^8\), 256 times more, per head and per map. That is why attention is used only at the coarsest level.</p>
+</details>
+
+<!-- ============ 8. SKIPS ============ -->
+<h2>8. Skip connections</h2>
+<p>Problem: at 32×32 the fine detail is gone (Section 2). The up path has to draw it again. A <b>skip connection</b> helps: it hands the up path a copy of the down-path features at the same resolution. The copy still has the fine detail.</p>
+<p>How the copy is joined: by <b>concatenation along the channel axis</b>. The up-path tensor is a stack of \(C_{\rm up}\) images. The skip is a stack of \(C_{\rm skip}\) images of the same size. Put the two stacks on top of each other: \(C_{\rm up}+C_{\rm skip}\) images. The ResBlock then maps this back to \(C\) channels. That is why the up path has 3 ResBlocks per level and the down path only 2: each up ResBlock consumes one skip, and there are 9 skips.</p>
+<div class="panel scroll">
+<svg viewBox="0 0 620 200" style="min-width:540px" role="img" aria-label="Skip concatenation">
+  <text class="lab" x="20" y="22">Example: up level 64×64, ResBlock 3</text>
+  <g id="skipStacks"></g>
+  <text class="lab" x="128" y="105" text-anchor="middle" style="font-size:18px">+</text>
+  <line class="wire" x1="232" y1="100" x2="268" y2="100" marker-end="url(#arr)"/>
+  <text class="small" x="250" y="90" text-anchor="middle">stack</text>
+  <line class="wire" x1="372" y1="100" x2="402" y2="100" marker-end="url(#arr)"/>
+  <rect class="res up" x="404" y="80" width="80" height="40" rx="6"/>
+  <text class="lab" x="444" y="104" text-anchor="middle">ResBlock</text>
+  <line class="wire" x1="484" y1="100" x2="514" y2="100" marker-end="url(#arr)"/>
+  <text class="small" x="60" y="172" text-anchor="middle">up path: (64, 64, 64)</text>
+  <text class="small" x="178" y="172" text-anchor="middle">skip: (32, 64, 64)</text>
+  <text class="small" x="320" y="172" text-anchor="middle">(96, 64, 64)</text>
+  <text class="small" x="444" y="172" text-anchor="middle">S = 1×1 conv, 96 → 64</text>
+  <text class="small" x="560" y="172" text-anchor="middle">(64, 64, 64)</text>
+</svg>
+</div>
+<div class="panel scroll">
+<table>
+<tr><th>Up level</th><th>ResBlock</th><th>input channels (up + skip)</th><th>output C</th><th>the skip comes from</th></tr>
+<tr><td rowspan="3">32×32</td><td>1</td><td>128 + 128 = 256</td><td>128</td><td>down 32×32, ResBlock 2 output</td></tr>
+<tr><td>2</td><td>128 + 128 = 256</td><td>128</td><td>down 32×32, ResBlock 1 output</td></tr>
+<tr><td>3</td><td>128 + 64 = 192</td><td>128</td><td>downsample 64 → 32 output</td></tr>
+<tr><td rowspan="3">64×64</td><td>1</td><td>128 + 64 = 192</td><td>64</td><td>down 64×64, ResBlock 2 output</td></tr>
+<tr><td>2</td><td>64 + 64 = 128</td><td>64</td><td>down 64×64, ResBlock 1 output</td></tr>
+<tr><td>3</td><td>64 + 32 = 96</td><td>64</td><td>downsample 128 → 64 output</td></tr>
+<tr><td rowspan="3">128×128</td><td>1</td><td>64 + 32 = 96</td><td>32</td><td>down 128×128, ResBlock 2 output</td></tr>
+<tr><td>2</td><td>32 + 32 = 64</td><td>32</td><td>down 128×128, ResBlock 1 output</td></tr>
+<tr><td>3</td><td>32 + 32 = 64</td><td>32</td><td>conv_in output</td></tr>
+</table>
+</div>
+<p>The 9 saved tensors are: the conv_in output, the output of each of the 6 down ResBlocks, and the output of each of the 2 downsample layers. The up path uses them in reverse order (last saved, first used).</p>
+<div class="note"><b>Link to conditioning (hypothesis).</b> In the baseline, the skip tensors at 64×64 and 128×128 were made by blocks that never saw the cosmology. The up ResBlocks at those levels do not see it either. So the fine detail is drawn without any direct cosmology information. In <code>temb</code> and <code>tembss</code>, every up ResBlock that receives a skip also receives \(e\), which carries the cosmology.</div>
+
+<!-- ============ 9. TRAINING ============ -->
+<h2>9. Training: the loss and the min-SNR weight</h2>
+<p>Training teaches the network to undo noise. One training step:</p>
+<ol class="steps">
+<li>Take a clean map \(x_0\) and its cosmology \(\tilde\theta\).</li>
+<li>Pick a random noise level \(t\) and random Gaussian noise \(\varepsilon\). Mix them: \(x_t = \sqrt{\bar\alpha_t}\,x_0 + \sqrt{1-\bar\alpha_t}\,\varepsilon\). Here \(\bar\alpha_t\) is a fixed number between 0 and 1 from the noise schedule (<code>squaredcos_cap_v2</code>). Near 1 at \(t = 0\) (almost clean), near 0 at \(t = 499\) (almost pure noise).</li>
+<li>The network predicts \(\hat v\). The target is \(v = \sqrt{\bar\alpha_t}\,\varepsilon-\sqrt{1-\bar\alpha_t}\,x_0\). This <b>v-prediction</b> target is a mix of "the noise" and "minus the signal". It is well behaved at both ends of the schedule.</li>
+<li>Loss = weighted mean squared error, \(w_t\,\|\hat v - v\|^2\), averaged over the batch. Update all learned parameters.</li>
+</ol>
+<div class="grid2">
+<div>
+<p>The <b>signal-to-noise ratio</b> is \(\mathrm{SNR}_t = \bar\alpha_t/(1-\bar\alpha_t)\). It is large for nearly clean maps and small for very noisy ones. The <b>min-SNR</b> weight is</p>
+$$w_t=\frac{\min(\mathrm{SNR}_t,\,5)}{\mathrm{SNR}_t+1}$$
+<p>It caps the influence of the nearly-clean steps (large SNR), where the task is easy and the gradients would otherwise dominate. <code>tembss_nosnr</code> uses \(w_t = 1\) for every step.</p>
+<div class="ex"><b>Worked example.</b> \(\mathrm{SNR}=0.1\) (very noisy): \(w = 0.1/1.1 = 0.09\). \(\mathrm{SNR}=1\): \(w = 1/2 = 0.5\). \(\mathrm{SNR}=5\): \(w = 5/6 = 0.83\) (the peak). \(\mathrm{SNR}=100\) (almost clean): \(w = 5/101 = 0.05\).</div>
+</div>
+<div class="panel">
+<svg viewBox="0 0 440 250" id="wplot" role="img" aria-label="Loss weight versus SNR"></svg>
+<p class="small" style="font-size:.85rem;color:var(--muted);margin:4px 0 0">Left = very noisy (large structures are decided). Right = nearly clean (fine detail is drawn).</p>
+</div>
+</div>
+<div class="ex"><b>Numbers.</b> Batch = 32 maps, each with its own cosmology, its own random \(t\) and its own noise. 200 000 updates. With \(N = 256\) training maps, one epoch (one pass over the data) is 8 updates, so training runs 25 000 epochs. Each map is seen 25 000 times, each time at a different noise level. Sampling: DPM-Solver, 50 steps, no classifier-free guidance.</div>
+<details><summary>Show the math</summary>
+$$x_t=\sqrt{\bar\alpha_t}\,x_0+\sqrt{1-\bar\alpha_t}\,\varepsilon,\qquad \varepsilon\sim\mathcal N(0,I),\qquad t\sim\mathrm{Uniform}\{0,\dots,499\}$$
+$$v=\sqrt{\bar\alpha_t}\,\varepsilon-\sqrt{1-\bar\alpha_t}\,x_0,\qquad \mathrm{SNR}_t=\frac{\bar\alpha_t}{1-\bar\alpha_t}$$
+$$\mathcal L(\phi)=\mathbb E_{x_0,\tilde\theta,t,\varepsilon}\Big[\,w_t\,\big\|\hat v_\phi(x_t,t,\tilde\theta)-v\big\|^2\Big],\qquad w_t^{\rm min\text{-}SNR}=\frac{\min(\mathrm{SNR}_t,5)}{\mathrm{SNR}_t+1},\quad w_t^{\rm nosnr}=1$$
+<p>\(\phi\) is the set of all learned parameters from Section 5. The DDPM schedule has 500 steps. The norm is over all 128×128 pixels; the expectation is estimated by the batch mean.</p>
+</details>
+
+<!-- ============ 10. RUNS ============ -->
+<h2>10. The runs and what we expect</h2>
+<p>All runs use \(N = 256\) training maps, the same labels, seed and optimizer, and 200 000 updates.</p>
+<div class="panel scroll">
+<table>
+<tr><th>Run</th><th>Where the cosmology enters</th><th>Effect per channel</th><th>Depends on t?</th><th>Loss weight</th><th>Params</th></tr>
+<tr><td><code>baseline</code></td><td>6 cross-attention layers, 32×32 only</td><td>+ fixed vector</td><td>no</td><td>min-SNR 5</td><td>5.57 M</td></tr>
+<tr><td><code>temb</code></td><td>17 ResBlocks get \(e\); GroupNorm cancels the shift in the 5 at 128×128 (verified), so it acts at 64×64 (partly) and 32×32</td><td>\(+\,p_c\) before GN</td><td>yes</td><td>min-SNR 5</td><td>3.96 M</td></tr>
+<tr><td><code>tembss</code></td><td>all 17 ResBlocks, all levels, via \(e\)</td><td>\(\times(1+g_c)+\beta_c\) after GN</td><td>yes</td><td>min-SNR 5</td><td>4.13 M</td></tr>
+<tr><td><code>tembss_nosnr</code></td><td>same as tembss</td><td>same as tembss</td><td>yes</td><td>1</td><td>4.13 M</td></tr>
+<tr><td><code>u128</code> (unconditional, for reference)</td><td>nowhere</td><td>–</td><td>–</td><td>–</td><td>3.94 M</td></tr>
+</table>
+</div>
+<p>All four conditional models have the same 17 ResBlocks and the same middle block (ResBlock, attention, ResBlock). For <code>temb</code>/<code>tembss</code>, our patch <code>simdiff_eval/timeemb_conditioning.py</code> rebuilds the middle block so that it matches the baseline. The baseline is larger because its 6 transformer blocks each add a cross-attention layer and a feed-forward layer.</p>
+<div class="note"><b>Why we expect this to matter (hypothesis, to be tested).</b> In the baseline, the label reaches only the 32×32 level, as a fixed shift that does not depend on the noise level. The 64×64 and 128×128 blocks and the high-resolution skips never see it. At small \(N\), the baseline's generated maps are too smooth: they have too little small-scale power (\(P(k)\) ratio about 0.82) and \(\Omega_m\) reads biased low. <code>tembss</code> gives every block an adjustment that depends on both the cosmology and the noise level. <code>temb</code> does too, except at 128×128, where GroupNorm cancels its shift exactly. <code>tembss</code> can also set each channel's amplitude after GroupNorm, which is a direct handle on clustering strength.</div>
+
+<div class="key">
+<h3 style="margin-top:6px">Key points</h3>
+<ul>
+<li>The input map is never changed by the cosmology. The cosmology acts on the network's <b>internal features</b>, channel by channel.</li>
+<li>In <code>temb</code> and <code>tembss</code>, one vector \(e\) (noise level + cosmology) feeds all 17 ResBlocks. Each block has its own learned matrix that turns \(e\) into one number per channel (temb) or two (tembss).</li>
+<li>The same number is used at every pixel of a channel because the cosmology is a global property. <b>Where</b> structure goes comes from the noisy map; <b>how strongly</b> each detector responds comes from \(e\).</li>
+<li>GroupNorm erases each group's amplitude. Only the <code>tembss</code> scale puts a cosmology-dependent amplitude back.</li>
+<li>Cross-attention to one token is a fixed shift: the softmax weight is always 1. In the baseline this is the only entry point, and it is at 32×32 only.</li>
+<li>Attention mixes positions (through \(A\)) and channels (through the \(W\) matrices) within one map. Maps in a batch never see each other.</li>
+</ul>
+</div>
+
+<h2>Glossary</h2>
+<dl class="gloss">
+<dt>channel</dt><dd>one image in a stack of feature images; the response of one learned detector</dd>
+<dt>level</dt><dd>one resolution of the UNet: 128×128, 64×64 or 32×32</dd>
+<dt>ResBlock</dt><dd>the basic unit: norm, SiLU, conv, injection, norm, SiLU, conv, plus the input</dd>
+<dt>residual</dt><dd>adding a block's input to its output</dd>
+<dt>skip</dt><dd>a copy of down-path features concatenated onto the up path</dd>
+<dt>embedding</dt><dd>a vector that stands for an input (noise level or cosmology)</dd>
+<dt>MLP</dt><dd>two Linear layers with a SiLU between them</dd>
+<dt>broadcast</dt><dd>repeating a per-channel number over all pixels</dd>
+<dt>GroupNorm</dt><dd>subtract the mean and divide by the standard deviation of a group of channels, per map</dd>
+<dt>token</dt><dd>one vector; here, the 128 values at one 32×32 position, or the cosmology token \(u\)</dd>
+<dt>self-attention</dt><dd>each position of a map looks at all positions of the same map</dd>
+<dt>cross-attention</dt><dd>positions of a map look at tokens from another source (here, the cosmology)</dd>
+<dt>head</dt><dd>one of 16 small attentions, each on 8 of the 128 channels</dd>
+<dt>v-prediction</dt><dd>the network predicts \(v=\sqrt{\bar\alpha_t}\varepsilon-\sqrt{1-\bar\alpha_t}x_0\)</dd>
+<dt>SNR</dt><dd>signal-to-noise ratio of \(x_t\), \(\bar\alpha_t/(1-\bar\alpha_t)\)</dd>
+</dl>
+</main>
+
+<script>
+(function(){
+  // ---------- theme ----------
+  var root=document.documentElement;
+  document.getElementById('theme').onclick=function(){
+    var dark = root.dataset.theme ? root.dataset.theme==='dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    root.dataset.theme = dark ? 'light' : 'dark';
+  };
+
+  // ---------- svg helpers ----------
+  var NS='http://www.w3.org/2000/svg';
+  function el(tag,attrs,parent,text){
+    var e=document.createElementNS(NS,tag);
+    for(var k in attrs){ e.setAttribute(k,attrs[k]); }
+    if(text!==undefined){ e.textContent=text; }
+    parent.appendChild(e);
+    return e;
+  }
+  function arrow(parent,x1,y1,x2,y2){
+    return el('line',{class:'wire',x1:x1,y1:y1,x2:x2,y2:y2,'marker-end':'url(#arr)'},parent);
+  }
+
+  // ---------- key diagram (section 4) ----------
+  var gDrops=document.getElementById('kDrops');
+  var gSkips=document.getElementById('kSkips');
+  var gBlocks=document.getElementById('kBlocks');
+  var rows=[{y:170,lab:'128×128 · C = 32'},{y:290,lab:'64×64 · C = 64'},{y:410,lab:'32×32 · C = 128'}];
+  var W=62,H=30,AW=46;
+  var attnBoxes=[],attnLabels=[],drops=[];
+  function resBox(x,y,w,cls){
+    el('rect',{class:'res '+cls,x:x,y:y,width:w,height:H,rx:6},gBlocks);
+    el('text',{class:'lab',x:x+w/2,y:y+20,'text-anchor':'middle'},gBlocks,'Res');
+    drops.push([x+w/2,y]);
+    return x+w;
+  }
+  function attnBox(x,y,w){
+    var a=el('rect',{class:'attn',x:x,y:y,width:w,height:H,rx:6},gBlocks);
+    attnBoxes.push(a);
+    attnLabels.push(el('text',{class:'small',x:x+w/2,y:y+19,'text-anchor':'middle'},gBlocks,'Attn'));
+    return x+w;
+  }
+  rows.forEach(function(r,li){
+    var y=r.y, e;
+    el('text',{class:'small',x:330,y:y+20},gBlocks,r.lab);
+    // down path
+    if(li<2){
+      e=resBox(60,y,W,'down'); arrow(gBlocks,e,y+15,134,y+15);
+      e=resBox(134,y,W,'down'); arrow(gBlocks,e,y+15,214,y+15);
+      el('rect',{class:'box',x:214,y:y+3,width:50,height:24,rx:5},gBlocks);
+      el('text',{class:'small',x:239,y:y+19,'text-anchor':'middle'},gBlocks,'↓ ½');
+      arrow(gBlocks,239,y+27,91,rows[li+1].y-2);
+    }else{
+      e=resBox(60,y,W,'down'); arrow(gBlocks,e,y+15,126,y+15);
+      e=attnBox(126,y,AW); arrow(gBlocks,e,y+15,184,y+15);
+      e=resBox(184,y,W,'down'); arrow(gBlocks,e,y+15,250,y+15);
+      attnBox(250,y,AW);
+    }
+    // up path
+    var endx;
+    if(li<2){
+      e=resBox(620,y,W,'up'); arrow(gBlocks,e,y+15,694,y+15);
+      e=resBox(694,y,W,'up'); arrow(gBlocks,e,y+15,768,y+15);
+      endx=resBox(768,y,W,'up');
+    }else{
+      e=resBox(496,y,W,'up'); arrow(gBlocks,e,y+15,564,y+15);
+      e=attnBox(564,y,AW); arrow(gBlocks,e,y+15,616,y+15);
+      e=resBox(616,y,W,'up'); arrow(gBlocks,e,y+15,684,y+15);
+      e=attnBox(684,y,AW); arrow(gBlocks,e,y+15,736,y+15);
+      e=resBox(736,y,W,'up'); arrow(gBlocks,e,y+15,804,y+15);
+      endx=attnBox(804,y,AW);
+    }
+    if(li>0){
+      el('rect',{class:'box',x:870,y:y-48,width:50,height:24,rx:5},gBlocks);
+      el('text',{class:'small',x:895,y:y-32,'text-anchor':'middle'},gBlocks,'↑ ×2');
+      el('path',{class:'wire',d:'M'+endx+' '+(y+15)+' H 895 V '+(y-22),'marker-end':'url(#arr)'},gBlocks);
+      arrow(gBlocks,870,y-36,651,rows[li-1].y+32);
+    }
+    // skips
+    var sx=(li<2)?270:318, ex=(li<2)?612:490, sy=y+48;
+    el('path',{class:'skipw',d:'M'+sx+' '+sy+' H '+ex,'marker-end':'url(#arrSkip)'},gSkips);
+    el('text',{class:'small',x:(sx+ex)/2,y:sy+16,'text-anchor':'middle'},gSkips,'3 skips → concatenate');
+  });
+  // middle block
+  var my=520;
+  var e1=resBox(330,my,80,'mid'); arrow(gBlocks,e1,my+15,424,my+15);
+  var e2=attnBox(424,my,52); arrow(gBlocks,e2,my+15,490,my+15);
+  resBox(490,my,80,'mid');
+  el('text',{class:'small',x:450,y:my+52,'text-anchor':'middle'},gBlocks,'middle block (32×32): ResBlock · Attn · ResBlock, same in all three models');
+  el('path',{class:'wire',d:'M296 425 H 306 V 535 H 328','marker-end':'url(#arr)'},gBlocks);
+  el('path',{class:'wire',d:'M570 535 H 600 V 470 H 527 V 442','marker-end':'url(#arr)'},gBlocks);
+  // drops from the rails (rail is 14 px above each row)
+  var dropPaths=drops.map(function(d){ return el('path',{class:'drop withcond',d:'M'+d[0]+' '+(d[1]-14)+' V '+d[1]},gDrops); });
+
+  // ---------- modes ----------
+  var notes={
+    base:'<b>baseline.</b> e carries the noise level only (green). The cosmology becomes one token u = W<sub>p</sub>θ̃ and enters only the 6 cross-attention layers at 32×32 (orange Attn boxes). Each of them adds the same fixed vector at every position, independent of the noise level. The 128×128 and 64×64 levels never see the cosmology.',
+    temb:'<b>temb.</b> The cosmology goes through MLP<sub>θ</sub> and is added to the time embedding. e (orange) reaches all 17 ResBlocks at every level, through the rails. Each block adds a per-channel shift p<sub>c</sub> that depends on both the cosmology and the noise level. The Attn boxes are plain self-attention.',
+    tembss:'<b>tembss.</b> Same wiring as temb. But each ResBlock applies a per-channel scale and shift right after GroupNorm: h ← GN(h)·(1+g<sub>c</sub>) + β<sub>c</sub>. The cosmology controls the amplitude of every channel in every block.'
+  };
+  function setMode(m){
+    var base=(m==='base');
+    document.querySelectorAll('#modes button').forEach(function(b){ b.classList.toggle('on',b.dataset.mode===m); });
+    document.getElementById('modenote').innerHTML=notes[m];
+    document.getElementById('condTemb').classList.toggle('hidden',base);
+    document.getElementById('condBase').classList.toggle('hidden',!base);
+    document.getElementById('ebus').classList.toggle('withcond',!base);
+    dropPaths.forEach(function(p){ p.classList.toggle('withcond',!base); });
+    document.getElementById('elabel').textContent= base ? 'e = t_emb ∈ ℝ¹²⁸ (noise level only)' : 'e = t_emb + c_emb ∈ ℝ¹²⁸';
+    document.getElementById('buslabel').style.fill= base ? 'var(--time)' : 'var(--cond)';
+    attnBoxes.forEach(function(a){ a.classList.toggle('cross',base); });
+    attnLabels.forEach(function(t){ t.textContent= base ? 'Attn+X' : 'Attn'; });
+    document.getElementById('see-base').classList.toggle('hidden',!base);
+    document.getElementById('see-temb').classList.toggle('hidden',m!=='temb');
+    document.getElementById('see-tembss').classList.toggle('hidden',m!=='tembss');
+  }
+  document.querySelectorAll('#modes button').forEach(function(b){ b.onclick=function(){ setMode(b.dataset.mode); }; });
+  setMode('base');
+
+  // ---------- shift / scale demo (section 6) ----------
+  var sh=document.getElementById('sh'), sc=document.getElementById('sc');
+  var shv=document.getElementById('shv'), scv=document.getElementById('scv');
+  var barF=document.getElementById('barF'), barV=document.getElementById('barV');
+  var contrast=document.getElementById('contrast');
+  function bar(r,val){
+    var y0=80, s=22;
+    if(val>=0){ r.setAttribute('y',y0-val*s); r.setAttribute('height',val*s); }
+    else { r.setAttribute('y',y0); r.setAttribute('height',-val*s); }
+  }
+  function upd(){
+    var b=+sh.value, g=+sc.value;
+    shv.textContent=b.toFixed(1); scv.textContent=g.toFixed(1);
+    var f=1*(1+g)+b, v=-1*(1+g)+b;
+    bar(barF,f); bar(barV,v);
+    var same=Math.abs((f-v)-2)<1e-9;
+    contrast.innerHTML='filament '+f.toFixed(2)+', void '+v.toFixed(2)+' → <b>contrast '+(f-v).toFixed(2)+'</b> '+(same?'(unchanged: a shift cannot change the contrast)':'(the scale changed the contrast)');
+  }
+  function setDm(d){
+    document.querySelectorAll('#dmodes button').forEach(function(b){ b.classList.toggle('on',b.dataset.dm===d); });
+    sc.disabled=(d==='temb');
+    if(sc.disabled){ sc.value=0; }
+    upd();
+  }
+  document.querySelectorAll('#dmodes button').forEach(function(b){ b.onclick=function(){ setDm(b.dataset.dm); }; });
+  sh.oninput=upd; sc.oninput=upd;
+  setDm('temb');
+
+  // ---------- attention: query grid (section 7) ----------
+  var gq=document.getElementById('attnQuery');
+  var n=10, cs=16, ox=20, oy=36, qi=3, qj=4;
+  for(var i=0;i<n;i++){
+    for(var j=0;j<n;j++){
+      var dist=Math.sqrt((i-qi)*(i-qi)+(j-qj)*(j-qj));
+      var w=Math.exp(-dist*dist/6)*0.8 + ((i*7+j*13)%5)*0.03;
+      var isq=(i===qi&&j===qj);
+      el('rect',{x:ox+j*cs,y:oy+i*cs,width:cs,height:cs,fill:isq?'var(--cond)':'var(--down)','fill-opacity':isq?1:(0.08+0.9*w),stroke:'var(--line)','stroke-width':.5},gq);
+    }
+  }
+
+  // ---------- attention: head bar ----------
+  var hb=document.getElementById('headBar');
+  for(var hh=0;hh<16;hh++){
+    el('rect',{x:20+hh*35,y:34,width:35,height:22,fill:'var(--attn-soft)',stroke:'var(--attn)','fill-opacity':0.35+0.65*((hh%4)/4)},hb);
+    if(hh%4===0){ el('text',{class:'small',x:20+hh*35+17.5,y:49,'text-anchor':'middle'},hb,'8'); }
+  }
+
+  // ---------- attention: batch stack ----------
+  var bs=document.getElementById('batchStack');
+  var mapsX=[40,180,320,460];
+  mapsX.forEach(function(x,idx){
+    var lab=(idx===3)?'map 32':('map '+(idx+1));
+    el('rect',{class:'box',x:x,y:30,width:100,height:90,rx:6},bs);
+    for(var r2=0;r2<4;r2++){ for(var c2=0;c2<4;c2++){
+      el('rect',{x:x+8+c2*21,y:38+r2*18,width:19,height:16,fill:'var(--down)','fill-opacity':0.15+0.6*(((r2*3+c2*5+idx*7)%7)/7)},bs);
+    }}
+    el('text',{class:'small',x:x+50,y:132,'text-anchor':'middle'},bs,lab+': own A (16 × 1024 × 1024)');
+    if(idx<3){
+      var ax=x+100+20;
+      el('line',{x1:x+106,y1:75,x2:x+134,y2:75,stroke:'var(--line)','stroke-dasharray':'3 3'},bs);
+      el('text',{class:'small',x:ax,y:70,'text-anchor':'middle',style:'fill:var(--cond)'},bs,'✕');
+    }
+  });
+
+  // ---------- attention: weight matrices ----------
+  var gs=document.getElementById('attnSelf'), gc=document.getElementById('attnCross');
+  var m=8, c=20, sx0=50, sy0=48;
+  for(var a=0;a<m;a++){ for(var b2=0;b2<m;b2++){
+    var val=((a*5+b2*3+a*b2)%9)/9;
+    el('rect',{x:sx0+b2*c,y:sy0+a*c,width:c,height:c,fill:'var(--attn)','fill-opacity':0.1+0.85*val,stroke:'var(--line)','stroke-width':.5},gs);
+  }}
+  el('text',{class:'small',x:sx0+m*c/2,y:sy0+m*c+14,'text-anchor':'middle'},gs,'… 1024 columns …');
+  for(var a2=0;a2<m;a2++){
+    el('rect',{x:400,y:sy0+a2*c,width:c,height:c,fill:'var(--cond)','fill-opacity':0.85,stroke:'var(--line)','stroke-width':.5},gc);
+    el('text',{x:410,y:sy0+a2*c+14,'text-anchor':'middle',style:'fill:#fff;font-size:11px'},gc,'1');
+  }
+  el('text',{class:'small',x:410,y:sy0+m*c+14,'text-anchor':'middle'},gc,'… 1024 rows …');
+
+  // ---------- skip stacks (section 8) ----------
+  var ss=document.getElementById('skipStacks');
+  function stack(x,count,cls,dashed){
+    for(var k=count-1;k>=0;k--){
+      var attrs={x:x+k*5,y:70-k*5,width:50,height:50,rx:3,class:cls};
+      if(dashed){ attrs.style='stroke-dasharray:4 3'; }
+      el('rect',attrs,ss);
+    }
+  }
+  stack(30,4,'res up',false);
+  stack(150,3,'box',true);
+  stack(280,4,'res up',false);
+  stack(300,3,'box',true);
+  stack(520,4,'res up',false);
+  el('text',{class:'small',x:60,y:138,'text-anchor':'middle'},ss,'64 channels');
+  el('text',{class:'small',x:178,y:138,'text-anchor':'middle'},ss,'32 channels');
+  el('text',{class:'small',x:320,y:138,'text-anchor':'middle'},ss,'96 channels');
+  el('text',{class:'small',x:560,y:138,'text-anchor':'middle'},ss,'64 channels');
+
+  // ---------- weight plot (section 9) ----------
+  var wp=document.getElementById('wplot');
+  var L=50,R=410,T=20,B=200;
+  function xs(lg){ return L+(lg+3)/6*(R-L); }
+  function ys(w){ return B-w*(B-T); }
+  el('line',{x1:L,y1:B,x2:R,y2:B,stroke:'var(--line)'},wp);
+  el('line',{x1:L,y1:T,x2:L,y2:B,stroke:'var(--line)'},wp);
+  var sup=['⁰','¹','²','³'];
+  [-3,-2,-1,0,1,2,3].forEach(function(p){
+    el('text',{class:'small',x:xs(p),y:B+16,'text-anchor':'middle'},wp,'10'+(p<0?'⁻':'')+sup[Math.abs(p)]);
+  });
+  [0,0.5,1].forEach(function(w){ el('text',{class:'small',x:L-8,y:ys(w)+4,'text-anchor':'end'},wp,w.toFixed(1)); });
+  el('text',{class:'small',x:(L+R)/2,y:B+34,'text-anchor':'middle'},wp,'SNR   (← very noisy · nearly clean →)');
+  el('text',{class:'small',transform:'translate(14 '+((T+B)/2)+') rotate(-90)','text-anchor':'middle'},wp,'loss weight w');
+  var lg5=Math.log10(5);
+  el('line',{x1:xs(lg5),y1:T,x2:xs(lg5),y2:B,stroke:'var(--line)','stroke-dasharray':'3 3'},wp);
+  el('text',{class:'small',x:xs(lg5)+4,y:T+10},wp,'SNR = 5');
+  var d1='',d2='';
+  for(var i2=0;i2<=120;i2++){
+    var lg=-3+6*i2/120, s=Math.pow(10,lg), w2=Math.min(s,5)/(s+1);
+    d1+=(i2?'L':'M')+xs(lg).toFixed(1)+' '+ys(w2).toFixed(1)+' ';
+    d2+=(i2?'L':'M')+xs(lg).toFixed(1)+' '+ys(1).toFixed(1)+' ';
+  }
+  el('path',{d:d2,stroke:'var(--cond)','stroke-width':2.2,'stroke-dasharray':'6 4',fill:'none'},wp);
+  el('path',{d:d1,stroke:'var(--time)','stroke-width':2.4,fill:'none'},wp);
+  el('text',{class:'small',x:xs(-2.8),y:ys(1)-6,style:'fill:var(--cond)'},wp,'nosnr: w = 1');
+  el('text',{class:'small',x:xs(1.3),y:ys(0.25),style:'fill:var(--time)'},wp,'min-SNR(5)');
+})();
+</script>
+</body>
+</html>
