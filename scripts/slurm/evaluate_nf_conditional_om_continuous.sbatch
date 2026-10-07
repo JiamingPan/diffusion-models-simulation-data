@@ -43,4 +43,5 @@ export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
   --seed 123 \
   --samples-per-cosmology 64 \
   --bootstrap 2000 \
-  --output-dir "${PROJECT_DIR}/${OUTPUT_DIR}"
+  --output-dir "${PROJECT_DIR}/${OUTPUT_DIR}" \
+  "$@"
