@@ -13,6 +13,10 @@ Pure numpy/scipy/sklearn; torch only inside the orbit search
   up to Nyquist; band value = exp of the mean log ratio).
 * One-point PDF L1: simdiff_eval.dit_diagnostics.one_point_l1_common_bins, on
   bins spanning the real maps' range instead of a fixed [-1, 1].
+* Patch-mosaic test (ledger unet128_aug_patch_mosaic): p x p patches on a fixed
+  grid, best D4 x periodic-window centred cosine against all training maps
+  (simdiff_eval.orbit_nn.patch_orbit_max_cosine); excess over held-out real patches
+  with a map-bootstrap CI; copy fraction above the train-train (own map excluded) quantile.
 
 All comparisons are in the generator's normalized (log + tanh) model space.
 """
@@ -146,6 +150,102 @@ def orbit_copy_stats(train: np.ndarray, generated: np.ndarray, heldout: np.ndarr
         out["heldout_orbit_copy_fraction"] = float(np.mean(val > threshold))
         out["heldout_orbit_nn"] = val
     return out
+
+
+def patch_grid(size: int, p: int, n_locations: int = 16) -> np.ndarray:
+    """(n_locations, 2) top-left corners on a fixed sqrt(n) x sqrt(n) grid inside [0, size - p] (no wrap)."""
+    k = int(round(np.sqrt(n_locations)))
+    if k * k != int(n_locations) or k < 1:
+        raise ValueError(f"n_locations must be a perfect square, got {n_locations}")
+    if not 1 < int(p) <= int(size):
+        raise ValueError(f"patch size {p} must be in (1, {size}]")
+    c = np.unique(np.round(np.linspace(0, int(size) - int(p), k)).astype(np.int64))
+    if len(c) != k:
+        raise ValueError(f"p={p} leaves fewer than {k} distinct grid positions in a {size} map")
+    yy, xx = np.meshgrid(c, c, indexing="ij")
+    return np.stack([yy.ravel(), xx.ravel()], axis=1)
+
+
+def extract_patches(maps: np.ndarray, map_index: np.ndarray, p: int, locations: np.ndarray):
+    """Patches of maps[map_index] at every location; returns (patches, map index per patch, location index)."""
+    x = as_maps(maps)
+    map_index = np.asarray(map_index, dtype=np.int64)
+    patches = np.stack([x[i, y:y + p, xx:xx + p] for i in map_index for y, xx in locations])
+    return (patches, np.repeat(map_index, len(locations)),
+            np.tile(np.arange(len(locations)), len(map_index)))
+
+
+def patch_orbit_reference(train: np.ndarray, heldout: np.ndarray, p: int, n_maps: int = 64,
+                          n_locations: int = 16, quantile: float = 0.95, device: str | None = None) -> dict:
+    """Per-N part of patch_orbit_stats: train-train threshold and held-out real patch scores.
+
+    Threshold: quantile of the best patch match of training patches against all training maps,
+    the patch's own map excluded (every window, every D4 element). Same n_maps evenly spaced maps
+    and the same grid locations as the generated set.
+    """
+    from simdiff_eval.orbit_nn import patch_orbit_max_cosine, prepare_patch_references
+
+    train, heldout = as_maps(train, "training maps"), as_maps(heldout, "held-out maps")
+    locs = patch_grid(train.shape[-1], p, n_locations)
+    prepared = prepare_patch_references(train, p, device=device)
+    t_idx = np.linspace(0, len(train) - 1, min(len(train), int(n_maps)), dtype=np.int64)
+    t_patch, t_map, _ = extract_patches(train, t_idx, p, locs)
+    t_nn = patch_orbit_max_cosine(t_patch, None, p, prepared=prepared, exclude_ref_index=t_map, device=device)
+    h_idx = np.linspace(0, len(heldout) - 1, min(len(heldout), int(n_maps)), dtype=np.int64)
+    h_patch, h_map, _ = extract_patches(heldout, h_idx, p, locs)
+    h_nn = patch_orbit_max_cosine(h_patch, None, p, prepared=prepared, device=device)
+    return {"p": int(p), "n_maps": int(n_maps), "n_locations": int(n_locations), "quantile": float(quantile),
+            "locations": locs, "prepared": prepared, "threshold": float(np.quantile(t_nn["max_cosine"], quantile)),
+            "train_nn": t_nn["max_cosine"], "train_map": t_map,
+            "heldout_nn": h_nn["max_cosine"], "heldout_map": h_map}
+
+
+def _median_by_resampled_maps(values: np.ndarray, map_ids: np.ndarray, draws: np.ndarray) -> np.ndarray:
+    """Median over all patches of each bootstrap draw of maps; draws: (B, n_maps) positions into unique maps."""
+    uniq, inv = np.unique(map_ids, return_inverse=True)
+    per_map = [values[inv == m] for m in range(len(uniq))]
+    return np.array([np.median(np.concatenate([per_map[m] for m in d])) for d in draws])
+
+
+def patch_orbit_stats(train: np.ndarray, generated: np.ndarray, heldout: np.ndarray | None, p: int,
+                      n_maps: int = 64, n_locations: int = 16, quantile: float = 0.95, device: str | None = None,
+                      seed: int = 0, n_boot: int = 1000, reference: dict | None = None) -> dict:
+    """Patch-mosaic test: best D4 x periodic-window match of p x p patches against the training maps.
+
+    n_maps evenly spaced generated (and held-out) maps, n_locations patches each on a fixed grid.
+    excess = median best-match cosine of generated patches - median of held-out real patches, with a
+    95% bootstrap CI that resamples maps (generated and held-out independently, seeded).
+    Copy fractions use the train-train quantile threshold of patch_orbit_reference.
+    Pass ``reference`` (from patch_orbit_reference) to reuse the per-N part across runs.
+    """
+    from simdiff_eval.orbit_nn import patch_orbit_max_cosine
+
+    if reference is None:
+        if heldout is None:
+            raise ValueError("patch_orbit_stats needs held-out maps or a precomputed reference")
+        reference = patch_orbit_reference(train, heldout, p, n_maps, n_locations, quantile, device)
+    if reference["p"] != int(p) or reference["n_locations"] != int(n_locations):
+        raise ValueError("reference was computed for a different p or n_locations")
+    generated = as_maps(generated, "generated maps")
+    g_idx = np.linspace(0, len(generated) - 1, min(len(generated), int(n_maps)), dtype=np.int64)
+    g_patch, g_map, g_loc = extract_patches(generated, g_idx, p, reference["locations"])
+    nn = patch_orbit_max_cosine(g_patch, None, p, prepared=reference["prepared"], device=device)
+    gen, held = nn["max_cosine"], reference["heldout_nn"]
+    rng = np.random.default_rng(seed)
+    n_g, n_h = len(np.unique(g_map)), len(np.unique(reference["heldout_map"]))
+    boot = (_median_by_resampled_maps(gen, g_map, rng.integers(0, n_g, size=(n_boot, n_g)))
+            - _median_by_resampled_maps(held, reference["heldout_map"], rng.integers(0, n_h, size=(n_boot, n_h))))
+    thr = reference["threshold"]
+    return {"nn_median": float(np.median(gen)), "heldout_nn_median": float(np.median(held)),
+            "excess": float(np.median(gen) - np.median(held)),
+            "excess_ci_low": float(np.quantile(boot, 0.025)), "excess_ci_high": float(np.quantile(boot, 0.975)),
+            "threshold": thr, "copy_fraction": float(np.mean(gen > thr)),
+            "heldout_copy_fraction": float(np.mean(held > thr)),
+            "train_nn_median": float(np.median(reference["train_nn"])),
+            "n_generated_patches": int(len(gen)), "n_heldout_patches": int(len(held)),
+            "gen_nn": gen, "gen_map": g_map, "gen_location": g_loc, "gen_ref_index": nn["ref_index"],
+            "gen_group_element": nn["group_element"], "gen_shift_y": nn["shift_y"], "gen_shift_x": nn["shift_x"],
+            "heldout_nn": held, "train_nn": reference["train_nn"], "locations": reference["locations"]}
 
 
 def plain_nearest_cosine(train: np.ndarray, generated: np.ndarray) -> np.ndarray:
