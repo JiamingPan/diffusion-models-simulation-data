@@ -9,6 +9,8 @@ unconditional  Memorization (PCA32 q95 novelty G with and without D4 search;
                band, and the probe-space parameter distribution of generated maps
                against the training and held-out real maps. Reference level for
                every distribution metric: training vs held-out real maps.
+               --patch-scales p1,p2,... adds the patch-mosaic test per p
+               (patch{p}_* columns; off by default).
 conditional    Probe recovery on held-out cosmologies (median bias, bias / W,
                68% and 95% coverage, recovery and coverage plots), P(k) bands per
                cosmology against the real held-out slices (real split-half as
@@ -230,6 +232,7 @@ def run_unconditional(args) -> None:
           f"{space.pca.n_components_} components, explained {space.explained_variance:.4f}", flush=True)
     del fit_maps
     probe = None if args.no_probe else load_probe(resolve(args.probe), args.device)
+    args.patch_scale_list = parse_patch_scales(args.patch_scales)
     binning = rm.pk_binning(128)
     summary, curves, provenance_runs = [], {}, []
     by_config: dict[str, list[dict]] = {}
@@ -277,10 +280,21 @@ def run_unconditional(args) -> None:
         "pca_components": int(space.pca.n_components_), "pca_explained_variance": space.explained_variance,
         "copy_quantile": args.copy_quantile, "orbit_max_n": args.orbit_max_n,
         "orbit_threshold_queries": args.orbit_threshold_queries, "probe": None if args.no_probe else str(args.probe),
+        "patch_scales": args.patch_scale_list, "patch_maps": args.patch_maps, "patch_locations": args.patch_locations,
+        "patch_bootstrap": args.patch_bootstrap, "patch_bootstrap_seed": args.patch_bootstrap_seed,
         "probe_note": "probe trained on LH z=0 maps; on unconditional (LH+CV, z=0,1,2) maps it is a fixed "
                       "summary statistic compared across sets, not cosmology inference",
         "runs": provenance_runs, "elapsed_s": time.time() - t0, **trust})
     print("Wrote", out, flush=True)
+
+
+def parse_patch_scales(text: str | None) -> list[int]:
+    if not text:
+        return []
+    scales = [int(t) for t in str(text).split(",") if t.strip()]
+    if any(p < 2 or p > 128 for p in scales) or len(set(scales)) != len(scales):
+        raise SystemExit(f"--patch-scales must be distinct integers in [2, 128], got {text!r}")
+    return scales
 
 
 def reference_block(data: UncondData, binning: dict, probe, args) -> dict:
@@ -312,6 +326,12 @@ def reference_block(data: UncondData, binning: dict, probe, args) -> dict:
         curves["probe_train"], curves["probe_val"] = train_probe[:, :2], val_probe[:, :2]
         res["_probe_train"] = train_probe
     res["_curves"] = curves
+    res["_patch"] = {}
+    for p in getattr(args, "patch_scale_list", []):
+        t = time.time()
+        res["_patch"][p] = rm.patch_orbit_reference(data.train, data.val, p, args.patch_maps, args.patch_locations,
+                                                    args.copy_quantile, None if args.device == "auto" else args.device)
+        print(f"    patch p={p} reference (threshold + held-out): {time.time() - t:.0f}s", flush=True)
     return res
 
 
@@ -336,6 +356,14 @@ def score_unconditional(data, gen, space, binning, probe, ref, args):
         res["orbit_copy_fraction"] = float("nan")
         res["orbit_note"] = f"orbit search skipped: N > --orbit-max-n {args.orbit_max_n}"
     res["memorized"] = rm.memorized(res["G_d4"], res.get("orbit_copy_fraction"))
+    for p, pref in ref.get("_patch", {}).items():
+        t = time.time()
+        st = rm.patch_orbit_stats(data.train, gen, None, p, args.patch_maps, args.patch_locations, args.copy_quantile,
+                                  None if args.device == "auto" else args.device, seed=args.patch_bootstrap_seed,
+                                  n_boot=args.patch_bootstrap, reference=pref)
+        for k, v in st.items():
+            (per_sample if isinstance(v, np.ndarray) else res)[f"patch{p}_{k}"] = v
+        print(f"    patch p={p} generated: {time.time() - t:.0f}s", flush=True)
     pk_gen = rm.power_spectra(gen, binning).mean(0)
     ratio = pk_gen / ref["_pk_val_mean"]
     res.update({k: v for k, v in rm.pk_band_values(ratio, binning).items() if not k.endswith("pct")})
@@ -693,6 +721,11 @@ def main() -> None:
     ap.add_argument("--max-generated", type=int, default=512)
     ap.add_argument("--probe-max-train", type=int, default=1024)
     ap.add_argument("--no-probe", action="store_true")
+    ap.add_argument("--patch-scales", default="", help="comma list of patch sizes p; empty = no patch test")
+    ap.add_argument("--patch-maps", type=int, default=64)
+    ap.add_argument("--patch-locations", type=int, default=16)
+    ap.add_argument("--patch-bootstrap", type=int, default=1000)
+    ap.add_argument("--patch-bootstrap-seed", type=int, default=0)
     # conditional
     ap.add_argument("--manifest")
     ap.add_argument("--k", type=int, default=64)
