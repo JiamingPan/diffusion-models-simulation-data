@@ -15,7 +15,10 @@ conditional    Probe recovery on held-out cosmologies (median bias, bias / W,
                68% and 95% coverage, recovery and coverage plots), P(k) bands per
                cosmology against the real held-out slices (real split-half as
                reference), one-point statistics, draw-to-draw and nearest-training
-               cosine.
+               cosine, and copy fidelity against the nearest training map on the same
+               balanced draws: pix_std_ratio_median (median std(generated) / std(nearest
+               training map)) and copy_fidelity_offset_mean (mean probe Omega_m of the
+               draw minus probe Omega_m of that training map).
 regression     Reproduces saved numbers before any new score is trusted: R1 PCA95 G
                for DiT-L16, R3 P(k) bands (continuous Omega_m-sigma_8, N=256),
                R4 probe recovery (continuous Omega_m-sigma_8, N=64). Writes
@@ -46,6 +49,7 @@ from simdiff_eval import run_metrics as rm  # noqa: E402
 
 DEFAULT_PROBE = "results/nf_conditional_bias_probe/encoder/vgg_mlp_encoder.npz"
 DEFAULT_RECEIPT = "results/evaluate_run_regression_v1/regression_pass.json"
+DEFAULT_PROBE_ON_TRAIN = "results/memorization_regime_diagnostics/probe_on_train_maps_20261003_134050/probe_on_train_maps.csv"
 DIT_PLANS = ["/scratch/huterer_root/huterer0/jiamingp/dit_l16_adalnzero_highn_screen_v1/plan.json",
              "/scratch/huterer_root/huterer0/jiamingp/dit_zero_remaining_300k_v1/plan.json"]
 
@@ -481,12 +485,48 @@ def plot_unconditional(table, curves, binning, out: Path) -> None:
 
 
 # ---------------------------------------------------------------- conditional
+def maps_sha256(maps: np.ndarray) -> str:
+    """Key of a set of model-space training maps, as written by scripts/probe_train_maps_memorization.py."""
+    return hashlib.sha256(np.ascontiguousarray(maps).tobytes()).hexdigest()
+
+
+def pix_std_ratio(generated: np.ndarray, nearest_train: np.ndarray) -> np.ndarray:
+    """Per draw: pixel std of the generated map / pixel std of its nearest training map
+    (notebooks/conditional_label_sweeps_review.ipynb cell 26)."""
+    g = rm.as_maps(generated).reshape(len(generated), -1)
+    t = rm.as_maps(nearest_train).reshape(len(nearest_train), -1)
+    return g.std(1) / t.std(1)
+
+
+def probe_on_original(train: np.ndarray, indices: np.ndarray, csv_path: Path | None, probe_path: Path,
+                      predict) -> tuple[np.ndarray, str]:
+    """Probe Omega_m of the training maps train[indices].
+
+    Read from probe_on_train_maps.csv when it holds exactly these maps (maps_sha256 key, every train_index) scored
+    with the same probe file (its metadata.json vgg_encoder); otherwise computed with predict(maps) -> Omega_m on
+    the distinct indices. Returns (values per index, source)."""
+    idx = np.asarray(indices, dtype=np.int64)
+    if csv_path is not None and Path(csv_path).is_file():
+        meta = Path(csv_path).with_name("metadata.json")
+        probe_used = json.loads(meta.read_text()).get("vgg_encoder", "") if meta.is_file() else ""
+        if probe_used and Path(probe_used).resolve() == Path(probe_path).resolve():
+            import pandas as pd
+
+            df = pd.read_csv(csv_path)
+            sub = df[df.maps_sha256 == maps_sha256(train)].drop_duplicates("train_index").set_index("train_index")
+            if len(sub) == len(train):
+                return sub.Omega_m_probe.loc[idx].to_numpy(float), f"csv:{csv_path}"
+    uniq, inv = np.unique(idx, return_inverse=True)
+    return np.asarray(predict(rm.as_maps(train)[uniq]), dtype=float)[inv], "computed"
+
+
 def conditional_scores(row: dict, args, enc, probe_norm: dict, names: list[str], out: Path | None) -> dict:
     """Probe recovery + P(k) + one-point + cosines for one conditional run (cosmology-major samples)."""
     import yaml
     from evaluate_nf_conditional_bias_probe import evaluate_run as probe_run, output_path_for
     from prepare_nf_conditional_u128_config import DATA_ROOT
-    from simdiff_eval.conditional_unet_diagnostics import balanced_draws, recovery_interval_coverage
+    from simdiff_eval.conditional_unet_diagnostics import (balanced_draws, nearest_centered_pixel_cosine,
+                                                           recovery_interval_coverage)
     from simdiff_eval.io import _normalize_reference_slices
     from simdiff_eval.probe_eval import load_heldout_real_slices
 
@@ -511,6 +551,18 @@ def conditional_scores(row: dict, args, enc, probe_norm: dict, names: list[str],
         c95 = curve[(curve.parameter == name) & np.isclose(curve.nominal, 0.95)]
         s["coverage95"] = float(c95.empirical.iloc[0]) if len(c95) else float("nan")
         res.update({f"{name}_{kk}": v for kk, v in s.items()})
+    # Recovered vs requested Omega_m over the held-out cosmologies (per-cosmology probe median against the
+    # requested theta_in): OLS slope and intercept, Spearman rank correlation (ledger nf_cond_omsigc_cfg: w = 0
+    # leak check, a label-blind model gives rho near 0).
+    from scipy.stats import spearmanr
+
+    g = points[points.parameter == "Omega_m"]
+    x, y = g.theta_in.to_numpy(float), g.theta_rec_median.to_numpy(float)
+    slope, intercept = np.polyfit(x, y, 1)
+    rho = spearmanr(x, y)
+    res.update({"Omega_m_recovery_slope": float(slope), "Omega_m_recovery_intercept": float(intercept),
+                "Omega_m_recovery_spearman_rho": float(rho.correlation),
+                "Omega_m_recovery_spearman_p": float(rho.pvalue), "Omega_m_recovery_n_cosmologies": int(len(g))})
     # P(k) per cosmology against the real held-out slices; real split-half is the reference.
     binning = rm.pk_binning(128)
     real, _, real_sim, _ = load_heldout_real_slices(DATA_ROOT, heldout, args.heldout_slices_per_sim, probe_norm)
@@ -535,8 +587,18 @@ def conditional_scores(row: dict, args, enc, probe_norm: dict, names: list[str],
         p = row["prepared_image_path"]
         raw_train = np.asarray(np.load(p if p.endswith(".npy") else p + "_images.npy", mmap_mode="r")[:, 0], np.float32)
         train = _normalize_reference_slices(raw_train, cfg, nk["center"], nk["xmax"])[:, 0]
-        q, _, _ = balanced_draws(samples, heldout, k, min(k, args.nn_draws_per_cosmology))
-        res["nearest_train_cosine_median"] = float(np.median(rm.plain_nearest_cosine(train, q)))
+        q, q_sim, q_draw = balanced_draws(samples, heldout, k, min(k, args.nn_draws_per_cosmology))
+        cos, nn = nearest_centered_pixel_cosine(rm.as_maps(q), rm.as_maps(train))  # = rm.plain_nearest_cosine + index
+        res["nearest_train_cosine_median"] = float(np.median(cos))
+        # Copy fidelity on the same balanced draws, against each draw's nearest training map.
+        res["pix_std_ratio_median"] = float(np.median(pix_std_ratio(q, train[nn])))
+        om = sample_df[sample_df.parameter == "Omega_m"].set_index(["heldout_sim", "seed_index"]).theta_rec
+        probe_copy = om.loc[list(zip(q_sim.tolist(), q_draw.tolist()))].to_numpy(float)
+        i_om = names.index("Omega_m")
+        orig, src = probe_on_original(train, nn, resolve(args.probe_on_train_csv) if args.probe_on_train_csv else None,
+                                      resolve(args.probe), lambda m: probe_predict(enc, m)[:, i_om])
+        res["copy_fidelity_offset_mean"] = float(np.mean(probe_copy - orig))
+        res["copy_fidelity_probe_original_source"] = src
         res["ref_nearest_train_cosine_real_median"] = float(np.median(rm.plain_nearest_cosine(train, real[::8])))
     if out is not None:
         tag = row["run_name"]
@@ -613,7 +675,8 @@ def run_conditional(args) -> None:
                                       "per_run_csv": str(out / "per_run.csv"), "runs": results})
     write_json(out / "provenance.json", {"git": git_rev(), "argv": sys.argv, "manifest": str(args.manifest),
                                          "manifest_sha256": sha256(resolve(args.manifest)), "probe": str(args.probe),
-                                         "probe_sha256": sha256(resolve(args.probe)), **trust})
+                                         "probe_sha256": sha256(resolve(args.probe)),
+                                         "probe_on_train_csv": args.probe_on_train_csv or None, **trust})
     print("Wrote", out, flush=True)
 
 
@@ -732,6 +795,9 @@ def main() -> None:
     ap.add_argument("--heldout-slices-per-sim", type=int, default=128)
     ap.add_argument("--nn-draws-per-cosmology", type=int, default=16)
     ap.add_argument("--no-nearest", action="store_true")
+    ap.add_argument("--probe-on-train-csv", default=DEFAULT_PROBE_ON_TRAIN,
+                    help="saved probe(training map) table for copy_fidelity_offset_mean; used only when its maps_sha256 "
+                         "and probe file match, else computed; empty string = always compute")
     ap.add_argument("--probe-batch", type=int, default=32)
     args = ap.parse_args()
     global PROBE_BATCH
