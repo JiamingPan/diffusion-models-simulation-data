@@ -283,7 +283,8 @@ def run_unconditional(args) -> None:
         "pca_fit_config_sha256": sha256(fit_config), "pca_fit_maps": int(space.n_fit), "pca_fit_total": fit_total,
         "pca_components": int(space.pca.n_components_), "pca_explained_variance": space.explained_variance,
         "copy_quantile": args.copy_quantile, "orbit_max_n": args.orbit_max_n,
-        "orbit_threshold_queries": args.orbit_threshold_queries, "probe": None if args.no_probe else str(args.probe),
+        "orbit_threshold_queries": args.orbit_threshold_queries, "orbit_groups_extra": extra_orbit_groups(args),
+        "probe": None if args.no_probe else str(args.probe),
         "patch_scales": args.patch_scale_list, "patch_maps": args.patch_maps, "patch_locations": args.patch_locations,
         "patch_bootstrap": args.patch_bootstrap, "patch_bootstrap_seed": args.patch_bootstrap_seed,
         "probe_note": "probe trained on LH z=0 maps; on unconditional (LH+CV, z=0,1,2) maps it is a fixed "
@@ -339,6 +340,11 @@ def reference_block(data: UncondData, binning: dict, probe, args) -> dict:
     return res
 
 
+def extra_orbit_groups(args) -> list[str]:
+    """Restricted orbit groups requested with --orbit-group, excluding the primary d4xshift, in order."""
+    return [g for g in dict.fromkeys(getattr(args, "orbit_group", None) or []) if g != "d4xshift"]
+
+
 def score_unconditional(data, gen, space, binning, probe, ref, args):
     res, per_sample, cur = {}, {}, {}
     for orbit in ("none", "d4"):
@@ -356,9 +362,17 @@ def score_unconditional(data, gen, space, binning, probe, ref, args):
                                   device=None if args.device == "auto" else args.device)
         for k, v in orb.items():
             (per_sample if isinstance(v, np.ndarray) else res)[k] = v
+        # Restricted groups (--orbit-group): extra columns <key>_<group>; the primary score stays d4xshift.
+        for grp in extra_orbit_groups(args):
+            o = rm.orbit_copy_stats(data.train, gen, data.val, args.copy_quantile, args.orbit_threshold_queries,
+                                    device=None if args.device == "auto" else args.device, group=grp)
+            for k, v in o.items():
+                (per_sample if isinstance(v, np.ndarray) else res)[f"{k}_{grp}"] = v
     else:
         res["orbit_copy_fraction"] = float("nan")
         res["orbit_note"] = f"orbit search skipped: N > --orbit-max-n {args.orbit_max_n}"
+        for grp in extra_orbit_groups(args):
+            res[f"orbit_copy_fraction_{grp}"] = float("nan")
     res["memorized"] = rm.memorized(res["G_d4"], res.get("orbit_copy_fraction"))
     for p, pref in ref.get("_patch", {}).items():
         t = time.time()
@@ -779,6 +793,9 @@ def main() -> None:
     ap.add_argument("--copy-quantile", type=float, default=0.95)
     ap.add_argument("--orbit-max-n", type=int, default=4096)
     ap.add_argument("--orbit-threshold-queries", type=int, default=2048)
+    ap.add_argument("--orbit-group", action="append", choices=("d4xshift", "shift", "d4"),
+                    help="extra restricted orbit group(s) scored as orbit_*_<group> columns (own threshold); "
+                         "repeatable; the primary orbit_copy_fraction and 'memorized' stay d4xshift")
     ap.add_argument("--heldout-raw-per-source", type=int, default=8)
     ap.add_argument("--max-heldout", type=int, default=512)
     ap.add_argument("--max-generated", type=int, default=512)

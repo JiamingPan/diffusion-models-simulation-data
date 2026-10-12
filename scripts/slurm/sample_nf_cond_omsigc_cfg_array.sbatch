@@ -68,6 +68,8 @@ print(row["run_name"], row["requested_checkpoint"], "none" if w is None else rep
 PY
 )
 [[ -n "${SAMPLE:-}" ]] || { echo "Could not read task ${TASK_ID}" >&2; exit 1; }
+# Training zero-pads epochs below 1000 (N = 32768: checkpoint-epoch-0195); the manifest has the unpadded name.
+if [[ ! -d "${CKPT}" ]]; then P="${CKPT%-*}-$(printf '%04d' "${CKPT##*-}")"; [[ -d "${P}" ]] && CKPT="${P}"; fi
 [[ -d "${CKPT}" ]] || { echo "Final checkpoint missing: ${CKPT}" >&2; exit 1; }
 [[ ! -e "${SAMPLE}" ]] || { echo "Refusing to overwrite ${SAMPLE}" >&2; exit 1; }
 

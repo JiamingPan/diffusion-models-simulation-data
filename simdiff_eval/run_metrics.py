@@ -124,20 +124,23 @@ def pca_novelty(space: PCASpace, train: np.ndarray, generated: np.ndarray, quant
 
 # ---------------------------------------------------------------- pixel similarity
 def orbit_copy_stats(train: np.ndarray, generated: np.ndarray, heldout: np.ndarray | None,
-                     quantile: float = 0.95, max_threshold_queries: int = 2048, device: str | None = None) -> dict:
+                     quantile: float = 0.95, max_threshold_queries: int = 2048, device: str | None = None,
+                     group: str = "d4xshift") -> dict:
     """D4 x periodic-shift nearest-training centred cosine (simdiff_eval.orbit_nn).
 
     Threshold: quantile of train-to-train orbit similarity with each map's whole
     orbit excluded, from at most ``max_threshold_queries`` evenly spaced training
     queries against all training maps.
+    group: orbit searched ("d4xshift" default, "shift" or "d4"; see
+    orbit_nn.orbit_max_cosine); the threshold is recalibrated under the same group.
     """
     from simdiff_eval.orbit_nn import orbit_max_cosine
 
     train = as_maps(train, "training maps")
     q_idx = np.linspace(0, len(train) - 1, min(len(train), int(max_threshold_queries)), dtype=np.int64)
-    ref = orbit_max_cosine(train[q_idx], train, exclude_ref_index=q_idx, device=device)["max_cosine"]
+    ref = orbit_max_cosine(train[q_idx], train, exclude_ref_index=q_idx, device=device, group=group)["max_cosine"]
     threshold = float(np.quantile(ref, quantile))
-    nn = orbit_max_cosine(as_maps(generated, "generated maps"), train, device=device)
+    nn = orbit_max_cosine(as_maps(generated, "generated maps"), train, device=device, group=group)
     copies = nn["max_cosine"] > threshold
     transformed = (nn["group_element"] != 0) | (nn["shift_y"] != 0) | (nn["shift_x"] != 0)
     out = {"orbit_threshold": threshold, "orbit_threshold_queries": int(len(q_idx)),
@@ -146,7 +149,7 @@ def orbit_copy_stats(train: np.ndarray, generated: np.ndarray, heldout: np.ndarr
            "orbit_copies_via_transform": float(transformed[copies].mean()) if copies.any() else 0.0,
            "orbit_nn": nn["max_cosine"], "orbit_ref": ref}
     if heldout is not None:
-        val = orbit_max_cosine(as_maps(heldout, "held-out maps"), train, device=device)["max_cosine"]
+        val = orbit_max_cosine(as_maps(heldout, "held-out maps"), train, device=device, group=group)["max_cosine"]
         out["heldout_orbit_copy_fraction"] = float(np.mean(val > threshold))
         out["heldout_orbit_nn"] = val
     return out

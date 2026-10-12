@@ -34,9 +34,13 @@ def _d4_stack(x, torch):
     return torch.stack(out)
 
 
+ORBIT_GROUPS = ("d4xshift", "shift", "d4")
+
+
 def orbit_max_cosine(queries: np.ndarray, references: np.ndarray, *, exclude_same_index: bool = False,
                      exclude_ref_index: np.ndarray | None = None,
-                     device: str | None = None, query_batch: int = 4, ref_batch: int = 512) -> dict:
+                     device: str | None = None, query_batch: int = 4, ref_batch: int = 512,
+                     group: str = "d4xshift") -> dict:
     """Best orbit cosine of each query against all references.
 
     exclude_same_index: queries and references are the same set; query i never
@@ -44,10 +48,16 @@ def orbit_max_cosine(queries: np.ndarray, references: np.ndarray, *, exclude_sam
     needed for train-to-train threshold calibration.
     exclude_ref_index: per-query reference index whose whole orbit is excluded
     (queries a subset of references); -1 excludes nothing.
+    group: transforms searched. "d4xshift" (default) = 8 D4 elements x all
+    periodic shifts; "shift" = identity element, all periodic shifts; "d4" = 8
+    D4 elements, zero shift only. group_element keeps the full D4 numbering.
     Returns arrays: max_cosine, ref_index, group_element, shift_y, shift_x.
     """
     import torch
 
+    if group not in ORBIT_GROUPS:
+        raise ValueError(f"group must be one of {ORBIT_GROUPS}, got {group!r}")
+    elements = torch.tensor([0] if group == "shift" else list(range(8)), dtype=torch.long)
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     q = _unit_centred(torch.as_tensor(np.asarray(queries)), torch)
     r = _unit_centred(torch.as_tensor(np.asarray(references)), torch)
@@ -69,15 +79,25 @@ def orbit_max_cosine(queries: np.ndarray, references: np.ndarray, *, exclude_sam
     best_ref = torch.full((n_q,), -1, dtype=torch.long)
     best_g = torch.full((n_q,), -1, dtype=torch.long)
     best_shift = torch.full((n_q,), -1, dtype=torch.long)
+    n_g = len(elements)
+    n_s = 1 if group == "d4" else h * w
     for r0 in range(0, len(r), ref_batch):
-        r_f = torch.fft.rfft2(r[r0:r0 + ref_batch].to(device))           # (R, H, W/2+1)
-        n_r = len(r_f)
+        r_b = r[r0:r0 + ref_batch].to(device)                              # (R, H, W)
+        r_f = None if group == "d4" else torch.fft.rfft2(r_b)              # (R, H, W/2+1)
+        n_r = len(r_b)
         for q0 in range(0, n_q, query_batch):
             qb = q[q0:q0 + query_batch].to(device)
-            q_f = torch.fft.rfft2(_d4_stack(qb, torch))                    # (8, B, H, W/2+1)
-            # corr[g, b, j, s] = sum_x g(q_b)(x + s) r_j(x)
-            corr = torch.fft.irfft2(q_f[:, :, None] * r_f.conj()[None, None], s=(h, w))
-            corr = corr.reshape(8, len(qb), n_r, h * w)
+            stack = _d4_stack(qb, torch)
+            if group == "shift":
+                stack = stack[:1]
+            if group == "d4":
+                # zero shift only: corr[g, b, j, 0] = sum_x g(q_b)(x) r_j(x)
+                corr = torch.einsum("gbhw,rhw->gbr", stack, r_b)[..., None]
+            else:
+                q_f = torch.fft.rfft2(stack)                                # (G, B, H, W/2+1)
+                # corr[g, b, j, s] = sum_x g(q_b)(x + s) r_j(x)
+                corr = torch.fft.irfft2(q_f[:, :, None] * r_f.conj()[None, None], s=(h, w))
+            corr = corr.reshape(n_g, len(qb), n_r, n_s)
             if exclude_ref_index is not None:
                 for b in range(len(qb)):
                     j = int(exclude_ref_index[q0 + b]) - r0
@@ -85,8 +105,8 @@ def orbit_max_cosine(queries: np.ndarray, references: np.ndarray, *, exclude_sam
                         corr[:, b, j] = -np.inf
             vals, flat = corr.permute(1, 0, 2, 3).reshape(len(qb), -1).max(dim=1)
             vals, flat = vals.cpu(), flat.cpu()
-            g, rem = flat // (n_r * h * w), flat % (n_r * h * w)
-            j, s = rem // (h * w), rem % (h * w)
+            g, rem = elements[flat // (n_r * n_s)], flat % (n_r * n_s)
+            j, s = rem // n_s, rem % n_s
             better = vals > best[q0:q0 + len(qb)]
             sl = slice(q0, q0 + len(qb))
             best[sl] = torch.where(better, vals, best[sl])
