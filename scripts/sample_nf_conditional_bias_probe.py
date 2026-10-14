@@ -55,6 +55,23 @@ def checkpoint_cli_args(row: dict[str, Any]) -> list[str]:
     return ["--checkpoint_epoch", str(int(checkpoint_epoch))]
 
 
+TIMESTEP_SPACING_CHOICES = ("leading", "trailing", "linspace")
+
+
+def timestep_spacing_cli_args(timestep_spacing: str | None) -> list[str]:
+    """Forward an inference timestep_spacing override to cosmodiff_sample.py.
+
+    None (default) passes nothing, so the scheduler keeps its checkpoint config value. The option exists only in a
+    cosmodiff_sample.py patched by scripts/patch_cosmodiff_timestep_spacing.py (private runtime); the stock sampler
+    rejects it.
+    """
+    if timestep_spacing is None:
+        return []
+    if timestep_spacing not in TIMESTEP_SPACING_CHOICES:
+        raise ValueError(f"timestep_spacing must be one of {TIMESTEP_SPACING_CHOICES}, got {timestep_spacing!r}")
+    return ["--timestep_spacing", str(timestep_spacing)]
+
+
 def output_path_for(project_dir: Path, row: dict[str, Any], seed: int, k: int, guidance_scale: float | None) -> Path:
     raw = str(row["sample_path"])
     label = guidance_label(guidance_scale)
@@ -112,6 +129,13 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--scheduler", default="DPMSolverMultistepScheduler")
     parser.add_argument("--num-steps", type=int, default=50)
+    parser.add_argument(
+        "--timestep-spacing",
+        choices=TIMESTEP_SPACING_CHOICES,
+        default=None,
+        help="Inference timestep_spacing override passed to cosmodiff_sample.py --timestep_spacing (needs the "
+             "timestep_spacing-patched sampler). Default: not passed (checkpoint scheduler config value).",
+    )
     parser.add_argument("--device", default="cuda")
     parser.add_argument(
         "--guidance-scale",
@@ -168,6 +192,7 @@ def main() -> None:
                 "--verbose",
             ]
             cmd.extend(checkpoint_cli_args(row))
+            cmd.extend(timestep_spacing_cli_args(args.timestep_spacing))
             if guidance_scale is not None:
                 cmd.extend(["--guidance_scale", str(float(guidance_scale))])
             print("Running:", " ".join(cmd), flush=True)
