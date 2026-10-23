@@ -129,7 +129,53 @@ multiplicity and class36 runs probe. This is a frame for predictions, not an est
   command, cost and side effects first. An implied yes is not approval.
 - Metrics come from `scripts/evaluate_run.py` only. No new metrics inside a run.
 
-## Open items, in order
+## Open items (updated 2026-10-07; check `squeue -u jiamingp` before trusting job states)
+
+### In flight (Slurm, account huterer2; huterer2 fairshare ~0.06, so start times are unknown)
+
+- Conditioning-mechanism study, N = 256 (ledger `nf_condmech_n256`): train 63381901 (array 0-2: temb, tembss,
+  tembss_nosnr) -> sample 63381902 -> eval 63381903, chained afterok. All PENDING since 2026-10-06.
+  ~12 h per training run once started, then ~25 min sampling + CPU eval. Output
+  `results/nf_conditioning_mechanism_n256/calibration_vgg/`. Configs `local/nf_conditioning_mechanism_n256/`,
+  code `simdiff_eval/timeemb_conditioning.py`. Baseline `nf_cond_omsigc_hi_u128_d2p08_n256_fresh200k`.
+  Decision rule: adopt an arm if it improves Omega_m bias and the P(k) bands with no band worse by >3%.
+  temb's additive shift is cancelled by GroupNorm in the 128x128 blocks (verified in session; not supported by a
+  result file), so temb tests conditioning at 64x64/32x32 only; tembss conditions every level.
+- Omega_m-only sweep (ledger `nf_om_continuous_200k`), array 63206055: N = 64, 256 DONE 2026-10-06;
+  N = 1024 RUNNING since 2026-10-07 07:52 (expected ~20:00 2026-10-07); N = 4096, 32768 HELD
+  (`scontrol release 63206055_3 63206055_4` when wanted).
+- Omega_m-only sampling, N = 64 and 256: 63397804 PENDING. Samples go to `results/nf_conditional_om_continuous_200k/samples/`.
+
+### Pending approval
+
+- Omega_m-only evaluation, N = 64 and 256 (ledger `nf_om_continuous_eval_n64_n256`): add `"$@"` pass-through to
+  `scripts/slurm/evaluate_nf_conditional_om_continuous.sbatch` (APPROVE EDIT), then (APPROVE RUN) submit it with
+  `--dependency=afterok:63397804`,
+  `--export=ALL,RUN_NAME=nf_om_continuous_eval_n64_n256,OUTPUT_DIR=results/nf_conditional_om_continuous_200k/calibration_vgg_n64_n256`
+  and `--run-name nf_cond_omc_hi_u128_d2p06_n64_fresh200k --run-name nf_cond_omc_hi_u128_d2p08_n256_fresh200k`.
+  CPU, ~10 min. Compare with the (Omega_m, sigma_8) continuous model at the same N.
+- Augmentation sweep (ledger `unet128_aug_sweep`): all 18 training runs DONE 2026-10-06 (238 GPU-h; arms d4shift,
+  warp, d4equiv; N = 64..2048). Next: `scripts/slurm/sample_unet128_aug_sweep_array.sbatch` -> PCA95
+  `analyze_unet128_aug_sweep_pca.sbatch` (CPU) + orbit eval `evaluate_unet128_aug_sweep_orbit.sbatch`.
+  Plan: `local/unet128_aug_sweep/EVAL_PLAN.md`. No samples or results yet. The warp arm is a distortion control
+  only; reporting it as a method would conflict with "Not doing" below.
+- CFG: fix the continuous null label in `cosmodiff/optim.py` (lines 486, 735: zeros = mean cosmology) with a
+  null flag before any CFG run. No CFG run planned yet.
+- `scripts/evaluate_run.py` (the ledger's metric source) does not exist yet; current metrics come from
+  `scripts/evaluate_nf_conditional_bias_probe.py`.
+
+### Done 2026-10-03 .. 2026-10-07
+
+- (old item 5) Omega_m-sigma_8 continuous and class36 evaluated:
+  `results/nf_conditional_omsig_{continuous,class36}_200k/calibration_vgg/`; review in
+  `notebooks/conditional_label_sweeps_review.ipynb` (section 4 outputs predate W = 0.0931; Run All to refresh).
+  Draw-to-draw cosine and the equal-N comparison with the 6-parameter sweep: not checked in this session.
+- Sampler test (sampler is not the fix): `results/memorization_regime_diagnostics/sampler_test/`.
+- P(k) bias for Nick: `results/pk_bias_plots_20261006_161532/`, `notebooks/pk_bias_conditional_20261006_143831.ipynb`.
+- Camille figures: `results/camille_meeting_figures_20261006_160636/`, `results/camille_near_far_20261006_161945/`.
+- Decisions and rejected options: `docs/decisions.md`.
+
+### Backlog (not touched 2026-10-03 .. 2026-10-07)
 
 1. Posterior entropy (model-free, CPU). `notebooks/posterior_entropy_memorization.ipynb`, provenance
    pattern of the PCA95 notebook. For each verified DiT-L16 run: exact training subset, that run's fitted
@@ -139,6 +185,8 @@ multiplicity and class36 runs probe. This is a frame for predictions, not an est
    mean 2-D P(k) of normalized real maps, patch versions L in {5, 9, 17, 33, 65, 128}. Outputs under
    `notebooks/executed/posterior_entropy/` (summary.csv, provenance.json, figure). Report sigma_t^2 where
    S < 1 nat per N.
+   Status: the notebook has 7 executed cells, but `notebooks/executed/posterior_entropy/` does not exist,
+   so its outputs are not on disk.
 2. Conditional posterior entropy: same, posterior restricted to maps sharing the label (multiplicity m,
    class36 bins). `notebooks/executed/posterior_entropy_conditional/`.
 3. Network observation scale: DiT-L16 N = 64, 1024, 4096 and UNet-256 N = 64, 1024 checkpoints; perturb one
@@ -148,8 +196,7 @@ multiplicity and class36 runs probe. This is a frame for predictions, not an est
    `results/nf_conditional_fixedC64_multiplicity_200k/figures/multiplicity_summary.{png,pdf,csv}`.
    Panels vs m: draw-to-draw cosine (held-out solid, training dashed), |median bias| with bootstrap band,
    68% coverage; full-sweep N = 64..512 as a separate marker series. Every value from a result file.
-5. When 62232391 / 62232395 finish: 1-1 recovery and coverage per N for both variants (class36 against
-   bin centres with bin width shown), draw-to-draw cosine, comparison at equal N with the 6-parameter sweep.
+   Status: `scripts/plot_nf_conditional_multiplicity_figure.py` does not exist yet.
 6. Re-score UNet samples with the PCA95 notebook (PCA32, q = 0.95) so UNet and DiT share one definition.
    Recipe diff UNet vs DiT yaml (dataset, min_snr, EMA, budget, sampler) before any UNet rerun.
 7. Fixed-cosmology extension: 64 cosmologies x 64 and x 128 slices (N = 4096, 8192). Prepare only.
@@ -159,6 +206,8 @@ multiplicity and class36 runs probe. This is a frame for predictions, not an est
    symmetrization of a memorized checkpoint (`sample_label dpm50_n512_d4sym`). Score with `--orbit d4`.
    Prepare only; run after item 1 gives the I curve. Prediction on record: transition moves down by at
    most a factor 8 in N; N = 64 stays memorized.
+   Status: not run. The u128 augmentation sweep above is a different design
+   (UNet-128, N = 64..2048, d4shift / warp / d4equiv, no conditional runs).
 9. Sampler robustness (prepare only): dpm++ 50/100, sde-dpm++ 50, karras sigmas, final_sigmas_type;
    for DiT-L16 N = 1024, 2048 and u256 N = 512, 1024; new sample_labels.
 10. Paper: Criterion 1 with the conditional memorization test, training-theta and held-out galleries,

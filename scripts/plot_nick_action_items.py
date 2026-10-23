@@ -152,6 +152,67 @@ def wave2(out):
                             "pk_small", "one_point_l1"]].to_dict("records"), gallery=gal)
 
 
+def generalization_curve(out):
+    """Paper Fig. 1 style: PCA novelty score G vs N for every UNet-128 augmentation arm (both sweeps)."""
+    w1 = pd.read_csv(ROOT / "results/unet128_aug_sweep/evaluate_run_v1/per_run.csv")
+    w2 = pd.read_csv(W2 / "per_run.csv")
+    d = pd.concat([w1, w2[w2.arm.isin(["fliponly", "d4only", "shiftonly"])]], ignore_index=True)
+    extra = {"d4equiv": ("D4-equivariant UNet, no augmentation", "#8a8987", "P"),
+             "warp": ("warp distortion (control)", "#c3c2b7", "X")}
+    fig, axes = plt.subplots(1, 2, figsize=(7.2, 2.6), sharey=True,
+                             gridspec_kw=dict(wspace=0.08, left=0.07, right=0.72, bottom=0.18, top=0.86))
+    for ax, key, title in ((axes[0], "G_none", "G, plain nearest neighbour (as in the paper)"),
+                           (axes[1], "G_d4", "G, nearest under rotations + flips")):
+        ax.axhline(0.5, color=MUTED, lw=0.6, ls=(0, (4, 3)))
+        for arm in list(extra) + ARMS:
+            g = d[d.arm == arm].sort_values("dataset_size")
+            if g.empty:
+                continue
+            lab, col, mk = extra[arm] if arm in extra else (ARM_LABEL[arm], ARM_COLOR[arm], ARM_MARKER[arm])
+            ax.plot(g.dataset_size, g[key], color=col, marker=mk, ms=4, lw=1.0 if arm in extra else 1.5,
+                    ls=(0, (3, 2)) if arm in extra else "-", label=lab, zorder=2 if arm in extra else 3)
+        ax.set_xscale("log", base=2)
+        ns = [64, 256, 1024, 4096, 16384]
+        ax.set(xticks=ns, xticklabels=[f"{n:,}" for n in ns], ylim=(-0.04, 1.04), xlabel="training maps N")
+        ax.set_title(title, fontsize=7.8)
+    axes[0].set_ylabel("generalization score G")
+    axes[0].text(0.97, 0.06, "G ≈ 0: reproduces training maps\nG ≈ 1: novel", transform=axes[0].transAxes,
+                 ha="right", va="bottom", fontsize=6.2, color=MUTED)
+    fig.legend(*axes[1].get_legend_handles_labels(), loc="center left", bbox_to_anchor=(0.725, 0.52),
+               fontsize=6.3, frameon=False)
+    save(fig, out, "w2_generalization_curve")
+
+    # small multiples: one panel per augmentation, no augmentation in grey in every panel
+    order = ["fliponly", "d4only", "warp", "shiftonly", "d4shift", "d4equiv"]
+    names = {**{a: ARM_LABEL[a] for a in ARMS}, "warp": "warp distortion (control)",
+             "d4equiv": "D4-equivariant UNet, no aug"}
+    fig, axes = plt.subplots(2, 3, figsize=(7.2, 4.3), sharex=True, sharey=True,
+                             gridspec_kw=dict(wspace=0.08, hspace=0.32, left=0.08, right=0.99, bottom=0.12, top=0.86))
+    base = d[d.arm == "noaug"].sort_values("dataset_size")
+    for ax, arm in zip(axes.flat, order):
+        g = d[d.arm == arm].sort_values("dataset_size")
+        col = ARM_COLOR.get(arm, "#8a8987")
+        ax.axhline(0.5, color=MUTED, lw=0.6, ls=(0, (4, 3)))
+        ax.plot(base.dataset_size, base.G_d4, color="#b5b4b0", lw=1.6, marker="o", ms=3, label="no augmentation")
+        ax.plot(g.dataset_size, g.G_none, color=col, lw=1.0, ls=(0, (3, 2)), marker="o", ms=3, mfc="white",
+                label="plain G (paper)")
+        ax.plot(g.dataset_size, g.G_d4, color=col, lw=1.8, marker="o", ms=4, label="G allowing rotations + flips")
+        for _, r in g.iterrows():
+            ax.annotate(f"{r.G_d4:.2f}", (r.dataset_size, r.G_d4), textcoords="offset points", xytext=(0, -10 if r.G_d4 > 0.5 else 5),
+                        ha="center", fontsize=5.6, color=INK)
+        ax.set_xscale("log", base=2)
+        ax.set(xticks=[64, 256, 1024, 4096, 16384], xticklabels=["64", "256", "1k", "4k", "16k"], ylim=(-0.08, 1.1))
+        ax.set_title(names[arm], fontsize=7.8)
+    for ax in axes[1]:
+        ax.set_xlabel("training maps N")
+    for ax in axes[:, 0]:
+        ax.set_ylabel("G")
+    fig.legend(*axes[0, 0].get_legend_handles_labels(), loc="upper center", ncol=3, fontsize=6.8, frameon=False,
+               bbox_to_anchor=(0.53, 0.995))
+    save(fig, out, "w2_generalization_panels")
+    return d[["arm", "dataset_size", "G_none", "G_d4", "orbit_copy_fraction"]].to_dict("records")
+
+
 # ------------------------------------------------------------------ item 4: fine-tunes
 def ft_runs():
     rows = []
@@ -365,6 +426,7 @@ def main():
     truth, d = load_real()
     real = summarize(truth, d["real"])
     w2 = wave2(out)
+    w2["generalization_curve"] = generalization_curve(out)
     st, ft_gal, _ = finetune(out, truth, real)
     st.to_csv(out / "finetune_summary.csv", index=False)
     g = grid(out)

@@ -17,6 +17,14 @@ normal resume; train.num_epochs counts epochs AFTER the checkpoint (epochs start
 --check-output-dir and records: the pipeline actually used during training (every fetched image compared with
 the stored map and decomposed as roll(g(x), s) for g in D4), two post-training fetches of the same index,
 the restored scheduler / optimizer step counters, and the counterfactual (what the stock load would return).
+
+Opt-in modes (ledger nf_cond_omsigc_ft_controls_300k; without these flags behaviour is unchanged):
+--allow-no-augmentations     the config has NO augmentations block and the checkpoint has NO augmentations.pkl;
+                             training continues without augmentation (refuses if either side has a pipeline).
+--allow-checkpoint-augmentations
+                             the checkpoint HAS augmentations.pkl; it is accepted only if it describes the same
+                             pipeline as the config (same module classes in the same order, same public
+                             attributes, e.g. p / dims / size); the config pipeline is then used.
 """
 from __future__ import annotations
 
@@ -45,6 +53,19 @@ def d4_shift_match(img, x0):
     return None
 
 
+def pipeline_description(pipe) -> list | None:
+    """[(class name, public attributes)] of an augmentation pipeline (nn.Sequential), or None."""
+    if pipe is None:
+        return None
+    mods = list(pipe) if hasattr(pipe, "__iter__") else [pipe]
+    out = []
+    for m in mods:
+        attrs = {k: (list(v) if isinstance(v, tuple) else v) for k, v in sorted(vars(m).items())
+                 if not k.startswith("_") and k != "training"}
+        out.append([type(m).__name__, attrs])
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", required=True)
@@ -52,6 +73,11 @@ def main() -> int:
     ap.add_argument("--check-out", help="CPU check: write the JSON report here")
     ap.add_argument("--check-output-dir", help="CPU check: new output dir (instead of io.output_dir)")
     ap.add_argument("--check-epochs", type=int, default=1)
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--allow-no-augmentations", action="store_true",
+                      help="opt in: config without augmentations block, checkpoint without augmentations.pkl")
+    mode.add_argument("--allow-checkpoint-augmentations", action="store_true",
+                      help="opt in: checkpoint augmentations.pkl accepted if it matches the config pipeline")
     args = ap.parse_args()
 
     from simdiff_eval.torch_compat import install_torch_backend_compat
@@ -66,13 +92,18 @@ def main() -> int:
 
     check = args.check_out is not None
     cfg = yaml.safe_load(Path(args.config).read_text())
-    if "augmentations" not in cfg:
+    if args.allow_no_augmentations:
+        if "augmentations" in cfg:
+            raise SystemExit("--allow-no-augmentations given but the config has an augmentations block")
+    elif "augmentations" not in cfg:
         raise SystemExit("config has no augmentations block; nothing to fine-tune with")
     src = Path(args.resume_from)
     if not (src / "checkpoint_config.yaml").is_file():
         raise SystemExit(f"{src} is not a cosmodiff checkpoint")
-    if (src / "augmentations.pkl").exists():
+    if (src / "augmentations.pkl").exists() and not args.allow_checkpoint_augmentations:
         raise SystemExit(f"{src} has augmentations.pkl; refusing to choose between it and the config")
+    if args.allow_checkpoint_augmentations and not (src / "augmentations.pkl").exists():
+        raise SystemExit(f"--allow-checkpoint-augmentations given but {src} has no augmentations.pkl")
     if check:
         if not args.check_output_dir:
             raise SystemExit("--check-output-dir is required with --check-out")
@@ -84,7 +115,10 @@ def main() -> int:
 
     data = parse_config_data(cfg)["data"]
     aug = data.augmentations
-    if aug is None:
+    if args.allow_no_augmentations:
+        if aug is not None:
+            raise SystemExit(f"--allow-no-augmentations: parse_config_data built a pipeline {aug!r}")
+    elif aug is None:
         raise SystemExit("parse_config_data built no augmentation pipeline")
     fetched = []
 
@@ -99,12 +133,25 @@ def main() -> int:
 
     stock_load = utils.load_checkpoint
     stock_aug = stock_load(str(src))[4]
+    if args.allow_checkpoint_augmentations and pipeline_description(stock_aug) != pipeline_description(aug):
+        raise SystemExit(f"{src}/augmentations.pkl {pipeline_description(stock_aug)} differs from the config "
+                         f"pipeline {pipeline_description(aug)}; refusing")
+    if args.allow_no_augmentations and stock_aug is not None:
+        raise SystemExit(f"{src} loads augmentations {stock_aug!r}; refusing with --allow-no-augmentations")
 
     def load_checkpoint_keep_config_aug(path):
         model, noise_scheduler, optimizer, lr_scheduler, ck_aug = stock_load(path)
-        if ck_aug is not None:
+        if ck_aug is not None and not args.allow_checkpoint_augmentations:
             raise SystemExit(f"{path} carries augmentations.pkl; refusing")
-        print(f"[finetune] {path}: no augmentations.pkl; keeping the config pipeline {aug!r}", flush=True)
+        if ck_aug is not None and pipeline_description(ck_aug) != pipeline_description(aug):
+            raise SystemExit(f"{path}: augmentations.pkl differs from the config pipeline; refusing")
+        if ck_aug is None and args.allow_checkpoint_augmentations:
+            raise SystemExit(f"{path}: no augmentations.pkl but --allow-checkpoint-augmentations; refusing")
+        if ck_aug is None:
+            print(f"[finetune] {path}: no augmentations.pkl; keeping the config pipeline {aug!r}", flush=True)
+        else:
+            print(f"[finetune] {path}: augmentations.pkl matches the config; keeping the config pipeline {aug!r}",
+                  flush=True)
         return model, noise_scheduler, optimizer, lr_scheduler, aug
 
     utils.load_checkpoint = load_checkpoint_keep_config_aug  # optim.train calls utils.load_checkpoint
@@ -113,7 +160,8 @@ def main() -> int:
     shutil.copy2(args.config, out_dir / Path(args.config).name)
     (out_dir / "finetune_provenance.json").write_text(json.dumps({
         "resume_from": str(src), "config": str(Path(args.config).resolve()), "cosmodiff_file": cosmodiff.__file__,
-        "augmentations": cfg["augmentations"], "train": cfg["train"], "check": check, "argv": sys.argv}, indent=2))
+        "augmentations": cfg.get("augmentations"), "train": cfg["train"], "check": check, "argv": sys.argv,
+        "checkpoint_augmentations": pipeline_description(stock_aug)}, indent=2))
     print(f"[finetune] cosmodiff from {cosmodiff.__file__}; resume {src} -> {out_dir}", flush=True)
     result = optim.train(dataset, resume_from_checkpoint=str(src), output_dir=str(out_dir), **cfg["train"])
     utils.write_metrics(result["metrics"], str(out_dir / "metrics_finetune.json"))
@@ -123,7 +171,11 @@ def main() -> int:
     rep = {"cosmodiff_file": cosmodiff.__file__, "resume_from": str(src), "output_dir": str(out_dir),
            "stock_load_checkpoint_augmentations": repr(stock_aug),
            "config_pipeline": repr(aug),
-           "dataset_pipeline_after_train_is_config_pipeline": dataset.augmentations is aug}
+           "dataset_pipeline_after_train_is_config_pipeline": dataset.augmentations is aug,
+           "stock_load_checkpoint_augmentations_description": pipeline_description(stock_aug),
+           "config_pipeline_description": pipeline_description(aug),
+           "mode": ("no_augmentations" if args.allow_no_augmentations else
+                    "checkpoint_augmentations" if args.allow_checkpoint_augmentations else "default")}
     recs = []
     for idx, img in fetched:
         m = d4_shift_match(img, data.arrays[idx])
