@@ -114,9 +114,14 @@ def trust_status(receipt: Path) -> dict:
 
 # ---------------------------------------------------------------- unconditional data
 class UncondData:
-    """Training and held-out real maps of one unconditional config, in its fitted model space."""
+    """Training and held-out real maps of one unconditional config, in its fitted model space.
 
-    def __init__(self, config_path: Path, heldout_raw_per_source: int, max_heldout: int):
+    heldout_zthin: z-thinning of the held-out sims; None (default) uses the config's training zthin
+    (previous behavior). Training maps always use the config zthin.
+    """
+
+    def __init__(self, config_path: Path, heldout_raw_per_source: int, max_heldout: int,
+                 heldout_zthin: int | None = None):
         import yaml
         from simdiff_eval.io import _full_normalization_stats, _normalize_reference_slices, _streaming_source_specs
 
@@ -126,6 +131,9 @@ class UncondData:
         self.center, self.xmax = _full_normalization_stats(specs, self.data_cfg)
         self.norm_kwargs = dict(self.data_cfg.get("norm_kwargs") or {})
         zthin = int(self.data_cfg.get("zthin", 1))
+        self.heldout_zthin = zthin if heldout_zthin is None else int(heldout_zthin)
+        if self.heldout_zthin < 1:
+            raise ValueError(f"heldout_zthin must be >= 1, got {heldout_zthin}")
         train_raw, val_raw = [], []
         for spec in specs:
             arr, sel = spec["array"], np.asarray(spec["selected"])
@@ -133,7 +141,7 @@ class UncondData:
                 train_raw.append(self._slices(arr, sel[s:s + 64], zthin))
             unused = np.setdiff1d(np.arange(len(arr)), sel)[:int(heldout_raw_per_source)]
             if len(unused):
-                val_raw.append(self._slices(arr, np.sort(unused), zthin))
+                val_raw.append(self._slices(arr, np.sort(unused), self.heldout_zthin))
         self.train_raw = np.concatenate(train_raw)
         val_raw = np.concatenate(val_raw)
         self.val_raw = val_raw[evenly(len(val_raw), max_heldout)]
@@ -245,7 +253,8 @@ def run_unconditional(args) -> None:
     for config, group in by_config.items():
         n = group[0]["dataset_size"]
         print(f"[{time.time() - t0:7.0f}s] N={n}: loading {config}", flush=True)
-        data = UncondData(resolve(config), args.heldout_raw_per_source, args.max_heldout)
+        data = UncondData(resolve(config), args.heldout_raw_per_source, args.max_heldout,
+                          heldout_zthin=getattr(args, "heldout_zthin", None))
         if len(data.train) != n:
             raise ValueError(f"{config}: {len(data.train)} training maps, manifest says {n}")
         ref = reference_block(data, binning, probe, args)
@@ -284,6 +293,8 @@ def run_unconditional(args) -> None:
         "pca_components": int(space.pca.n_components_), "pca_explained_variance": space.explained_variance,
         "copy_quantile": args.copy_quantile, "orbit_max_n": args.orbit_max_n,
         "orbit_threshold_queries": args.orbit_threshold_queries, "orbit_groups_extra": extra_orbit_groups(args),
+        "heldout_raw_per_source": args.heldout_raw_per_source, "max_heldout": args.max_heldout,
+        "heldout_zthin": "config zthin" if args.heldout_zthin is None else args.heldout_zthin,
         "probe": None if args.no_probe else str(args.probe),
         "patch_scales": args.patch_scale_list, "patch_maps": args.patch_maps, "patch_locations": args.patch_locations,
         "patch_bootstrap": args.patch_bootstrap, "patch_bootstrap_seed": args.patch_bootstrap_seed,
@@ -798,6 +809,9 @@ def main() -> None:
                          "repeatable; the primary orbit_copy_fraction and 'memorized' stay d4xshift")
     ap.add_argument("--heldout-raw-per-source", type=int, default=8)
     ap.add_argument("--max-heldout", type=int, default=512)
+    ap.add_argument("--heldout-zthin", type=int, default=None,
+                    help="unconditional: z-thinning of the held-out sims (default: the config's training zthin); "
+                         "e.g. 8 keeps 16 slices per held-out sim for zthin 32/128 training configs")
     ap.add_argument("--max-generated", type=int, default=512)
     ap.add_argument("--probe-max-train", type=int, default=1024)
     ap.add_argument("--no-probe", action="store_true")
