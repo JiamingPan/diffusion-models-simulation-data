@@ -55,3 +55,6 @@ notebook.err
 /config*.yaml
 /*.ipynb
 /*.sbatch
+
+# paper drafts stay local
+paper/
